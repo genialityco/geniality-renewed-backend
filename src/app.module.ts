@@ -6,6 +6,7 @@ import { EventsModule } from './events/events.module';
 import { ModulesModule } from './modules/modules.module';
 import { ActivitiesModule } from './activities/activities.module';
 import { QuestionnaireModule } from './questionnaire/questionnaire.module';
+import { TranscriptSegmentsModule } from './transcript-segments/transcript-segments.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { QuestionnaireModule } from './questionnaire/questionnaire.module';
     ModulesModule,
     ActivitiesModule,
     QuestionnaireModule,
+    TranscriptSegmentsModule,
   ],
 })
 export class AppModule {}

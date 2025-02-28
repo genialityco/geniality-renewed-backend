@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 @Schema({ collection: 'activities', timestamps: true })
 export class Activity extends Document {
@@ -46,10 +46,14 @@ export class Activity extends Document {
   type_id: string;
 
   @Prop({ default: null })
-  transcription_id: string;
-
-  @Prop({ default: null })
   module_id: string;
+
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Organization',
+    default: null,
+  })
+  organization_id?: Types.ObjectId;
 }
 
 export const ActivitySchema = SchemaFactory.createForClass(Activity);
