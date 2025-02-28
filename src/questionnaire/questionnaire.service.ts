@@ -72,27 +72,32 @@ No incluyas texto adicional ni ejemplos, solamente las preguntas generadas.
    * y acumula su contenido en un solo array.
    */
   private extractAllQuestions(aiMessage: string): any[] {
-    const jsonRegex = /```json([\s\S]*?)```/g;
-
     let allQuestions: any[] = [];
-    let match: RegExpExecArray | null;
 
-    while ((match = jsonRegex.exec(aiMessage)) !== null) {
-      const jsonBlock = match[1].trim();
+    // Buscamos la primera aparición de '[' y la última de ']'
+    const startIndex = aiMessage.indexOf('[');
+    const endIndex = aiMessage.lastIndexOf(']');
+
+    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+      const possibleJson = aiMessage.substring(startIndex, endIndex + 1);
       try {
-        const parsed = JSON.parse(jsonBlock);
+        // Intentamos parsear todo lo que haya entre [ y ]
+        const parsed = JSON.parse(possibleJson);
+        // Si parsed es un array, lo ponemos en allQuestions
         if (Array.isArray(parsed)) {
-          allQuestions = allQuestions.concat(parsed);
+          allQuestions = parsed;
         } else {
+          // Si no es array, quizá es un objeto suelto.
+          // Ajustar según la lógica que necesites
           allQuestions.push(parsed);
         }
-      } catch (err) {
-        console.error('Error al parsear un bloque JSON:', err);
+      } catch (error) {
+        console.error('Error parseando el bloque JSON:', error);
       }
-    }
-
-    if (allQuestions.length === 0) {
-      console.warn('No se encontraron bloques JSON en la respuesta de la IA.');
+    } else {
+      console.warn(
+        'No se encontró un bloque entre [ y ] en la respuesta de la IA.',
+      );
     }
 
     return allQuestions;

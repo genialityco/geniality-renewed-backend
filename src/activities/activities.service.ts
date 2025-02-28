@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Activity } from './schemas/activity.schema';
 
 @Injectable()
@@ -50,5 +50,18 @@ export class ActivitiesService {
     }
 
     return activity;
+  }
+
+  async findByOrganization(organizationId?: string): Promise<Activity[]> {
+    let filter = {};
+
+    if (organizationId) {
+      // Convertir el organizationId a ObjectId para evitar problemas de tipo
+      filter = { organization_id: new Types.ObjectId(organizationId) };
+    } else {
+      filter = { organization_id: null };
+    }
+
+    return this.activityModel.find(filter).populate('organization_id').exec();
   }
 }
