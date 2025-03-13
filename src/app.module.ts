@@ -7,6 +7,12 @@ import { ModulesModule } from './modules/modules.module';
 import { ActivitiesModule } from './activities/activities.module';
 import { QuestionnaireModule } from './questionnaire/questionnaire.module';
 import { TranscriptSegmentsModule } from './transcript-segments/transcript-segments.module';
+import { HostsModule } from './hosts/hosts.module';
+import { UsersModule } from './users/users.module';
+import { CourseAttendeeModule } from './course-attendee/course-attendee.module';
+import { ActivityAttendeeModule } from './activity-attendee/activity-attendee.module';
+import { QuizModule } from './quiz/quiz.module';
+import { QuizAttemptModule } from './quiz-attempt/quiz-attempt.module';
 
 @Module({
   imports: [
@@ -18,6 +24,12 @@ import { TranscriptSegmentsModule } from './transcript-segments/transcript-segme
     ActivitiesModule,
     QuestionnaireModule,
     TranscriptSegmentsModule,
+    HostsModule,
+    UsersModule,
+    CourseAttendeeModule,
+    ActivityAttendeeModule,
+    QuizModule,
+    QuizAttemptModule,
   ],
 })
 export class AppModule {}

@@ -12,8 +12,8 @@ export class Activity extends Document {
   @Prop()
   datetime_end: string;
 
-  @Prop({ required: true })
-  event_id: string;
+  @Prop({ type: Types.ObjectId, ref: 'Event', required: true })
+  event_id: Types.ObjectId;
 
   @Prop()
   date_start_zoom: string;

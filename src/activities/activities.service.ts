@@ -56,12 +56,15 @@ export class ActivitiesService {
     let filter = {};
 
     if (organizationId) {
-      // Convertir el organizationId a ObjectId para evitar problemas de tipo
       filter = { organization_id: new Types.ObjectId(organizationId) };
     } else {
       filter = { organization_id: null };
     }
 
-    return this.activityModel.find(filter).populate('organization_id').exec();
+    return this.activityModel
+      .find(filter)
+      .populate('organization_id')
+      .populate('event_id')
+      .exec();
   }
 }
