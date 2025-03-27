@@ -49,7 +49,7 @@ export class CourseAttendeeService {
     return this.courseAttendeeModel
       .find()
       .populate('user_id')
-      .populate('course_id')
+      .populate('event_id')
       .exec();
   }
 
@@ -57,12 +57,20 @@ export class CourseAttendeeService {
     const record = await this.courseAttendeeModel
       .findById(id)
       .populate('user_id')
-      .populate('course_id')
+      .populate('event_id')
       .exec();
     if (!record) {
       throw new NotFoundException(`CourseAttendee con id ${id} no encontrado`);
     }
     return record;
+  }
+
+  async findByUserId(userId: string): Promise<CourseAttendee[]> {
+    return this.courseAttendeeModel
+      .find({ user_id: userId })
+      .populate('user_id')
+      .populate('event_id')
+      .exec();
   }
 
   async update(id: string, updateDto: any): Promise<CourseAttendee> {

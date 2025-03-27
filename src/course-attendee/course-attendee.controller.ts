@@ -36,6 +36,13 @@ export class CourseAttendeeController {
     return this.service.findById(id);
   }
 
+  @Get('user/:userId')
+  async findByUserId(
+    @Param('userId') userId: string,
+  ): Promise<CourseAttendee[]> {
+    return this.service.findByUserId(userId);
+  }
+
   @Put(':id')
   async update(
     @Param('id') id: string,

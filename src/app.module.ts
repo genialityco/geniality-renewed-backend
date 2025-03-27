@@ -13,6 +13,8 @@ import { CourseAttendeeModule } from './course-attendee/course-attendee.module';
 import { ActivityAttendeeModule } from './activity-attendee/activity-attendee.module';
 import { QuizModule } from './quiz/quiz.module';
 import { QuizAttemptModule } from './quiz-attempt/quiz-attempt.module';
+import { PaymentPlansModule } from './payment-plans/payment-plans.module';
+import { OrganizationUsersModule } from './organization-users/organization-users.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { QuizAttemptModule } from './quiz-attempt/quiz-attempt.module';
     ActivityAttendeeModule,
     QuizModule,
     QuizAttemptModule,
+    PaymentPlansModule,
+    OrganizationUsersModule,
   ],
 })
 export class AppModule {}
