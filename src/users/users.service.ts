@@ -8,22 +8,30 @@ export class UsersService {
   constructor(@InjectModel(User.name) private userModel: Model<User>) {}
 
   async createOrUpdateUser(
-    firebase_uid: string,
+    uid: string,
     name: string,
     email: string,
   ): Promise<User> {
     // Busca si ya existe usuario con ese firebase_uid
-    const existingUser = await this.userModel.findOne({ firebase_uid }).exec();
+    const existingUser = await this.userModel.findOne({ uid }).exec();
     if (existingUser) {
       // Actualiza
-      existingUser.name = name;
+      existingUser.names = name;
       existingUser.email = email;
       return existingUser.save();
     } else {
       // Crea
-      const newUser = new this.userModel({ firebase_uid, name, email });
+      const newUser = new this.userModel({ uid, names: name, email });
       return newUser.save();
     }
+  }
+
+  async findByFirebaseUid(uid: string): Promise<User> {
+    const user = await this.userModel.findOne({ uid }).exec();
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    return user;
   }
 
   async findById(id: string): Promise<User> {

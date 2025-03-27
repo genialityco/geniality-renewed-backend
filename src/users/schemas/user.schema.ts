@@ -4,10 +4,10 @@ import { Document } from 'mongoose';
 @Schema({ timestamps: true })
 export class User extends Document {
   @Prop({ required: true, unique: true })
-  firebase_uid: string;
+  uid: string;
 
   @Prop()
-  name: string;
+  names: string;
 
   @Prop()
   email: string;
