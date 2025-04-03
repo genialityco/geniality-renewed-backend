@@ -1,4 +1,12 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Body,
+  Post,
+  Patch,
+  Delete,
+} from '@nestjs/common';
 import { EventsService } from './events.service';
 import { Event } from './schemas/event.schema';
 
@@ -21,5 +29,26 @@ export class EventsController {
     @Param('organizerId') organizerId: string,
   ): Promise<Event[]> {
     return this.eventsService.findByOrganizer(organizerId);
+  }
+
+  // Crear evento (POST /events)
+  @Post()
+  async createEvent(@Body() body: any): Promise<Event> {
+    return this.eventsService.createEvent(body);
+  }
+
+  // Actualizar evento (PATCH /events/:id)
+  @Patch(':id')
+  async updateEvent(
+    @Param('id') id: string,
+    @Body() body: any,
+  ): Promise<Event> {
+    return this.eventsService.updateEvent(id, body);
+  }
+
+  // Eliminar evento (DELETE /events/:id)
+  @Delete(':id')
+  async deleteEvent(@Param('id') id: string): Promise<Event> {
+    return this.eventsService.deleteEvent(id);
   }
 }
