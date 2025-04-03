@@ -1,3 +1,5 @@
+// events.service.ts
+
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -17,5 +19,24 @@ export class EventsService {
 
   async findByOrganizer(organizerId: string): Promise<Event[]> {
     return this.eventModel.find({ organizer_id: organizerId }).exec();
+  }
+
+  // Crear evento
+  async createEvent(eventData: any): Promise<Event> {
+    const createdEvent = new this.eventModel(eventData);
+    return createdEvent.save();
+  }
+
+  // Actualizar evento
+  async updateEvent(id: string, eventData: any): Promise<Event> {
+    return this.eventModel.findByIdAndUpdate(id, eventData, {
+      new: true,
+      runValidators: true,
+    });
+  }
+
+  // Eliminar evento
+  async deleteEvent(id: string): Promise<Event> {
+    return this.eventModel.findByIdAndDelete(id);
   }
 }

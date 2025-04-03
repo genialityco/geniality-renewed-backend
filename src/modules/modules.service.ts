@@ -9,8 +9,8 @@ export class ModulesService {
     @InjectModel('Module') private readonly moduleModel: Model<Module>,
   ) {}
 
-  async create(module: Module): Promise<Module> {
-    const newModule = new this.moduleModel(module);
+  async create(moduleData: any): Promise<Module> {
+    const newModule = new this.moduleModel(moduleData);
     return newModule.save();
   }
 
@@ -22,8 +22,10 @@ export class ModulesService {
     return this.moduleModel.findById(id).exec();
   }
 
-  async update(id: string, module: Module): Promise<Module> {
-    return this.moduleModel.findByIdAndUpdate(id, module, { new: true }).exec();
+  async update(id: string, moduleData: any): Promise<Module> {
+    return this.moduleModel
+      .findByIdAndUpdate(id, moduleData, { new: true })
+      .exec();
   }
 
   async delete(id: string): Promise<Module> {

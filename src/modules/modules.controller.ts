@@ -5,6 +5,7 @@ import {
   Body,
   Param,
   Put,
+  Patch,
   Delete,
 } from '@nestjs/common';
 import { ModulesService } from './modules.service';
@@ -15,8 +16,8 @@ export class ModulesController {
   constructor(private readonly modulesService: ModulesService) {}
 
   @Post()
-  async create(@Body() module: Module): Promise<Module> {
-    return this.modulesService.create(module);
+  async create(@Body() moduleData: any): Promise<Module> {
+    return this.modulesService.create(moduleData);
   }
 
   @Get()
@@ -29,12 +30,22 @@ export class ModulesController {
     return this.modulesService.findOne(id);
   }
 
+  // Opción 1: seguiste con PUT (reemplazo completo)
   @Put(':id')
-  async update(
+  async updatePut(
     @Param('id') id: string,
-    @Body() module: Module,
+    @Body() moduleData: any,
   ): Promise<Module> {
-    return this.modulesService.update(id, module);
+    return this.modulesService.update(id, moduleData);
+  }
+
+  // Opción 2: PATCH para actualizaciones parciales (opcional)
+  @Patch(':id')
+  async updatePatch(
+    @Param('id') id: string,
+    @Body() moduleData: any,
+  ): Promise<Module> {
+    return this.modulesService.update(id, moduleData);
   }
 
   @Delete(':id')

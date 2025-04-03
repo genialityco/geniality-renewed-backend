@@ -5,6 +5,7 @@ import {
   Body,
   Param,
   Put,
+  Patch,
   Delete,
   Query,
   NotFoundException,
@@ -24,11 +25,13 @@ export class ActivitiesController {
     private readonly httpService: HttpService,
   ) {}
 
+  // Crear una actividad
   @Post()
-  async create(@Body() activity: Activity): Promise<Activity> {
-    return this.activitiesService.create(activity);
+  async create(@Body() activityData: Partial<Activity>): Promise<Activity> {
+    return this.activitiesService.create(activityData);
   }
 
+  // Listar todas o filtrar por organización
   @Get('by-organization')
   async findByOrganization(
     @Query('organizationId') organizationId?: string,
@@ -36,24 +39,36 @@ export class ActivitiesController {
     return this.activitiesService.findByOrganization(organizationId);
   }
 
+  // Obtener una actividad por ID
   @Get(':id')
   async findOne(@Param('id') id: string): Promise<Activity> {
     return this.activitiesService.findOne(id);
   }
 
+  // Actualizar (PUT o PATCH). Aquí demuestro ambas opciones, elige la que uses en tu frontend.
   @Put(':id')
-  async update(
+  async updatePut(
     @Param('id') id: string,
-    @Body() activity: Partial<Activity>,
+    @Body() activityData: Partial<Activity>,
   ): Promise<Activity> {
-    return this.activitiesService.update(id, activity);
+    return this.activitiesService.update(id, activityData);
   }
 
+  @Patch(':id')
+  async updatePatch(
+    @Param('id') id: string,
+    @Body() activityData: Partial<Activity>,
+  ): Promise<Activity> {
+    return this.activitiesService.update(id, activityData);
+  }
+
+  // Eliminar actividad
   @Delete(':id')
   async delete(@Param('id') id: string): Promise<Activity> {
     return this.activitiesService.delete(id);
   }
 
+  // Listar actividades de un evento
   @Get('event/:event_id')
   async findByEventId(
     @Param('event_id') event_id: string,
@@ -61,6 +76,7 @@ export class ActivitiesController {
     return this.activitiesService.findByEventId(event_id);
   }
 
+  // Actualizar video_progress
   @Put(':id/video-progress')
   async updateVideoProgress(
     @Param('id') id: string,
@@ -69,6 +85,7 @@ export class ActivitiesController {
     return this.activitiesService.updateVideoProgress(id, progress);
   }
 
+  // (Opcional) Endpoint para generar transcripciones (ejemplo con microservicio Python).
   @Post('generate-transcript/:activity_id')
   async generateTranscript(@Param('activity_id') activity_id: string) {
     // 1) Recuperar la actividad
@@ -76,35 +93,31 @@ export class ActivitiesController {
     if (!activity) {
       throw new NotFoundException('Activity not found');
     }
+
     if (!activity.video) {
       throw new BadRequestException('This activity has no video URL');
     }
 
     // 2) Preparar la petición al microservicio Python
-    const pythonUrl = 'http://localhost:5001/transcribe';
-    // Ajusta el host/puerto según tu despliegue (Docker, etc.)
-
+    const pythonUrl = 'http://localhost:5001/transcribe'; // Ajustar según tu despliegue
     const payload = {
-      vimeo_url: activity.video, // la URL de Vimeo que tengas en el campo 'video'
-      engine: 'whisper', // Nombre del engine en el server Python
-      model_name: 'tiny', // Cambia a 'base', 'medium', etc. si quieres
-      language: 'es', // Opcional: Forzar idioma si Whisper lo soporta
+      vimeo_url: activity.video,
+      engine: 'whisper',
+      model_name: 'tiny',
+      language: 'es',
     };
 
     // 3) Llamada HTTP al servicio Python
     try {
       const response$ = this.httpService.post(pythonUrl, payload);
-      const response = await lastValueFrom(response$); // Convertir Observable -> Promise
-
-      const data = response.data; // data = { status, engine_used, transcription, segments }
+      const response = await lastValueFrom(response$); // Convertir Observable a Promise
+      const data = response.data; // p.ej. { status, engine_used, transcription, segments }
 
       if (data.error) {
         throw new BadRequestException(`Transcription error: ${data.error}`);
       }
 
-      // 4) Guardar los segmentos en nuestra BD (Mongo)
-      // data.segments es un array de:
-      // [ { start_time, end_time, text, segment_embedding }, ... ]
+      // 4) Guardar segmentos en Mongo (p.ej. en tu transcriptSegmentsService)
       const segmentsData = data.segments.map((seg) => ({
         startTime: seg.start_time,
         endTime: seg.end_time,
