@@ -86,6 +86,7 @@ export class ActivitiesController {
   }
 
   // (Opcional) Endpoint para generar transcripciones (ejemplo con microservicio Python).@Post('generate-transcript/:activity_id')
+  @Post('generate-transcript/:activity_id')
   async generateTranscript(@Param('activity_id') activity_id: string) {
     const activity = await this.activitiesService.findOne(activity_id);
     if (!activity) {
