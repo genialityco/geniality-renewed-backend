@@ -35,9 +35,9 @@ export class PaymentPlansController {
   // Nuevo endpoint para crear un PaymentPlan sin usar DTO
   @Post()
   async createPaymentPlan(@Body() body: any): Promise<PaymentPlan> {
-    const { organizationUserId, days, date_until, price } = body;
+    const { organization_user_id, days, date_until, price } = body;
     return this.paymentPlansService.createPaymentPlan(
-      organizationUserId,
+      organization_user_id,
       days,
       new Date(date_until),
       price,

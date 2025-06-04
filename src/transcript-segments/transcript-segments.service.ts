@@ -17,7 +17,7 @@ export class TranscriptSegmentsService {
    * Crea múltiples segmentos de una sola vez (e.g. tras procesar el video).
    */
   async createSegments(
-    activityId: string, // Recibimos un string (por ejemplo) en el Controller
+    activityId: string,
     segmentsData: Array<{
       startTime: number;
       endTime: number;
@@ -25,17 +25,17 @@ export class TranscriptSegmentsService {
       embedding?: number[];
     }>,
   ): Promise<TranscriptSegmentDocument[]> {
-    // <-- Retornamos el tipo de Documento
-    // Convertimos activityId de string a ObjectId si lo queremos almacenar como tal
+    if (!Array.isArray(segmentsData) || segmentsData.length === 0) {
+      throw new Error('segmentsData no es un array válido.');
+    }
+
     const activityObjectId = new Types.ObjectId(activityId);
 
-    // Primero, eliminar segmentos previos de esa actividad (opcional)
     await this.segmentModel.deleteMany({ activity_id: activityObjectId });
 
-    // Creamos los nuevos documentos
     const createdDocs = await this.segmentModel.insertMany(
       segmentsData.map((seg) => ({
-        activity_id: activityObjectId, // <--- Aseguramos que sea ObjectId, no string
+        activity_id: activityObjectId,
         startTime: seg.startTime,
         endTime: seg.endTime,
         text: seg.text,
@@ -43,7 +43,6 @@ export class TranscriptSegmentsService {
       })),
     );
 
-    // Mongoose retorna documentos con la forma Document<TranscriptSegment>
     return createdDocs;
   }
 

@@ -41,4 +41,10 @@ export class HostsController {
   async remove(@Param('id') id: string): Promise<Host> {
     return this.hostsService.remove(id);
   }
+
+  // NUEVO: Endpoint para consultar hosts por event_id
+  @Get('event/:event_id')
+  async findByEventId(@Param('event_id') eventId: string): Promise<Host[]> {
+    return this.hostsService.findByEventId(eventId);
+  }
 }

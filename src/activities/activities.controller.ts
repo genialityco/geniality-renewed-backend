@@ -85,10 +85,8 @@ export class ActivitiesController {
     return this.activitiesService.updateVideoProgress(id, progress);
   }
 
-  // (Opcional) Endpoint para generar transcripciones (ejemplo con microservicio Python).
-  @Post('generate-transcript/:activity_id')
+  // (Opcional) Endpoint para generar transcripciones (ejemplo con microservicio Python).@Post('generate-transcript/:activity_id')
   async generateTranscript(@Param('activity_id') activity_id: string) {
-    // 1) Recuperar la actividad
     const activity = await this.activitiesService.findOne(activity_id);
     if (!activity) {
       throw new NotFoundException('Activity not found');
@@ -98,44 +96,48 @@ export class ActivitiesController {
       throw new BadRequestException('This activity has no video URL');
     }
 
-    // 2) Preparar la petición al microservicio Python
-    const pythonUrl = 'http://localhost:5001/transcribe'; // Ajustar según tu despliegue
+    const pythonUrl =
+      'https://panel-holly-relation-montgomery.trycloudflare.com/transcribe';
     const payload = {
       vimeo_url: activity.video,
-      engine: 'whisper',
-      model_name: 'tiny',
-      language: 'es',
+      activity_id, // lo necesita el microservicio para notificar después
     };
 
-    // 3) Llamada HTTP al servicio Python
     try {
       const response$ = this.httpService.post(pythonUrl, payload);
-      const response = await lastValueFrom(response$); // Convertir Observable a Promise
-      const data = response.data; // p.ej. { status, engine_used, transcription, segments }
+      const response = await lastValueFrom(response$);
+      const data = response.data;
 
       if (data.error) {
         throw new BadRequestException(`Transcription error: ${data.error}`);
       }
 
-      // 4) Guardar segmentos en Mongo (p.ej. en tu transcriptSegmentsService)
-      const segmentsData = data.segments.map((seg) => ({
-        startTime: seg.start_time,
-        endTime: seg.end_time,
-        text: seg.text,
-        embedding: seg.segment_embedding,
-      }));
-
-      await this.transcriptSegmentsService.createSegments(
-        activity_id,
-        segmentsData,
-      );
-
       return {
-        message: 'Transcript generated successfully',
-        totalSegments: segmentsData.length,
+        message: 'Transcription job enqueued successfully',
+        jobId: data.job_id,
       };
     } catch (error) {
-      throw new BadRequestException(`Failed to generate transcript: ${error}`);
+      console.error('❌ Error al enviar job al microservicio:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        stack: error.stack,
+      });
+
+      throw new BadRequestException(
+        `Failed to enqueue transcript job: ${
+          error.response?.data?.error || error.message || 'Unknown error'
+        }`,
+      );
     }
+  }
+
+  @Get('transcription-status/:job_id')
+  async getJobStatus(@Param('job_id') job_id: string) {
+    const response$ = this.httpService.get(
+      `https://panel-holly-relation-montgomery.trycloudflare.com/transcribe/status/${job_id}`,
+    );
+    const response = await lastValueFrom(response$);
+    return response.data;
   }
 }
