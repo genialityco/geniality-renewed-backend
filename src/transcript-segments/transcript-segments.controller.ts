@@ -1,8 +1,17 @@
-import { Controller, Get, Post, Param, Body, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
+  Query,
+  BadRequestException,
+} from '@nestjs/common';
 import { TranscriptSegmentsService } from './transcript-segments.service';
 
 @Controller('transcript-segments')
 export class TranscriptSegmentsController {
+  [x: string]: any;
   constructor(private readonly segmentsService: TranscriptSegmentsService) {}
 
   @Get('search')
@@ -17,21 +26,22 @@ export class TranscriptSegmentsController {
   async getSegments(@Param('activityId') activityId: string) {
     return this.segmentsService.getSegmentsByActivity(activityId);
   }
-
-  // Crear o sobreescribir los segmentos de una actividad
-  @Post(':activityId')
-  async createSegments(
-    @Param('activityId') activityId: string,
-    @Body()
-    body: {
-      segmentsData: Array<{
-        startTime: number;
-        endTime: number;
-        text: string;
-        embedding?: number[];
-      }>;
-    },
+  @Post(':id')
+  async createSegmentsUnified(
+    @Param('id') activityId: string,
+    @Body() body: any,
   ) {
-    return this.segmentsService.createSegments(activityId, body.segmentsData);
+    const segments = body?.segmentsData ?? body?.segments ?? []; // acepta ambos nombres
+
+    if (!Array.isArray(segments) || segments.length === 0) {
+      throw new BadRequestException('No hay segmentos válidos en el body.');
+    }
+
+    await this.segmentsService.createSegments(activityId, segments);
+
+    return {
+      message: 'Segments saved successfully',
+      total: segments.length,
+    };
   }
 }

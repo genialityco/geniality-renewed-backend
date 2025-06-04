@@ -41,4 +41,15 @@ export class HostsService {
     }
     return deletedHost;
   }
+
+  // NUEVO: Método para buscar hosts por event_id
+  async findByEventId(eventId: string): Promise<Host[]> {
+    const hosts = await this.hostModel.find({ event_id: eventId }).exec();
+    if (!hosts || hosts.length === 0) {
+      throw new NotFoundException(
+        `No se encontraron hosts para el evento con id ${eventId}`,
+      );
+    }
+    return hosts;
+  }
 }
