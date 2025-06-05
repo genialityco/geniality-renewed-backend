@@ -113,6 +113,11 @@ export class ActivitiesController {
         throw new BadRequestException(`Transcription error: ${data.error}`);
       }
 
+      // ...antes del return
+      await this.activitiesService.update(activity_id, {
+        transcription_job_id: data.job_id,
+      });
+
       return {
         message: 'Transcription job enqueued successfully',
         jobId: data.job_id,

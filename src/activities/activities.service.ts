@@ -94,4 +94,9 @@ export class ActivitiesService {
       .populate('event_id')
       .exec();
   }
+
+  // Actualizar disponibilidad de transcripción
+  async updateTranscriptAvailable(activityId: string, available: boolean) {
+    return this.update(activityId, { transcript_available: available });
+  }
 }
