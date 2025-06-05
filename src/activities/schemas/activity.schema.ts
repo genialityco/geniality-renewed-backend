@@ -54,6 +54,12 @@ export class Activity extends Document {
     default: null,
   })
   organization_id?: Types.ObjectId;
+
+  @Prop({ default: false })
+  transcript_available: boolean;
+
+  @Prop({ default: null })
+  transcription_job_id: string;
 }
 
 export const ActivitySchema = SchemaFactory.createForClass(Activity);
