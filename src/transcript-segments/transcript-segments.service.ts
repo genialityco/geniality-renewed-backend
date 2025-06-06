@@ -82,35 +82,32 @@ export class TranscriptSegmentsService {
       .aggregate([
         {
           $search: {
-            index: 'default', // <-- el nombre del índice que creaste en Atlas
+            index: 'default', // nombre del índice de búsqueda de texto en MongoDB Atlas
             text: {
-              query: searchText, // la cadena que viene del frontend
-              path: 'text', // el campo donde se busca
+              query: searchText, // texto a buscar
+              path: 'text', // campo donde buscar
               fuzzy: {
-                maxEdits: 1, // opcional: tolera "n" errores ortográficos
+                maxEdits: 1, // permite errores ortográficos leves
               },
             },
           },
         },
         {
-          // Proyectamos únicamente los campos que necesitamos
           $project: {
             _id: 1,
             activity_id: 1,
             startTime: 1,
             endTime: 1,
             text: 1,
-            score: { $meta: 'searchScore' },
+            score: { $meta: 'searchScore' }, // relevancia de la coincidencia
           },
         },
         {
-          // Ordenamos por relevancia (score mayor a menor)
-          $sort: { score: -1 },
+          $sort: { score: -1 }, // ordena por relevancia
         },
         {
-          // Agrupamos por la actividad
           $group: {
-            _id: '$activity_id',
+            _id: '$activity_id', // agrupa por actividad
             matchedSegments: {
               $push: {
                 segmentId: '$_id',
