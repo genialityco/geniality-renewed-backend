@@ -89,7 +89,6 @@ export class ActivitiesService {
 
     return this.activityModel
       .find(filter)
-      .limit(20) // Limitar a los primeros 20 resultados
       .populate('organization_id')
       .populate('event_id')
       .exec();

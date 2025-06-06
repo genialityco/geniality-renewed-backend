@@ -97,10 +97,13 @@ export class ActivitiesController {
       throw new BadRequestException('This activity has no video URL');
     }
 
+    // Normalizar la URL de Vimeo antes de enviarla
+    const normalizedVimeoUrl = this.normalizeVimeoUrl(activity.video);
+
     const pythonUrl =
-      'https://panel-holly-relation-montgomery.trycloudflare.com/transcribe';
+      'https://theories-jacket-banners-copy.trycloudflare.com/enqueue';
     const payload = {
-      vimeo_url: activity.video,
+      vimeo_url: normalizedVimeoUrl,
       activity_id, // lo necesita el microservicio para notificar después
     };
 
@@ -141,9 +144,23 @@ export class ActivitiesController {
   @Get('transcription-status/:job_id')
   async getJobStatus(@Param('job_id') job_id: string) {
     const response$ = this.httpService.get(
-      `https://panel-holly-relation-montgomery.trycloudflare.com/transcribe/status/${job_id}`,
+      `https://theories-jacket-banners-copy.trycloudflare.com/status/${job_id}`,
     );
     const response = await lastValueFrom(response$);
     return response.data;
+  }
+
+  // Función para normalizar la URL de Vimeo
+  private normalizeVimeoUrl(url: string): string {
+    // Extrae el ID del video de diferentes formatos de URL
+    const regex =
+      /vimeo\.com\/(?:video\/)?(\d+)|player\.vimeo\.com\/video\/(\d+)/;
+    const match = url.match(regex);
+    const videoId = match?.[1] || match?.[2];
+    if (videoId) {
+      return `https://vimeo.com/video/${videoId}`;
+    }
+    // Si no es una URL válida, retorna la original (o podrías lanzar error)
+    return url;
   }
 }
