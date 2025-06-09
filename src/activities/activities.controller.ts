@@ -101,7 +101,7 @@ export class ActivitiesController {
     const normalizedVimeoUrl = this.normalizeVimeoUrl(activity.video);
 
     const pythonUrl =
-      'https://theories-jacket-banners-copy.trycloudflare.com/enqueue';
+      'https://mitsubishi-feeling-full-invitations.trycloudflare.com/enqueue';
     const payload = {
       vimeo_url: normalizedVimeoUrl,
       activity_id, // lo necesita el microservicio para notificar después
@@ -144,7 +144,7 @@ export class ActivitiesController {
   @Get('transcription-status/:job_id')
   async getJobStatus(@Param('job_id') job_id: string) {
     const response$ = this.httpService.get(
-      `https://theories-jacket-banners-copy.trycloudflare.com/status/${job_id}`,
+      `https://mitsubishi-feeling-full-invitations.trycloudflare.com/status/${job_id}`,
     );
     const response = await lastValueFrom(response$);
     return response.data;
