@@ -35,8 +35,16 @@ export class ActivitiesController {
   @Get('by-organization')
   async findByOrganization(
     @Query('organizationId') organizationId?: string,
-  ): Promise<Activity[]> {
-    return this.activitiesService.findByOrganization(organizationId);
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '20',
+  ) {
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 20;
+    return this.activitiesService.findByOrganization(
+      organizationId,
+      pageNum,
+      limitNum,
+    );
   }
 
   // Obtener una actividad por ID

@@ -82,13 +82,25 @@ export class TranscriptSegmentsService {
       .aggregate([
         {
           $search: {
-            index: 'default', // nombre del índice de búsqueda de texto en MongoDB Atlas
-            text: {
-              query: searchText, // texto a buscar
-              path: 'text', // campo donde buscar
-              fuzzy: {
-                maxEdits: 1, // permite errores ortográficos leves
-              },
+            index: 'default',
+            compound: {
+              should: [
+                {
+                  text: {
+                    query: searchText,
+                    path: 'name_activity', // prioriza coincidencias en name_activity
+                    score: { boost: { value: 3 } }, // mayor peso
+                    fuzzy: { maxEdits: 1 },
+                  },
+                },
+                {
+                  text: {
+                    query: searchText,
+                    path: 'text', // luego busca en text
+                    fuzzy: { maxEdits: 1 },
+                  },
+                },
+              ],
             },
           },
         },
@@ -99,15 +111,16 @@ export class TranscriptSegmentsService {
             startTime: 1,
             endTime: 1,
             text: 1,
-            score: { $meta: 'searchScore' }, // relevancia de la coincidencia
+            name_activity: 1,
+            score: { $meta: 'searchScore' },
           },
         },
         {
-          $sort: { score: -1 }, // ordena por relevancia
+          $sort: { score: -1 },
         },
         {
           $group: {
-            _id: '$activity_id', // agrupa por actividad
+            _id: '$activity_id',
             matchedSegments: {
               $push: {
                 segmentId: '$_id',
@@ -115,6 +128,7 @@ export class TranscriptSegmentsService {
                 startTime: '$startTime',
                 endTime: '$endTime',
                 score: '$score',
+                name_activity: '$name_activity',
               },
             },
             totalMatches: { $sum: 1 },

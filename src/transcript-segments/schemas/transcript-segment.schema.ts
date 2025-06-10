@@ -15,6 +15,9 @@ export class TranscriptSegment {
   @Prop({ required: true })
   text: string;
 
+  @Prop({ required: false })
+  name_activity: string;
+
   @Prop({ type: [Number], default: [] })
   embedding: number[];
 }
