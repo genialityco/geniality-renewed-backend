@@ -26,7 +26,10 @@ export class ActivitiesService {
 
   // Obtener actividad por ID
   async findOne(id: string): Promise<Activity> {
-    const activity = await this.activityModel.findById(id).exec();
+    const activity = await this.activityModel
+      .findById(id)
+      .populate('event_id')
+      .exec();
     if (!activity) {
       throw new NotFoundException(`Actividad con ID ${id} no encontrada`);
     }
@@ -82,16 +85,34 @@ export class ActivitiesService {
   }
 
   // Filtrar por organización (si la actividad guarda la referencia organization_id)
-  async findByOrganization(organizationId?: string): Promise<Activity[]> {
+  async findByOrganization(
+    organizationId?: string,
+    page = 1,
+    limit = 20,
+  ): Promise<{
+    results: Activity[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
     const filter = organizationId
       ? { organization_id: new Types.ObjectId(organizationId) }
       : { organization_id: null };
 
-    return this.activityModel
-      .find(filter)
-      .populate('organization_id')
-      .populate('event_id')
-      .exec();
+    const skip = (page - 1) * limit;
+
+    const [results, total] = await Promise.all([
+      this.activityModel
+        .find(filter)
+        .skip(skip)
+        .limit(limit)
+        .populate('organization_id')
+        .populate('event_id')
+        .exec(),
+      this.activityModel.countDocuments(filter),
+    ]);
+
+    return { results, total, page, limit };
   }
 
   // Actualizar disponibilidad de transcripción
