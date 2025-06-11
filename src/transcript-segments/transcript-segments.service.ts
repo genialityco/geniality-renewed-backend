@@ -77,64 +77,87 @@ export class TranscriptSegmentsService {
     }
   }
 
-  async searchSegmentsGroupedByActivity(searchText: string) {
-    return this.segmentModel
-      .aggregate([
-        {
-          $search: {
-            index: 'default',
-            compound: {
-              should: [
-                {
-                  text: {
-                    query: searchText,
-                    path: 'name_activity', // prioriza coincidencias en name_activity
-                    score: { boost: { value: 3 } }, // mayor peso
-                    fuzzy: { maxEdits: 1 },
-                  },
+  async searchSegmentsGroupedByActivity(
+    searchText: string,
+    page = 1,
+    pageSize = 10,
+  ) {
+    const skip = (page - 1) * pageSize;
+
+    // 1. Pipeline base (igual a antes, sin paginar)
+    const basePipeline = [
+      {
+        $search: {
+          index: 'default',
+          compound: {
+            should: [
+              {
+                text: {
+                  query: searchText,
+                  path: 'name_activity',
+                  score: { boost: { value: 20 } },
+                  fuzzy: { maxEdits: 1 },
                 },
-                {
-                  text: {
-                    query: searchText,
-                    path: 'text', // luego busca en text
-                    fuzzy: { maxEdits: 1 },
-                  },
-                },
-              ],
-            },
-          },
-        },
-        {
-          $project: {
-            _id: 1,
-            activity_id: 1,
-            startTime: 1,
-            endTime: 1,
-            text: 1,
-            name_activity: 1,
-            score: { $meta: 'searchScore' },
-          },
-        },
-        {
-          $sort: { score: -1 },
-        },
-        {
-          $group: {
-            _id: '$activity_id',
-            matchedSegments: {
-              $push: {
-                segmentId: '$_id',
-                text: '$text',
-                startTime: '$startTime',
-                endTime: '$endTime',
-                score: '$score',
-                name_activity: '$name_activity',
               },
-            },
-            totalMatches: { $sum: 1 },
+              {
+                text: {
+                  query: searchText,
+                  path: 'text',
+                  score: { boost: { value: 5 } },
+                  fuzzy: { maxEdits: 1 },
+                },
+              },
+            ],
+            minimumShouldMatch: 1,
           },
         },
-      ])
-      .exec();
+      },
+      { $limit: 2000 }, // limita antes de sort
+      {
+        $project: {
+          _id: 1,
+          activity_id: 1,
+          startTime: 1,
+          endTime: 1,
+          text: 1,
+          name_activity: 1,
+          score: { $meta: 'searchScore' },
+        },
+      },
+      { $sort: { score: -1 as 1 | -1 } },
+      {
+        $group: {
+          _id: '$activity_id',
+          name_activity: { $first: '$name_activity' },
+          matchedSegments: {
+            $push: {
+              segmentId: '$_id',
+              text: '$text',
+              startTime: '$startTime',
+              endTime: '$endTime',
+              score: '$score',
+            },
+          },
+          maxScore: { $max: '$score' },
+          totalMatches: { $sum: 1 },
+        },
+      },
+      { $sort: { maxScore: -1 as 1 | -1 } },
+    ];
+
+    // 2. Para el total, ejecuta el pipeline hasta aquí y cuenta resultados
+    const countPipeline = [...basePipeline, { $count: 'total' }];
+    const countResult = await this.segmentModel.aggregate(countPipeline).exec();
+    const total = countResult[0]?.total || 0;
+
+    // 3. Para los datos paginados
+    const dataPipeline = [
+      ...basePipeline,
+      { $skip: skip },
+      { $limit: pageSize },
+    ];
+    const data = await this.segmentModel.aggregate(dataPipeline).exec();
+
+    return { data, total };
   }
 }

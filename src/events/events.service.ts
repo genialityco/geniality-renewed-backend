@@ -21,6 +21,12 @@ export class EventsService {
     return this.eventModel.find({ organizer_id: organizerId }).exec();
   }
 
+  async findByName(name: string): Promise<Event | null> {
+    return this.eventModel
+      .findOne({ name: { $regex: new RegExp(name, 'i') } })
+      .exec();
+  }
+
   // Crear evento
   async createEvent(eventData: any): Promise<Event> {
     const createdEvent = new this.eventModel(eventData);
