@@ -31,6 +31,11 @@ export class EventsController {
     return this.eventsService.findByOrganizer(organizerId);
   }
 
+  @Get('search/by-name/:name')
+  async getEventByName(@Param('name') name: string): Promise<Event | null> {
+    return this.eventsService.findByName(name);
+  }
+
   // Crear evento (POST /events)
   @Post()
   async createEvent(@Body() body: any): Promise<Event> {

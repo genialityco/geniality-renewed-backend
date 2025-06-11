@@ -19,11 +19,22 @@ export class TranscriptSegmentsController {
   ) {}
 
   @Get('search')
-  async searchSegments(@Query('q') query: string) {
+  async searchSegments(
+    @Query('q') query: string,
+    @Query('page') page = 1,
+    @Query('pageSize') pageSize = 10,
+  ) {
     if (!query) {
-      return [];
+      return { data: [], total: 0 };
     }
-    return this.segmentsService.searchSegmentsGroupedByActivity(query);
+    const pageNum = Number(page) || 1;
+    const pageSizeNum = Number(pageSize) || 10;
+
+    return this.segmentsService.searchSegmentsGroupedByActivity(
+      query,
+      pageNum,
+      pageSizeNum,
+    );
   }
 
   @Get(':activityId')
