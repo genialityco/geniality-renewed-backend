@@ -21,9 +21,16 @@ export class EventsService {
     return this.eventModel.find({ organizer_id: organizerId }).exec();
   }
 
-  async findByName(name: string): Promise<Event | null> {
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Evita errores si el usuario ingresa símbolos especiales
+  }
+
+  async findByName(name: string): Promise<Event[]> {
+    const escapedName = this.escapeRegex(name);
     return this.eventModel
-      .findOne({ name: { $regex: new RegExp(name, 'i') } })
+      .find({
+        name: { $regex: escapedName, $options: 'i' }, // 'i' = case-insensitive
+      })
       .exec();
   }
 

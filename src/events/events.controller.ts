@@ -32,7 +32,7 @@ export class EventsController {
   }
 
   @Get('search/by-name/:name')
-  async getEventByName(@Param('name') name: string): Promise<Event | null> {
+  async getEventsByName(@Param('name') name: string): Promise<Event[]> {
     return this.eventsService.findByName(name);
   }
 
