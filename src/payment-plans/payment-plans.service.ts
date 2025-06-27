@@ -53,4 +53,20 @@ export class PaymentPlansService {
     });
     return newPlan.save();
   }
+
+  // Nuevo método para actualizar date_until de un PaymentPlan
+  async updateDateUntil(
+    paymentPlanId: string,
+    date_until: Date,
+  ): Promise<PaymentPlan> {
+    const plan = await this.paymentPlanModel.findByIdAndUpdate(
+      paymentPlanId,
+      { date_until },
+      { new: true },
+    );
+    if (!plan) {
+      throw new NotFoundException('PaymentPlan no encontrado');
+    }
+    return plan;
+  }
 }

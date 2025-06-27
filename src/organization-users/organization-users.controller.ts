@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { OrganizationUsersService } from './organization-users.service';
 import { OrganizationUser } from './schemas/organization-user.schema';
 
@@ -36,5 +36,27 @@ export class OrganizationUsersController {
     @Param('user_id') user_id: string,
   ): Promise<OrganizationUser> {
     return this.organizationUsersService.findByUserId(user_id);
+  }
+
+  @Get('by-organization/:organization_id')
+  async getUsersByOrganizationId(
+    @Param('organization_id') organization_id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ): Promise<{ results: OrganizationUser[]; total: number }> {
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+    return this.organizationUsersService.findByOrganizationId(
+      organization_id,
+      pageNum,
+      limitNum,
+    );
+  }
+
+  @Get('by-email/:email')
+  async getUserByEmail(
+    @Param('email') email: string,
+  ): Promise<OrganizationUser | null> {
+    return this.organizationUsersService.findByEmail(email);
   }
 }
