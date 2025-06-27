@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, Body } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, Patch } from '@nestjs/common';
 import { PaymentPlansService } from './payment-plans.service';
 import { OrganizationUsersService } from '../organization-users/organization-users.service';
 import { PaymentPlan } from './schemas/payment-plan.schema';
@@ -41,6 +41,18 @@ export class PaymentPlansController {
       days,
       new Date(date_until),
       price,
+    );
+  }
+
+  // PATCH /payment-plans/:id/date-until
+  @Patch(':id/date-until')
+  async updateDateUntil(
+    @Param('id') paymentPlanId: string,
+    @Body('date_until') date_until: string,
+  ): Promise<PaymentPlan> {
+    return this.paymentPlansService.updateDateUntil(
+      paymentPlanId,
+      new Date(date_until),
     );
   }
 }

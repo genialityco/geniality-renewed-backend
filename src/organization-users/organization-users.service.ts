@@ -61,4 +61,27 @@ export class OrganizationUsersService {
     }
     return user;
   }
+
+  async findByOrganizationId(
+    organization_id: string,
+    page = 1,
+    limit = 20,
+  ): Promise<{ results: OrganizationUser[]; total: number }> {
+    const skip = (page - 1) * limit;
+    const [results, total] = await Promise.all([
+      this.organizationUserModel
+        .find({ organization_id })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.organizationUserModel.countDocuments({ organization_id }),
+    ]);
+    return { results, total };
+  }
+
+  async findByEmail(email: string): Promise<OrganizationUser | null> {
+    return this.organizationUserModel
+      .findOne({ 'properties.email': email })
+      .exec();
+  }
 }
