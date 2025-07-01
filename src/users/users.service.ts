@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from './schemas/user.schema';
+import admin from 'src/firebase-admin';
 
 @Injectable()
 export class UsersService {
@@ -44,5 +45,17 @@ export class UsersService {
 
   async findAll(): Promise<User[]> {
     return this.userModel.find().exec();
+  }
+
+  async changePasswordByUid(uid: string, newPassword: string) {
+    // Cambia la contraseña de cualquier usuario
+    await admin.auth().updateUser(uid, { password: newPassword });
+    return { success: true, message: 'Contraseña cambiada correctamente' };
+  }
+
+  // Si solo tienes el correo:
+  async changePasswordByEmail(email: string, newPassword: string) {
+    const user = await admin.auth().getUserByEmail(email);
+    return this.changePasswordByUid(user.uid, newPassword);
   }
 }

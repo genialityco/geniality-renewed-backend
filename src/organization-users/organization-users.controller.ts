@@ -43,6 +43,7 @@ export class OrganizationUsersController {
     @Param('organization_id') organization_id: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('search') search?: string,
   ): Promise<{ results: OrganizationUser[]; total: number }> {
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 20;
@@ -50,6 +51,7 @@ export class OrganizationUsersController {
       organization_id,
       pageNum,
       limitNum,
+      search,
     );
   }
 

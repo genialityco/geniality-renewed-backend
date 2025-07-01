@@ -66,15 +66,25 @@ export class OrganizationUsersService {
     organization_id: string,
     page = 1,
     limit = 20,
+    search?: string, // <--- Añadido
   ): Promise<{ results: OrganizationUser[]; total: number }> {
     const skip = (page - 1) * limit;
+
+    // Armar filtro base
+    const filter: any = { organization_id };
+
+    // Si hay search, buscar en properties.email, properties.name, properties.names
+    if (search && search.trim() !== '') {
+      filter.$or = [
+        { 'properties.email': { $regex: search, $options: 'i' } },
+        { 'properties.name': { $regex: search, $options: 'i' } },
+        { 'properties.names': { $regex: search, $options: 'i' } },
+      ];
+    }
+
     const [results, total] = await Promise.all([
-      this.organizationUserModel
-        .find({ organization_id })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      this.organizationUserModel.countDocuments({ organization_id }),
+      this.organizationUserModel.find(filter).skip(skip).limit(limit).exec(),
+      this.organizationUserModel.countDocuments(filter),
     ]);
     return { results, total };
   }
