@@ -30,6 +30,7 @@
     "aws-sdk": "^2.1692.0",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
+    "firebase-admin": "^13.4.0",
     "mongoose": "^8.10.0",
     "openai": "^4.85.1",
     "reflect-metadata": "^0.2.0",

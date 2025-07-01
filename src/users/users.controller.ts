@@ -36,4 +36,20 @@ export class UsersController {
   async findAll(): Promise<User[]> {
     return this.usersService.findAll();
   }
+
+  @Post('change-password')
+  async changePassword(@Body() body: { uid: string; newPassword: string }) {
+    return this.usersService.changePasswordByUid(body.uid, body.newPassword);
+  }
+
+  // Cambiar por email (opcional)
+  @Post('change-password-by-email')
+  async changePasswordByEmail(
+    @Body() body: { email: string; newPassword: string },
+  ) {
+    return this.usersService.changePasswordByEmail(
+      body.email,
+      body.newPassword,
+    );
+  }
 }
