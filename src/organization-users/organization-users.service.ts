@@ -83,7 +83,12 @@ export class OrganizationUsersService {
     }
 
     const [results, total] = await Promise.all([
-      this.organizationUserModel.find(filter).skip(skip).limit(limit).exec(),
+      this.organizationUserModel
+        .find(filter)
+        .skip(skip)
+        .limit(limit)
+        .populate('payment_plan_id') // <--- Poblamos el payment_plan_id
+        .exec(),
       this.organizationUserModel.countDocuments(filter),
     ]);
     return { results, total };

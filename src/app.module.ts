@@ -16,6 +16,7 @@ import { QuizAttemptModule } from './quiz-attempt/quiz-attempt.module';
 import { PaymentPlansModule } from './payment-plans/payment-plans.module';
 import { OrganizationUsersModule } from './organization-users/organization-users.module';
 import { EmailModule } from './email/email.module';
+import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { EmailModule } from './email/email.module';
     PaymentPlansModule,
     OrganizationUsersModule,
     EmailModule,
+    PaymentRequestsModule,
   ],
 })
 export class AppModule {}
