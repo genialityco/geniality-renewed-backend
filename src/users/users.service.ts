@@ -12,6 +12,7 @@ export class UsersService {
     uid: string,
     name: string,
     email: string,
+    phone?: string,
   ): Promise<User> {
     // Busca si ya existe usuario con ese firebase_uid
     const existingUser = await this.userModel.findOne({ uid }).exec();
@@ -19,10 +20,13 @@ export class UsersService {
       // Actualiza
       existingUser.names = name;
       existingUser.email = email;
+      if (phone) {
+        existingUser.phone = phone;
+      }
       return existingUser.save();
     } else {
       // Crea
-      const newUser = new this.userModel({ uid, names: name, email });
+      const newUser = new this.userModel({ uid, names: name, email, phone });
       return newUser.save();
     }
   }
@@ -33,6 +37,10 @@ export class UsersService {
       throw new NotFoundException('Usuario no encontrado');
     }
     return user;
+  }
+
+  async findByPhone(phone: string): Promise<User | null> {
+    return this.userModel.findOne({ phone }).exec();
   }
 
   async findById(id: string): Promise<User> {
