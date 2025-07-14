@@ -15,16 +15,25 @@ export class UsersController {
 
   @Post()
   async createOrUpdateUser(@Body() body: any): Promise<User> {
-    const { uid, name, email } = body;
+    const { uid, name, email, phone } = body;
     if (!uid || !email) {
       throw new NotFoundException('Faltan datos: uid, name, email');
     }
-    return this.usersService.createOrUpdateUser(uid, name, email);
+    return this.usersService.createOrUpdateUser(uid, name, email, phone);
   }
 
   @Get('/firebase/:uid')
   async getUserByFirebaseUid(@Param('uid') uid: string): Promise<User> {
     return this.usersService.findByFirebaseUid(uid);
+  }
+
+  @Get('/phone/:phone')
+  async getUserByPhone(@Param('phone') phone: string): Promise<User | null> {
+    const user = await this.usersService.findByPhone(phone);
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    return user;
   }
 
   @Get(':id')
