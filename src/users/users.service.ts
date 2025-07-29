@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from './schemas/user.schema';
@@ -32,10 +33,14 @@ export class UsersService {
   }
 
   async findByFirebaseUid(uid: string): Promise<User> {
-    const user = await this.userModel.findOne({ uid }).exec();
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
+    // Cada vez que se consulta por login, actualiza el sessionToken
+    const token = uuidv4();
+    const user = await this.userModel.findOneAndUpdate(
+      { uid },
+      { sessionToken: token },
+      { new: true },
+    );
+    if (!user) throw new NotFoundException('Usuario no encontrado');
     return user;
   }
 
@@ -65,5 +70,15 @@ export class UsersService {
   async changePasswordByEmail(email: string, newPassword: string) {
     const user = await admin.auth().getUserByEmail(email);
     return this.changePasswordByUid(user.uid, newPassword);
+  }
+
+  async updateSessionToken(uid: string): Promise<User> {
+    const token = uuidv4();
+    const user = await this.userModel.findOneAndUpdate(
+      { uid },
+      { sessionToken: token },
+      { new: true },
+    );
+    return user;
   }
 }

@@ -28,4 +28,33 @@ export class EmailController {
       };
     }
   }
+
+  @Post('custom')
+  async sendCustomEmail(
+    @Body()
+    body: {
+      to: string | string[];
+      subject: string;
+      html: string;
+      fromName?: string;
+      fromEmail?: string;
+      cc?: string | string[];
+      bcc?: string | string[];
+    },
+  ) {
+    try {
+      const result = await this.emailService.sendUniversalEmail(body);
+      return {
+        success: true,
+        message: 'Email enviado correctamente',
+        result,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: 'Error enviando email',
+        error: error.message,
+      };
+    }
+  }
 }

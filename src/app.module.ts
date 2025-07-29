@@ -17,6 +17,7 @@ import { PaymentPlansModule } from './payment-plans/payment-plans.module';
 import { OrganizationUsersModule } from './organization-users/organization-users.module';
 import { EmailModule } from './email/email.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
+// import { SessionTokenGuard } from './auth/session-token.guard';
 
 @Module({
   imports: [
@@ -39,5 +40,6 @@ import { PaymentRequestsModule } from './payment-requests/payment-requests.modul
     EmailModule,
     PaymentRequestsModule,
   ],
+  // providers: [SessionTokenGuard],
 })
 export class AppModule {}

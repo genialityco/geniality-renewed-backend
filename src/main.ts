@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+// import { SessionTokenGuard } from './auth/session-token.guard';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -7,6 +8,8 @@ async function bootstrap() {
   app.enableCors({
     origin: true,
   });
+
+  // app.useGlobalGuards(app.get(SessionTokenGuard));
 
   const port = process.env.PORT || 3000;
   await app.listen(port, () =>

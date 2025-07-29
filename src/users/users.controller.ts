@@ -22,6 +22,11 @@ export class UsersController {
     return this.usersService.createOrUpdateUser(uid, name, email, phone);
   }
 
+  @Post('/refresh-session')
+  async refreshSessionToken(@Body() body: { uid: string }) {
+    return this.usersService.updateSessionToken(body.uid);
+  }
+
   @Get('/firebase/:uid')
   async getUserByFirebaseUid(@Param('uid') uid: string): Promise<User> {
     return this.usersService.findByFirebaseUid(uid);
