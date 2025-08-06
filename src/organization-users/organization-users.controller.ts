@@ -61,4 +61,15 @@ export class OrganizationUsersController {
   ): Promise<OrganizationUser | null> {
     return this.organizationUsersService.findByEmail(email);
   }
+
+  @Get('all-by-organization/:organization_id')
+  async getAllUsersByOrganizationId(
+    @Param('organization_id') organization_id: string,
+    @Query('search') search?: string,
+  ): Promise<OrganizationUser[]> {
+    return this.organizationUsersService.findAllByOrganizationId(
+      organization_id,
+      search,
+    );
+  }
 }

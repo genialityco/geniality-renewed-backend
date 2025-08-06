@@ -99,4 +99,25 @@ export class OrganizationUsersService {
       .findOne({ 'properties.email': email })
       .exec();
   }
+
+  async findAllByOrganizationId(
+    organization_id: string,
+    search?: string,
+  ): Promise<OrganizationUser[]> {
+    // Armar el filtro
+    const filter: any = { organization_id };
+    if (search && search.trim() !== '') {
+      filter.$or = [
+        { 'properties.email': { $regex: search, $options: 'i' } },
+        { 'properties.name': { $regex: search, $options: 'i' } },
+        { 'properties.names': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    // Devolver todos los resultados sin paginación
+    return this.organizationUserModel
+      .find(filter)
+      .populate('payment_plan_id')
+      .exec();
+  }
 }
