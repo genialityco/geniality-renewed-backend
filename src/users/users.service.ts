@@ -32,14 +32,11 @@ export class UsersService {
     }
   }
 
+  // Antes: SIEMPRE actualizaba el token en cada GET
+  // users.service.ts
   async findByFirebaseUid(uid: string): Promise<User> {
-    // Cada vez que se consulta por login, actualiza el sessionToken
-    const token = uuidv4();
-    const user = await this.userModel.findOneAndUpdate(
-      { uid },
-      { sessionToken: token },
-      { new: true },
-    );
+    // Solo lee, no cambia el token
+    const user = await this.userModel.findOne({ uid }).exec();
     if (!user) throw new NotFoundException('Usuario no encontrado');
     return user;
   }
