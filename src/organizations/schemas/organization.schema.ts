@@ -1,5 +1,6 @@
+// src/organizations/schemas/organization.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, Types, Schema as MongooseSchema } from 'mongoose';
 
 class AccessSettings {
   @Prop() days: number;
@@ -14,6 +15,8 @@ export class Organization extends Document {
   @Prop() description: string;
   @Prop({ type: () => AccessSettings }) access_settings: AccessSettings;
   @Prop() visibility: 'PUBLIC' | 'PRIVATE';
+  @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
+  user_properties: any[];
 }
 
 export const OrganizationSchema = SchemaFactory.createForClass(Organization);
