@@ -1,3 +1,4 @@
+// users.controller.ts
 import {
   Controller,
   Get,
@@ -24,7 +25,7 @@ export class UsersController {
 
   @Post('/refresh-session')
   async refreshSessionToken(@Body() body: { uid: string }) {
-    return this.usersService.updateSessionToken(body.uid);
+    return this.usersService.updateSessionToken(body.uid); // => { sessionToken, user }
   }
 
   @Get('/firebase/:uid')
@@ -35,9 +36,7 @@ export class UsersController {
   @Get('/phone/:phone')
   async getUserByPhone(@Param('phone') phone: string): Promise<User | null> {
     const user = await this.usersService.findByPhone(phone);
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
+    if (!user) throw new NotFoundException('Usuario no encontrado');
     return user;
   }
 
@@ -56,7 +55,6 @@ export class UsersController {
     return this.usersService.changePasswordByUid(body.uid, body.newPassword);
   }
 
-  // Cambiar por email (opcional)
   @Post('change-password-by-email')
   async changePasswordByEmail(
     @Body() body: { email: string; newPassword: string },

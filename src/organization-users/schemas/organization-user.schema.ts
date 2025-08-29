@@ -7,7 +7,7 @@ export class OrganizationUser extends Document {
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
   properties: any;
 
-  @Prop({ required: true })
+  @Prop({ required: false, default: null })
   rol_id: string;
 
   @Prop({

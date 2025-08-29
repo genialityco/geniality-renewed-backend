@@ -1,3 +1,4 @@
+// users.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
@@ -15,29 +16,32 @@ export class UsersService {
     email: string,
     phone?: string,
   ): Promise<User> {
-    // Busca si ya existe usuario con ese firebase_uid
     const existingUser = await this.userModel.findOne({ uid }).exec();
     if (existingUser) {
-      // Actualiza
       existingUser.names = name;
       existingUser.email = email;
-      if (phone) {
-        existingUser.phone = phone;
-      }
+      if (phone) existingUser.phone = phone;
+      // Asegura que exista el arreglo:
+      if (!Array.isArray(existingUser.sessionTokens))
+        existingUser.sessionTokens = [];
       return existingUser.save();
     } else {
-      // Crea
-      const newUser = new this.userModel({ uid, names: name, email, phone });
+      const newUser = new this.userModel({
+        uid,
+        names: name,
+        email,
+        phone,
+        sessionTokens: [],
+      });
       return newUser.save();
     }
   }
 
-  // Antes: SIEMPRE actualizaba el token en cada GET
-  // users.service.ts
   async findByFirebaseUid(uid: string): Promise<User> {
-    // Solo lee, no cambia el token
     const user = await this.userModel.findOne({ uid }).exec();
     if (!user) throw new NotFoundException('Usuario no encontrado');
+    // Asegura consistencia:
+    if (!Array.isArray(user.sessionTokens)) user.sessionTokens = [];
     return user;
   }
 
@@ -47,9 +51,8 @@ export class UsersService {
 
   async findById(id: string): Promise<User> {
     const user = await this.userModel.findById(id).exec();
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (!Array.isArray(user.sessionTokens)) user.sessionTokens = [];
     return user;
   }
 
@@ -58,24 +61,41 @@ export class UsersService {
   }
 
   async changePasswordByUid(uid: string, newPassword: string) {
-    // Cambia la contraseña de cualquier usuario
     await admin.auth().updateUser(uid, { password: newPassword });
     return { success: true, message: 'Contraseña cambiada correctamente' };
   }
 
-  // Si solo tienes el correo:
   async changePasswordByEmail(email: string, newPassword: string) {
     const user = await admin.auth().getUserByEmail(email);
     return this.changePasswordByUid(user.uid, newPassword);
   }
 
-  async updateSessionToken(uid: string): Promise<User> {
-    const token = uuidv4();
+  /**
+   * Genera un token, lo agrega a la lista y recorta a los 2 más recientes.
+   * Devuelve el token generado, además del documento de usuario.
+   */
+  async updateSessionToken(
+    uid: string,
+  ): Promise<{ sessionToken: string; user: User }> {
+    const newToken = uuidv4();
+
     const user = await this.userModel.findOneAndUpdate(
       { uid },
-      { sessionToken: token },
+      {
+        $push: {
+          sessionTokens: {
+            $each: [{ token: newToken, createdAt: new Date() }],
+            $slice: -2, // Mantiene solo los 2 últimos
+          },
+        },
+        // (Opcional) Limpia el legacy field si existiera:
+        $unset: { sessionToken: '' },
+      },
       { new: true },
     );
-    return user;
+
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    return { sessionToken: newToken, user };
   }
 }
