@@ -3,13 +3,16 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
+import { EmailService } from 'src/email/email.service';
+import { buildAccountEmailHtml } from 'src/templates/account-email.template';
 
 @Injectable()
 export class OrganizationUsersService {
   constructor(
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
-  ) {}
+    private readonly emailService: EmailService,
+  ) { }
 
   async createOrUpdateUser(
     properties: any,
@@ -28,8 +31,21 @@ export class OrganizationUsersService {
       if (payment_plan_id) {
         existingUser.payment_plan_id = payment_plan_id;
       }
-      return existingUser.save();
+      const saved = await existingUser.save();
+      // Email destino (prioriza el que llega en properties)
+      const toEmail =
+        properties?.email ||
+        saved?.properties?.email ||
+        null;
+      if (toEmail) {
+        const subject = 'Tu cuenta en EndoCampus fue actualizada';
+        const html = buildAccountEmailHtml('actualizada', saved.properties.nombres);
+        // no bloquear la respuesta si el email falla
+        this.sendEmailSafely(toEmail, subject, html);
+      }
+      return saved;
     }
+    // -------- crear --------
     const newUser = new this.organizationUserModel({
       properties,
       rol_id,
@@ -37,7 +53,17 @@ export class OrganizationUsersService {
       user_id,
       payment_plan_id,
     });
-    return newUser.save();
+    const saved = await newUser.save();
+    const toEmail =
+      properties?.email ||
+      saved?.properties?.email ||
+      null;
+    if (toEmail) {
+      const subject = '¡Bienvenido! Tu cuenta en EndoCampus fue creada';
+      const html = buildAccountEmailHtml('creada',saved.properties.nombres);
+      this.sendEmailSafely(toEmail, subject, html);
+    }
+    return saved;
   }
 
   async findByUserId(user_id: string): Promise<OrganizationUser> {
@@ -120,4 +146,13 @@ export class OrganizationUsersService {
       .populate('payment_plan_id')
       .exec();
   }
+
+  private async sendEmailSafely(to: string, subject: string, html: string) {
+    try {
+      await this.emailService.sendEmail(to, subject, html);
+    } catch (err: any) {
+      console.log(`No se pudo enviar email a ${to}: ${err?.message || err}`);
+    }
+  }
+
 }
