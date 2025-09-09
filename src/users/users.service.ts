@@ -1,5 +1,9 @@
 // users.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -60,14 +64,130 @@ export class UsersService {
     return this.userModel.find().exec();
   }
 
+  // ===== CAMBIAR CONTRASEÑA =====
   async changePasswordByUid(uid: string, newPassword: string) {
-    await admin.auth().updateUser(uid, { password: newPassword });
+    if (!newPassword || newPassword.trim().length < 6) {
+      throw new BadRequestException(
+        'La contraseña debe tener al menos 6 caracteres.',
+      );
+    }
+    await admin.auth().updateUser(uid, { password: newPassword.trim() });
     return { success: true, message: 'Contraseña cambiada correctamente' };
   }
 
   async changePasswordByEmail(email: string, newPassword: string) {
-    const user = await admin.auth().getUserByEmail(email);
+    const cleanEmail = (email || '').trim().toLowerCase();
+    if (!cleanEmail) throw new BadRequestException('Email requerido.');
+    const user = await admin
+      .auth()
+      .getUserByEmail(cleanEmail)
+      .catch(() => null);
+    if (!user)
+      throw new NotFoundException(
+        'No existe un usuario con ese email en Firebase.',
+      );
     return this.changePasswordByUid(user.uid, newPassword);
+  }
+
+  // ===== CAMBIAR EMAIL =====
+  async changeEmailByUid(uid: string, newEmail: string) {
+    const cleanEmail = (newEmail || '').trim().toLowerCase();
+    if (!cleanEmail) throw new BadRequestException('Nuevo email requerido.');
+
+    // 1) Actualiza en Firebase
+    const updated = await admin.auth().updateUser(uid, { email: cleanEmail });
+
+    // 2) Sincroniza en Mongo si existe
+    const userDoc = await this.userModel.findOne({ uid }).exec();
+    if (userDoc) {
+      userDoc.email = cleanEmail;
+      await userDoc.save();
+    }
+
+    return {
+      success: true,
+      message: 'Email actualizado correctamente',
+      uid: updated.uid,
+      email: cleanEmail,
+    };
+  }
+
+  async changeEmailByCurrentEmail(currentEmail: string, newEmail: string) {
+    const cleanCurrent = (currentEmail || '').trim().toLowerCase();
+    const user = await admin
+      .auth()
+      .getUserByEmail(cleanCurrent)
+      .catch(() => null);
+    if (!user)
+      throw new NotFoundException(
+        'No existe un usuario con ese email en Firebase.',
+      );
+    return this.changeEmailByUid(user.uid, newEmail);
+  }
+
+  // ===== CAMBIAR AMBOS (EMAIL y/o PASSWORD) =====
+  /**
+   * Cambia email y/o password en Firebase y sincroniza Mongo.
+   * Cualquier campo es opcional, pero al menos uno debe venir.
+   */
+  async changeCredentials(opts: {
+    uid?: string;
+    currentEmail?: string;
+    newEmail?: string;
+    newPassword?: string;
+  }) {
+    const { uid, currentEmail, newEmail, newPassword } = opts;
+
+    if (!newEmail && !newPassword) {
+      throw new BadRequestException('Debes enviar newEmail y/o newPassword.');
+    }
+
+    let targetUid = uid;
+
+    if (!targetUid && currentEmail) {
+      const user = await admin
+        .auth()
+        .getUserByEmail(currentEmail.trim().toLowerCase())
+        .catch(() => null);
+      if (!user)
+        throw new NotFoundException(
+          'No existe un usuario con ese email en Firebase.',
+        );
+      targetUid = user.uid;
+    }
+
+    if (!targetUid) {
+      throw new BadRequestException('Debes enviar uid o currentEmail.');
+    }
+
+    const update: admin.auth.UpdateRequest = {};
+    if (newEmail) update.email = newEmail.trim().toLowerCase();
+    if (newPassword) {
+      if (newPassword.trim().length < 6) {
+        throw new BadRequestException(
+          'La contraseña debe tener al menos 6 caracteres.',
+        );
+      }
+      update.password = newPassword.trim();
+    }
+
+    const updated = await admin.auth().updateUser(targetUid, update);
+
+    // Sincroniza email en Mongo si cambió
+    if (newEmail) {
+      const userDoc = await this.userModel.findOne({ uid: targetUid }).exec();
+      if (userDoc) {
+        userDoc.email = newEmail.trim().toLowerCase();
+        await userDoc.save();
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Credenciales actualizadas correctamente',
+      uid: updated.uid,
+      email: updated.email,
+    };
   }
 
   /**

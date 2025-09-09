@@ -64,4 +64,33 @@ export class UsersController {
       body.newPassword,
     );
   }
+
+  @Post('change-email-by-uid')
+  async changeEmailByUid(@Body() body: { uid: string; newEmail: string }) {
+    return this.usersService.changeEmailByUid(body.uid, body.newEmail);
+  }
+
+  @Post('change-email-by-email')
+  async changeEmailByEmail(
+    @Body() body: { currentEmail: string; newEmail: string },
+  ) {
+    return this.usersService.changeEmailByCurrentEmail(
+      body.currentEmail,
+      body.newEmail,
+    );
+  }
+
+  // Cambiar ambos (email y/o password) con uid o currentEmail
+  @Post('change-credentials')
+  async changeCredentials(
+    @Body()
+    body: {
+      uid?: string;
+      currentEmail?: string;
+      newEmail?: string;
+      newPassword?: string;
+    },
+  ) {
+    return this.usersService.changeCredentials(body);
+  }
 }
