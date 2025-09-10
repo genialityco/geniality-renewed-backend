@@ -25,7 +25,7 @@ export function buildAccountEmailHtml(
             Ya puedes acceder a todos nuestros servicios y comenzar a disfrutar de la plataforma.
           </p>
           <div style="text-align:center; margin: 30px 0;">
-            <a href="https://endocampus.com/login" 
+            <a href="https://gencampus-renewed.netlify.app/organization/63f552d916065937427b3b02" 
                style="background:#003366; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:4px; font-weight:bold; display:inline-block;">
               Ingresar a mi cuenta
             </a>
