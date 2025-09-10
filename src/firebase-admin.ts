@@ -1,30 +1,71 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
-// src/firebase-admin.ts
+/* src/firebase-admin.ts */
+import 'dotenv/config'; // Asegura que .env está cargado ANTES de leer process.env
 import * as admin from 'firebase-admin';
-import * as path from 'path';
 import * as fs from 'fs';
+import * as path from 'path';
 
-let serviceAccount: any;
+type SA = admin.ServiceAccount;
 
-if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-  // Toma la variable de entorno en producción (JSON en una sola línea)
-  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-} else {
-  // Toma el archivo local en desarrollo
-  const serviceAccountPath = path.resolve(__dirname, '../firebase-sdk.json');
-  // Para evitar error si no existe, verifica existencia del archivo
-  if (!fs.existsSync(serviceAccountPath)) {
-    throw new Error(
-      'No se encontró firebase-sdk.json y no se configuró la variable FIREBASE_SERVICE_ACCOUNT',
-    );
+function readJsonFile(p: string) {
+  const raw = fs.readFileSync(p, 'utf8');
+  return JSON.parse(raw);
+}
+
+function normalizePrivateKey<T extends { private_key?: string }>(obj: T): T {
+  if (obj && typeof obj.private_key === 'string') {
+    // Corrige claves con \n escapados provenientes de variables de entorno
+    obj.private_key = obj.private_key.replace(/\\n/g, '\n');
   }
-  serviceAccount = require(serviceAccountPath);
+  return obj;
 }
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+function loadServiceAccount(): SA {
+  // 1) JSON en variable de entorno
+  const envJson = process.env.FIREBASE_SERVICE_ACCOUNT?.trim();
+  if (envJson && envJson !== 'undefined') {
+    const parsed = JSON.parse(envJson);
+    return normalizePrivateKey(parsed);
+  }
+
+  // 2) Base64 en variable de entorno (opcional)
+  const envB64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64?.trim();
+  if (envB64) {
+    const json = Buffer.from(envB64, 'base64').toString('utf8');
+    const parsed = JSON.parse(json);
+    return normalizePrivateKey(parsed);
+  }
+
+  // 3) GOOGLE_APPLICATION_CREDENTIALS apunta a un archivo
+  const gacPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (gacPath && fs.existsSync(gacPath)) {
+    const parsed = readJsonFile(gacPath);
+    return normalizePrivateKey(parsed);
+  }
+
+  // 4) Archivo en la RAÍZ del proyecto (no en src). Usamos cwd para evitar dist/.
+  const candidate = path.join(process.cwd(), 'firebase-sdk.json');
+  if (fs.existsSync(candidate)) {
+    const parsed = readJsonFile(candidate);
+    return normalizePrivateKey(parsed);
+  }
+
+  throw new Error(
+    'No se encontró ninguna credencial de Firebase: define FIREBASE_SERVICE_ACCOUNT (JSON), ' +
+      'FIREBASE_SERVICE_ACCOUNT_B64 (base64), GOOGLE_APPLICATION_CREDENTIALS (ruta), o coloca firebase-sdk.json en la raíz del proyecto.',
+  );
 }
 
+let alreadyInit = false;
+
+function ensureFirebase() {
+  if (!alreadyInit && !admin.apps.length) {
+    const sa = loadServiceAccount();
+    admin.initializeApp({
+      credential: admin.credential.cert(sa),
+    });
+    alreadyInit = true;
+  }
+}
+
+ensureFirebase();
 export default admin;
