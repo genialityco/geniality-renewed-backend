@@ -62,7 +62,7 @@ export class WompiController {
   async syncByTransaction(@Param('id') id: string) {
     if (!id) throw new BadRequestException('transaction id requerido');
 
-    const { data: tx } = (await this.wompi.getTransaction(id)) as { data: any };
+    const { data: tx } = (await this.wompi.getTransaction(id)) as any;
 
     const updated = await this.prService.safeUpdateStatus({
       reference: tx.reference,
@@ -70,6 +70,12 @@ export class WompiController {
       transactionId: tx.id,
       source: 'poll',
     });
+
+    if (!updated) {
+      throw new BadRequestException(
+        `No existe PaymentRequest con reference ${tx.reference}`,
+      );
+    }
 
     if (tx.status === 'APPROVED') {
       await this.prService.activateMembershipForPayment(

@@ -1,4 +1,12 @@
-import { Controller, Post, Body, Get, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Param,
+  UseGuards,
+  NotFoundException,
+} from '@nestjs/common';
 import { PaymentRequestsService } from './payment-requests.service';
 import { WompiWebhookGuard } from 'src/wompi/wompi-webhook.guard';
 
@@ -63,6 +71,24 @@ export class PaymentRequestsController {
       );
     }
 
+    return { ok: true };
+  }
+
+  @Post(':reference/link-transaction')
+  async linkTx(
+    @Param('reference') reference: string,
+    @Body() dto: { transactionId: string },
+  ) {
+    const pr = await this.service.findByReference(reference);
+    if (!pr) throw new NotFoundException('PR no encontrado');
+
+    if (!pr.transactionId) {
+      await this.service.updateStatusAndTransactionId(
+        reference,
+        pr.status,
+        dto.transactionId,
+      );
+    }
     return { ok: true };
   }
 }

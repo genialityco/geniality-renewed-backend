@@ -16,15 +16,26 @@ type WompiTxn = {
 export class WompiService {
   private readonly isProd = process.env.WOMPI_ENV === 'production';
 
-  private readonly base =
-    process.env.WOMPI_BASE_URL ??
-    (this.isProd
-      ? 'https://production.wompi.co/v1'
-      : 'https://api-sandbox.wompi.co/v1');
+  private readonly base = this.isProd
+    ? 'https://production.wompi.co/v1'
+    : 'https://api-sandbox.wompi.co/v1';
 
   private readonly privateKey = this.isProd
     ? process.env.WOMPI_PRIVATE_KEY_PROD
     : process.env.WOMPI_PRIVATE_KEY_TEST;
+
+  constructor() {
+    const key = this.privateKey ?? '';
+    const prodHost = this.base.includes('production.wompi.co');
+    const sandboxHost = this.base.includes('api-sandbox.wompi.co');
+    const testKey = key.startsWith('prv_test_');
+    const liveKey = key.startsWith('prv_live_');
+    if ((prodHost && testKey) || (sandboxHost && liveKey)) {
+      throw new Error(
+        `[WOMPI CONFIG] Inconsistencia: base=${this.base} con key tipo ${testKey ? 'TEST' : 'LIVE'}`,
+      );
+    }
+  }
 
   private get authHeader() {
     if (!this.privateKey) throw new Error('WOMPI private key no configurada');

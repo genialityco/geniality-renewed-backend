@@ -40,12 +40,15 @@ export class PaymentRequestsService {
   async updateStatusAndTransactionId(
     reference: string,
     status: string,
-    transactionId: string,
+    transactionId?: string,
     rawWebhook: any = null,
   ) {
+    const $set: any = { status };
+    if (transactionId) $set.transactionId = transactionId;
+    if (rawWebhook) $set.rawWebhook = rawWebhook;
     return this.paymentRequestModel.findOneAndUpdate(
       { reference },
-      { status, transactionId, ...(rawWebhook ? { rawWebhook } : {}) },
+      { $set },
       { new: true },
     );
   }
@@ -99,13 +102,6 @@ export class PaymentRequestsService {
     // 3. Asociar el PaymentPlan al organizationUser
     organizationUser.payment_plan_id = paymentPlan._id as unknown as string;
     await organizationUser.save();
-
-    // (Opcional) Actualiza el estado del PaymentRequest si necesitas
-    await this.updateStatusAndTransactionId(
-      paymentRequest.reference,
-      'APPROVED',
-      paymentRequest.transactionId,
-    );
   }
 
   // src/payment-requests/payment-requests.service.ts
