@@ -32,7 +32,9 @@ export class WompiReconcile {
             continue;
           }
 
-          const tx = (await this.wompi.getTransaction(p.transactionId)) as {
+          const tx = (await this.wompi.getTransaction(
+            p.transactionId,
+          )) as unknown as {
             status?: string;
             reference: string;
             id: string;
