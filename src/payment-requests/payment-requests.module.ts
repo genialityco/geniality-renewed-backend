@@ -16,6 +16,7 @@ import {
 
 import { PaymentRequestsService } from './payment-requests.service';
 import { PaymentRequestsController } from './payment-requests.controller';
+import { PaymentPlansModule } from 'src/payment-plans/payment-plans.module';
 
 @Module({
   imports: [
@@ -24,9 +25,10 @@ import { PaymentRequestsController } from './payment-requests.controller';
       { name: OrganizationUser.name, schema: OrganizationUserSchema },
       { name: PaymentPlan.name, schema: PaymentPlanSchema },
     ]),
+    PaymentPlansModule,
   ],
   controllers: [PaymentRequestsController],
   providers: [PaymentRequestsService],
-  exports: [PaymentRequestsService],
+  exports: [PaymentRequestsService ],
 })
 export class PaymentRequestsModule {}

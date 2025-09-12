@@ -1,6 +1,16 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as AWS from 'aws-sdk';
+import * as fs from 'fs';
+import * as path from 'path';
+import { renderEmailLayout } from 'src/templates/Layout';
+
+type InlineImage = {
+  cid: string;
+  filename: string;
+  absPath: string;
+  contentType?: string;
+};
 
 @Injectable()
 export class EmailService {
@@ -8,6 +18,12 @@ export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private readonly from: string;
   private readonly fromName: string;
+
+  // Rutas locales por defecto (puedes sobreescribir con envs abajo)
+  private readonly defaultHeroPath =
+    'D:\\Trabajo\\Geniallity\\Repo\\Geniallity\\geniality-renewed-backend\\public\\img\\MAILS_HEADER.png';
+  private readonly defaultLogosPath =
+    'D:\\Trabajo\\Geniallity\\Repo\\Geniallity\\geniality-renewed-backend\\public\\img\\LOGOS_FOOTER.png';
 
   constructor(private configService: ConfigService) {
     this.ses = new AWS.SES({
@@ -171,5 +187,132 @@ export class EmailService {
       );
       throw error;
     }
+  }
+  // =======================
+  //   SendRawEmail + CIDs
+  // =======================
+  private guessContentType(file: string): string {
+    const ext = path.extname(file).toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+    if (ext === '.gif') return 'image/gif';
+    if (ext === '.webp') return 'image/webp';
+    return 'application/octet-stream';
+  }
+
+  /** Imágenes por defecto del layout (header/footer) */
+  private defaultLayoutInlineImages(): InlineImage[] {
+    const heroPath =
+      this.configService.get<string>('MAIL_HERO_PATH') || this.defaultHeroPath;
+    const logosPath =
+      this.configService.get<string>('MAIL_LOGOS_PATH') || this.defaultLogosPath;
+
+    return [
+      {
+        cid: 'hero@endo',
+        filename: path.basename(heroPath) || 'MAILS_HEADER.png',
+        absPath: heroPath,
+        contentType: this.guessContentType(heroPath),
+      },
+      {
+        cid: 'logos-footer@endo',
+        filename: path.basename(logosPath) || 'LOGOS_FOOTER.png',
+        absPath: logosPath,
+        contentType: this.guessContentType(logosPath),
+      },
+    ];
+  }
+
+  /** Enviar con MIME multipart/related y adjuntos inline (CIDs) */
+  async sendRawEmailWithInlineImages(
+    to: string | string[],
+    subject: string,
+    html: string,
+    images: InlineImage[],
+  ) {
+    const fromName = 'EndoCampus'; // Fijo (como tenías)
+    const source = this.buildSource(this.from, fromName);
+    const toList = this.prepareAddressList(to, 'to');
+    if (!toList.length) throw new BadRequestException('Falta destinatario');
+
+    const boundary = `REL-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const lines: string[] = [];
+
+    // Parte HTML
+    lines.push(
+      `From: ${source}`,
+      `To: ${toList.join(', ')}`,
+      `Subject: ${subject}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/related; boundary="${boundary}"`,
+      ``,
+      `--${boundary}`,
+      `Content-Type: text/html; charset="UTF-8"`,
+      `Content-Transfer-Encoding: 7bit`,
+      ``,
+      html,
+    );
+
+    // Adjuntos inline
+    for (const img of images) {
+      const fullPath = path.resolve(img.absPath);
+      if (!fs.existsSync(fullPath)) {
+        this.logger.error(`[SendRawEmail] Imagen no encontrada: ${fullPath} (cid=${img.cid})`);
+        throw new BadRequestException(`No se encontró la imagen para el correo: ${img.filename}`);
+      }
+      const buf = fs.readFileSync(fullPath);
+      const b64 = buf.toString('base64');
+
+      lines.push(
+        ``,
+        `--${boundary}`,
+        `Content-Type: ${img.contentType || 'image/png'}`,
+        `Content-Transfer-Encoding: base64`,
+        `Content-ID: <${img.cid}>`,
+        `Content-Disposition: inline; filename="${img.filename}"`,
+        ``,
+        b64,
+      );
+    }
+
+    // Cierre
+    lines.push(``, `--${boundary}--`, ``);
+
+    const rawData = lines.join('\r\n');
+    const params: AWS.SES.SendRawEmailRequest = {
+      RawMessage: { Data: Buffer.from(rawData) },
+      Source: source,
+      Destinations: toList,
+    };
+
+    const result = await this.ses.sendRawEmail(params).promise();
+    this.logger.log(`[SendRawEmail] enviado a ${toList.join(', ')} (MessageId: ${result.MessageId})`);
+    return result;
+  }
+
+  /**
+   * Recibe SOLO el contentHtml. El layout (header/footer con CIDs) lo arma aquí.
+   * Opcional: preheader y custom CIDs (si tuvieras variantes).
+   */
+  async sendLayoutEmail(
+    to: string | string[],
+    subject: string,
+    contentHtml: string,
+    opts?: { preheader?: string; heroCid?: string; logosCid?: string; blueBar?: boolean },
+  ) {
+    // 1) Render del layout con el content variable
+    const fullHtml = renderEmailLayout({
+      contentHtml,
+      preheader: opts?.preheader,
+      heroCid: opts?.heroCid || 'hero@endo',
+      logosCid: opts?.logosCid || 'logos-footer@endo',
+      blueBar: opts?.blueBar ?? true,
+    });
+
+    // 2) Adjuntar imágenes del layout (header/footer)
+    const images = this.defaultLayoutInlineImages();
+
+    // 3) Enviar por RAW + CIDs
+    return this.sendRawEmailWithInlineImages(to, subject, fullHtml, images);
   }
 }

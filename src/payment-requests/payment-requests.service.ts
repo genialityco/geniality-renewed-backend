@@ -9,6 +9,7 @@ import {
 // Importa tus modelos
 import { OrganizationUser } from '../organization-users/schemas/organization-user.schema';
 import { PaymentPlan } from '../payment-plans/schemas/payment-plan.schema';
+import { PaymentPlansService } from '../payment-plans/payment-plans.service';
 
 @Injectable()
 export class PaymentRequestsService {
@@ -21,7 +22,8 @@ export class PaymentRequestsService {
 
     @InjectModel(PaymentPlan.name)
     private paymentPlanModel: Model<PaymentPlan>,
-  ) {}
+    private readonly paymentPlansService: PaymentPlansService,
+  ) { }
 
   async create(data: Partial<PaymentRequest>): Promise<PaymentRequest> {
     return this.paymentRequestModel.create(data);
@@ -89,6 +91,11 @@ export class PaymentRequestsService {
       paymentPlan.date_until = dateUntil;
       paymentPlan.price = amount;
       await paymentPlan.save();
+      await this.paymentPlansService.updateDateUntil(
+        paymentPlan._id.toString(),
+        dateUntil,
+        organizationUser.properties?.name || 'Usuario',
+      );
     } else {
       // Si no tiene, crea uno nuevo
       paymentPlan = await this.paymentPlanModel.create({
@@ -97,6 +104,13 @@ export class PaymentRequestsService {
         price: amount,
         organization_user_id: organizationUser._id,
       });
+      await this.paymentPlansService.createPaymentPlan(
+        organizationUser._id.toString(),
+        MEMBERSHIP_DAYS,
+        dateUntil,
+        amount,
+        organizationUser.properties?.name || 'Usuario',
+      );
     }
 
     // 3. Asociar el PaymentPlan al organizationUser
@@ -114,12 +128,12 @@ export class PaymentRequestsService {
   }: {
     reference: string;
     nextStatus:
-      | 'CREATED'
-      | 'PENDING'
-      | 'APPROVED'
-      | 'DECLINED'
-      | 'VOIDED'
-      | 'ERROR';
+    | 'CREATED'
+    | 'PENDING'
+    | 'APPROVED'
+    | 'DECLINED'
+    | 'VOIDED'
+    | 'ERROR';
     transactionId?: string;
     source: 'webhook' | 'poll' | 'redirect';
     rawWebhook?: any;

@@ -5,6 +5,7 @@ import { Model } from 'mongoose';
 import { PaymentPlan } from './schemas/payment-plan.schema';
 import { OrganizationUser } from '../organization-users/schemas/organization-user.schema'; // Ajusta la ruta según tu estructura
 import { EmailService } from '../email/email.service'; // Ajusta la ruta
+import { renderSubscriptionContent } from '../templates/PaySuscription';
 
 @Injectable()
 export class PaymentPlansService {
@@ -14,7 +15,7 @@ export class PaymentPlansService {
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
     private readonly emailService: EmailService,
-  ) {}
+  ) { }
 
   // Método para obtener el email a partir del organizationUserId
   private async getEmailByOrganizationUserId(
@@ -25,6 +26,7 @@ export class PaymentPlansService {
       .exec();
     return orgUser?.properties?.email || null;
   }
+
 
   // Método para obtener el plan de pago de una organización (o usuario) por su ID
   async getPaymentPlanByOrganizationUserId(
@@ -59,7 +61,9 @@ export class PaymentPlansService {
     days: number,
     date_until: Date,
     price: number,
+    UserName?: string,
   ): Promise<PaymentPlan> {
+    const URL = `https://gencampus-renewed.netlify.app/organization/${organizationUserId}`;
     const newPlan = new this.paymentPlanModel({
       organization_user_id: organizationUserId,
       days,
@@ -67,14 +71,24 @@ export class PaymentPlansService {
       price,
     });
     const plan = await newPlan.save();
-
     // ENVÍA EMAIL: Adquirió una suscripción
     const email = await this.getEmailByOrganizationUserId(organizationUserId);
     if (email) {
-      await this.emailService.sendEmail(
+      // await this.emailService.sendEmail(
+      //   email,
+      //   'Adquirió una suscripción',
+      //   `<p>¡Gracias por adquirir tu suscripción! Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
+      // );
+      const html = renderSubscriptionContent({
+        orgUrl: URL,
+        dateUntil: date_until,
+        variant: 'created',
+      });
+      const Subject = '¡Gracias por tu suscripción a EndoCampus!';
+      await this.emailService.sendLayoutEmail(
         email,
-        'Adquirió una suscripción',
-        `<p>¡Gracias por adquirir tu suscripción! Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
+        Subject,     // subject
+        html,
       );
     }
     return plan;
@@ -84,6 +98,7 @@ export class PaymentPlansService {
   async updateDateUntil(
     paymentPlanId: string,
     date_until: Date,
+    UserName?: string,
   ): Promise<PaymentPlan> {
     const plan = await this.paymentPlanModel.findByIdAndUpdate(
       paymentPlanId,
@@ -93,16 +108,27 @@ export class PaymentPlansService {
     if (!plan) {
       throw new NotFoundException('PaymentPlan no encontrado');
     }
-
     // ENVÍA EMAIL: Actualizó la suscripción
     const email = await this.getEmailByOrganizationUserId(
       plan.organization_user_id,
     );
     if (email) {
-      await this.emailService.sendEmail(
+      // await this.emailService.sendEmail(
+      //   email,
+      //   'Actualizó la suscripción',
+      //   `<p>Has actualizado la vigencia de tu suscripción. Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
+      // );
+      const URL = `https://gencampus-renewed.netlify.app/organization/${plan.organization_user_id}`;
+      const html = renderSubscriptionContent({
+        orgUrl: URL,
+        dateUntil: date_until,
+        variant: 'updated',
+      });
+      const Subject = '¡Tu suscripción fue actualizada!';
+      await this.emailService.sendLayoutEmail(
         email,
-        'Actualizó la suscripción',
-        `<p>Has actualizado la vigencia de tu suscripción. Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
+        Subject,     // subject
+        html,
       );
     }
     return plan;

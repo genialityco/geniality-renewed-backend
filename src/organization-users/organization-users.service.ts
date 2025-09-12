@@ -4,7 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
 import { EmailService } from 'src/email/email.service';
-import { buildAccountEmailHtml } from 'src/templates/account-email.template';
+import { renderWelcomeContent } from '../templates/Welcome';
 
 @Injectable()
 export class OrganizationUsersService {
@@ -21,6 +21,7 @@ export class OrganizationUsersService {
     user_id: string,
     payment_plan_id?: string,
   ): Promise<OrganizationUser> {
+    const URL = `https://gencampus-renewed.netlify.app/organization/${organization_id}`;
     const existingUser = await this.organizationUserModel
       .findOne({ user_id })
       .exec();
@@ -38,8 +39,8 @@ export class OrganizationUsersService {
         saved?.properties?.email ||
         null;
       if (toEmail) {
-        const subject = 'Tu cuenta en EndoCampus fue actualizada';
-        const html = buildAccountEmailHtml('actualizada', saved.properties.nombres);
+        const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue actualizada`;
+        const html = renderWelcomeContent(saved?.properties?.nombres, URL);
         // no bloquear la respuesta si el email falla
         this.sendEmailSafely(toEmail, subject, html);
       }
@@ -59,9 +60,9 @@ export class OrganizationUsersService {
       saved?.properties?.email ||
       null;
     if (toEmail) {
-      const subject = '¡Bienvenido! Tu cuenta en EndoCampus fue creada';
-      const html = buildAccountEmailHtml('creada',saved.properties.nombres);
-      this.sendEmailSafely(toEmail, subject, html);
+      const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue creada`;
+      const contentHtml = renderWelcomeContent(saved?.properties?.nombres, URL);
+      this.sendEmailSafely(toEmail, subject, contentHtml);
     }
     return saved;
   }
@@ -149,9 +150,9 @@ export class OrganizationUsersService {
 
   private async sendEmailSafely(to: string, subject: string, html: string) {
     try {
-      await this.emailService.sendEmail(to, subject, html);
+      await this.emailService.sendLayoutEmail(to, subject, html);
     } catch (err: any) {
-      console.log(`No se pudo enviar email a ${to}: ${err?.message || err}`);
+      console.log(`No se pudo enviar email a ${Array.isArray(to) ? to.join(', ') : to}: ${err?.message || err}`);
     }
   }
 
