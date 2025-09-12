@@ -10,6 +10,19 @@ import { Model } from 'mongoose';
 import { User } from './schemas/user.schema';
 import admin from 'src/firebase-admin';
 
+type TokenEntry = { token: string; createdAt: Date };
+
+function normalizeTokens(arr: any[]): TokenEntry[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((e) =>
+      typeof e === 'string'
+        ? { token: e, createdAt: new Date(0) }
+        : { token: String(e?.token), createdAt: new Date(e?.createdAt ?? 0) },
+    )
+    .filter((e) => e.token);
+}
+
 @Injectable()
 export class UsersService {
   constructor(@InjectModel(User.name) private userModel: Model<User>) {}
@@ -51,6 +64,23 @@ export class UsersService {
 
   async findByPhone(phone: string): Promise<User | null> {
     return this.userModel.findOne({ phone }).exec();
+  }
+
+  async findTokensByUid(
+    uid: string,
+  ): Promise<{ sessionTokens: any[]; legacyToken?: string } | null> {
+    const user = await this.userModel
+      .findOne({ uid }, { sessionTokens: 1, sessionToken: 1, _id: 0 })
+      .lean();
+
+    if (!user) return null;
+
+    return {
+      sessionTokens: Array.isArray((user as any).sessionTokens)
+        ? (user as any).sessionTokens
+        : [],
+      legacyToken: (user as any).sessionToken,
+    };
   }
 
   async findById(id: string): Promise<User> {
@@ -196,26 +226,58 @@ export class UsersService {
    */
   async updateSessionToken(
     uid: string,
-  ): Promise<{ sessionToken: string; user: User }> {
+  ): Promise<{ sessionToken: string; user: User; revokedTokens: string[] }> {
     const newToken = uuidv4();
 
-    const user = await this.userModel.findOneAndUpdate(
-      { uid },
-      {
-        $push: {
-          sessionTokens: {
-            $each: [{ token: newToken, createdAt: new Date() }],
-            $slice: -2, // Mantiene solo los 2 últimos
-          },
-        },
-        // (Opcional) Limpia el legacy field si existiera:
-        $unset: { sessionToken: '' },
-      },
-      { new: true },
+    const doc = await this.userModel
+      .findOne({ uid }, { sessionTokens: 1 })
+      .lean();
+    if (!doc) throw new NotFoundException('Usuario no encontrado');
+
+    const current = normalizeTokens((doc as any).sessionTokens);
+    const next = [...current, { token: newToken, createdAt: new Date() }].sort(
+      (a, b) => +a.createdAt - +b.createdAt,
     );
 
-    if (!user) throw new NotFoundException('Usuario no encontrado');
+    // Mantén solo los dos últimos
+    const kept: TokenEntry[] = next.slice(-2);
+    const keptSet = new Set(kept.map((e) => e.token));
 
-    return { sessionToken: newToken, user };
+    // Revocados = todo lo que no quedó en kept
+    const revokedTokens = next
+      .map((e) => e.token)
+      .filter((t) => !keptSet.has(t));
+
+    // Guarda en Mongo (dos tokens)
+    const saved = await this.userModel
+      .findOneAndUpdate(
+        { uid },
+        { $set: { sessionTokens: kept }, $unset: { sessionToken: '' } },
+        { new: true },
+      )
+      .exec();
+
+    // RTDB: añade el nuevo y borra solo los revocados
+    const rtdb = admin.database();
+    await rtdb.ref(`sessions/${uid}/${newToken}`).set({
+      createdAt: admin.database.ServerValue.TIMESTAMP,
+    });
+    await Promise.all(
+      revokedTokens.map((t) => rtdb.ref(`sessions/${uid}/${t}`).remove()),
+    );
+
+    return { sessionToken: newToken, user: saved, revokedTokens };
+  }
+  // users.service.ts
+  async revokeSessionToken(uid: string, sessionToken: string) {
+    await this.userModel.updateOne(
+      { uid },
+      { $pull: { sessionTokens: { token: sessionToken } } },
+    );
+
+    // RTDB: borra el nodo del token
+    await admin.database().ref(`sessions/${uid}/${sessionToken}`).remove();
+
+    return { success: true };
   }
 }

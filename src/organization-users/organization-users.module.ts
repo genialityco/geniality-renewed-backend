@@ -19,4 +19,4 @@ import { EmailModule } from 'src/email/email.module'; // ✅ importa el módulo
   providers: [OrganizationUsersService],
   exports: [OrganizationUsersService],
 })
-export class OrganizationUsersModule { }
+export class OrganizationUsersModule {}

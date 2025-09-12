@@ -6,9 +6,13 @@ import {
   Post,
   Body,
   NotFoundException,
+  BadRequestException,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { User } from './schemas/user.schema';
+import { SessionTokenGuard } from 'src/auth/session-token.guard';
 
 @Controller('users')
 export class UsersController {
@@ -16,11 +20,12 @@ export class UsersController {
 
   @Post()
   async createOrUpdateUser(@Body() body: any): Promise<User> {
-    const { uid, name, email, phone } = body;
-    if (!uid || !email) {
-      throw new NotFoundException('Faltan datos: uid, name, email');
+    const { uid, name, names, email, phone } = body;
+    const finalName = names ?? name;
+    if (!uid || !email || !finalName) {
+      throw new BadRequestException('Faltan datos: uid, names, email');
     }
-    return this.usersService.createOrUpdateUser(uid, name, email, phone);
+    return this.usersService.createOrUpdateUser(uid, finalName, email, phone);
   }
 
   @Post('/refresh-session')
@@ -92,5 +97,17 @@ export class UsersController {
     },
   ) {
     return this.usersService.changeCredentials(body);
+  }
+
+  @UseGuards(SessionTokenGuard)
+  @Post('logout')
+  async logout(
+    @Req() req: any,
+    @Body() body: { uid?: string; sessionToken?: string },
+  ) {
+    const uid = req.auth?.uid ?? body.uid;
+    const token = req.auth?.sessionToken ?? body.sessionToken;
+    await this.usersService.revokeSessionToken(String(uid), String(token));
+    return { success: true };
   }
 }
