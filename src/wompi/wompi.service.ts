@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 
 @Injectable()
 export class WompiService {
-  private base = 'https://api-sandbox.wompi.co/v1'; // usa sandbox si estás probando
+  private base = 'https://production.wompi.co/v1';
   private auth = `Bearer ${process.env.WOMPI_PRIVATE_KEY!}`;
 
   async getTransaction(id: string) {
