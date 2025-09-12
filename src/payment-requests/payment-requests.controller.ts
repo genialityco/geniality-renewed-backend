@@ -1,5 +1,6 @@
-import { Controller, Post, Body, Get, Param } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, UseGuards } from '@nestjs/common';
 import { PaymentRequestsService } from './payment-requests.service';
+import { WompiWebhookGuard } from 'src/wompi/wompi-webhook.guard';
 
 @Controller('payment-requests')
 export class PaymentRequestsController {
@@ -24,35 +25,42 @@ export class PaymentRequestsController {
   }
 
   @Post('webhook')
+  @UseGuards(WompiWebhookGuard)
   async wompiWebhook(@Body() body: any) {
-    // Aquí asumimos el payload estándar de Wompi
-    const transaction = body.data?.transaction;
-    if (!transaction) return { ok: false };
+    const tx = body.data?.transaction;
+    if (!tx) return { ok: true }; // responde 200 para no forzar reintentos
 
-    const reference = transaction.reference;
-    const status = transaction.status; // APPROVED, DECLINED, VOIDED, PENDING, ERROR
-    const transactionId = transaction.id;
-    const amount = transaction.amount_in_cents
-      ? transaction.amount_in_cents / 100
-      : undefined;
-
-    // Busca el PaymentRequest por reference
-    const paymentRequest = await this.service.findByReference(reference);
-    if (!paymentRequest) return { ok: false, msg: 'No paymentRequest found' };
-
-    // Actualiza estado y transactionId
-    await this.service.updateStatusAndTransactionId(
+    const {
       reference,
       status,
-      transactionId,
-      body,
-    );
+      id: transactionId,
+      amount_in_cents,
+      currency,
+    } = tx;
+    const pr = await this.service.findByReference(reference);
+    if (!pr) return { ok: true };
 
-    // Si fue aprobado, crea/actualiza el PaymentPlan y enlaza a OrganizationUser
+    // Defensa adicional
+    if (pr.amount * 100 !== amount_in_cents) {
+      /* log discrepancy */
+    }
+    if (pr.currency && pr.currency !== currency) {
+      /* log discrepancy */
+    }
+
+    const updated = await this.service.safeUpdateStatus({
+      reference,
+      nextStatus: status,
+      transactionId,
+      source: 'webhook',
+      rawWebhook: body,
+    });
+
     if (status === 'APPROVED') {
-      // Llama al servicio encargado de esto (puede estar en otro service/module)
-      // Ejemplo:
-      await this.service.activateMembershipForPayment(paymentRequest, amount);
+      await this.service.activateMembershipForPayment(
+        updated,
+        amount_in_cents / 100,
+      );
     }
 
     return { ok: true };

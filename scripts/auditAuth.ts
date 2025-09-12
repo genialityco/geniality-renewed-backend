@@ -322,6 +322,18 @@ async function verifyWithFirebase(email: string, password: string) {
   };
 }
 
+// -------------------- Normalización de errores Firebase REST --------------------
+function mapFirebaseErrorToStatus(
+  msg: string,
+): 'INVALID_PASSWORD' | 'USER_DISABLED' | 'EMAIL_NOT_FOUND' | 'ERROR' {
+  const m = (msg || '').toUpperCase();
+  if (m.includes('INVALID_PASSWORD')) return 'INVALID_PASSWORD';
+  if (m.includes('INVALID_LOGIN_CREDENTIALS')) return 'INVALID_PASSWORD'; // mapea al mismo caso
+  if (m.includes('USER_DISABLED')) return 'USER_DISABLED';
+  if (m.includes('EMAIL_NOT_FOUND')) return 'EMAIL_NOT_FOUND';
+  return 'ERROR';
+}
+
 // -------------------- Tipo de fila de reporte --------------------
 type VerifyStatus =
   | 'OK'
@@ -537,11 +549,12 @@ async function main() {
       row.verify_status = 'MISSING_PASSWORD';
       row.notes =
         'Existe en Firebase (Admin), pero no hay contraseña candidata (ID/password) en properties.';
-      // Reset opcional con ID si está activado
+      // Reset opcional con ID SOLO si el origen es EXACTAMENTE properties.ID
       if (
         RESET_MISSING_PASSWORD_TO_ID &&
         fbUser &&
-        passPick.source === 'document-id'
+        passPick.source === 'document-id' &&
+        passPick.field === 'properties.ID'
       ) {
         try {
           if (APPLY_CHANGES) {
@@ -550,10 +563,11 @@ async function main() {
               .updateUser(fbUser.uid, { password: passPick.value! });
             row.action = 'updated';
             row.notes +=
-              ' | Password seteada desde document-id (ID normalizado).';
+              ' | Password seteada usando properties.ID (ID normalizado).';
           } else {
             row.action = 'would_update';
-            row.notes += ' | Dry-run: se setearía password desde document-id.';
+            row.notes +=
+              ' | Dry-run: se setearía password usando properties.ID.';
           }
         } catch (err: any) {
           row.action = 'skipped';
@@ -575,48 +589,54 @@ async function main() {
       continue;
     } catch (e: any) {
       const msg = (e?.message || 'ERROR').toString();
-      if (msg.includes('INVALID_PASSWORD')) {
-        row.verify_status = 'INVALID_PASSWORD';
-      } else if (msg.includes('USER_DISABLED')) {
-        row.verify_status = 'USER_DISABLED';
-      } else if (msg.includes('EMAIL_NOT_FOUND')) {
+      const mapped = mapFirebaseErrorToStatus(msg);
+      row.verify_status = mapped;
+
+      if (mapped === 'EMAIL_NOT_FOUND') {
         // Caso clave: Admin lo encuentra, pero REST dice EMAIL_NOT_FOUND -> MISMATCH de proyecto/API key
-        row.verify_status = 'EMAIL_NOT_FOUND';
         row.notes =
+          (row.notes ? row.notes + ' | ' : '') +
           'Mismatch probable: Admin encontró el usuario, pero REST (API key) devolvió EMAIL_NOT_FOUND. Revisa que FIREBASE_API_KEY sea del mismo proyecto que el service account.';
         mismatch_admin_ok_rest_not_found++;
       } else {
-        row.verify_status = 'ERROR';
+        row.notes = (row.notes ? row.notes + ' | ' : '') + msg;
       }
-      row.notes = (row.notes ? row.notes + ' | ' : '') + msg;
     }
 
     // 3) Corrección opcional (reset pass) para INVALID_PASSWORD
-    if (
-      row.verify_status === 'INVALID_PASSWORD' &&
-      passwordCandidate &&
-      fbUser
-    ) {
-      if (APPLY_CHANGES) {
-        try {
-          await admin
-            .auth()
-            .updateUser(fbUser.uid, { password: passwordCandidate });
-          row.action = 'updated';
+    if (row.verify_status === 'INVALID_PASSWORD' && fbUser) {
+      // Solo resetear si la candidata proviene EXACTAMENTE de properties.ID
+      if (
+        passPick.source === 'document-id' &&
+        passPick.field === 'properties.ID' &&
+        passPick.value
+      ) {
+        if (APPLY_CHANGES) {
+          try {
+            await admin
+              .auth()
+              .updateUser(fbUser.uid, { password: passPick.value });
+            row.action = 'updated';
+            row.notes =
+              (row.notes ? row.notes + ' | ' : '') +
+              'Password reseteada usando properties.ID.';
+          } catch (err: any) {
+            row.action = 'skipped';
+            row.notes =
+              (row.notes ? row.notes + ' | ' : '') +
+              `Fallo updateUser: ${err?.message || err}`;
+          }
+        } else {
+          row.action = 'would_update';
           row.notes =
             (row.notes ? row.notes + ' | ' : '') +
-            `Password reseteada desde ${row.password_source} (${row.password_field}).`;
-        } catch (err: any) {
-          row.action = 'skipped';
-          row.notes =
-            (row.notes ? row.notes + ' | ' : '') +
-            `Fallo updateUser: ${err?.message || err}`;
+            'Dry-run: se resetearía password usando properties.ID.';
         }
       } else {
-        row.action = 'would_update';
+        row.action = 'skipped';
         row.notes =
           (row.notes ? row.notes + ' | ' : '') +
-          'Dry-run: se resetearía contraseña.';
+          'No se resetea: la contraseña candidata no proviene de properties.ID.';
       }
     }
 

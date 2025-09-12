@@ -6,7 +6,12 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: true,
+    origin: [
+      process.env.FRONTEND_ORIGIN || '', // ej: https://tu-sitio.netlify.app
+      'http://localhost:5173',
+      'https://dev-gencampus.netlify.app',
+    ],
+    credentials: true,
   });
 
   // app.useGlobalGuards(app.get(SessionTokenGuard));

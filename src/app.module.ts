@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { EventsModule } from './events/events.module';
 import { ModulesModule } from './modules/modules.module';
@@ -18,11 +19,13 @@ import { OrganizationUsersModule } from './organization-users/organization-users
 import { EmailModule } from './email/email.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 // import { SessionTokenGuard } from './auth/session-token.guard';
+import { WompiModule } from './wompi/wompi.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRoot(process.env.MONGO_URI),
+    ScheduleModule.forRoot(),
     OrganizationsModule,
     EventsModule,
     ModulesModule,
@@ -39,6 +42,7 @@ import { PaymentRequestsModule } from './payment-requests/payment-requests.modul
     OrganizationUsersModule,
     EmailModule,
     PaymentRequestsModule,
+    WompiModule,
   ],
   // providers: [SessionTokenGuard],
 })

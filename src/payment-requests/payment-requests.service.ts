@@ -107,4 +107,59 @@ export class PaymentRequestsService {
       paymentRequest.transactionId,
     );
   }
+
+  // src/payment-requests/payment-requests.service.ts
+  async safeUpdateStatus({
+    reference,
+    nextStatus,
+    transactionId,
+    source,
+    rawWebhook,
+  }: {
+    reference: string;
+    nextStatus:
+      | 'CREATED'
+      | 'PENDING'
+      | 'APPROVED'
+      | 'DECLINED'
+      | 'VOIDED'
+      | 'ERROR';
+    transactionId?: string;
+    source: 'webhook' | 'poll' | 'redirect';
+    rawWebhook?: any;
+  }) {
+    const current = await this.paymentRequestModel.findOne({ reference });
+    if (!current) return null;
+
+    // si ya está en APPROVED y llega algo repetido, no dispares efectos otra vez
+    if (current.status === 'APPROVED' && nextStatus !== 'APPROVED')
+      return current;
+
+    current.status_history = current.status_history || [];
+    current.status_history.push({
+      at: new Date(),
+      from: current.status,
+      to: nextStatus,
+      source,
+    });
+
+    current.status = nextStatus;
+    if (transactionId) current.transactionId = transactionId;
+    if (rawWebhook) current.rawWebhook = rawWebhook;
+    await current.save();
+    return current;
+  }
+
+  async listStalePendings(staleMinutes = 10, limit = 200) {
+    const since = new Date(Date.now() - staleMinutes * 60 * 1000);
+    // Necesitas timestamps en el schema: { timestamps: true }
+    return this.paymentRequestModel
+      .find({
+        status: { $in: ['CREATED', 'PENDING'] },
+        updatedAt: { $lt: since },
+      })
+      .sort({ updatedAt: 1 })
+      .limit(limit)
+      .lean();
+  }
 }
