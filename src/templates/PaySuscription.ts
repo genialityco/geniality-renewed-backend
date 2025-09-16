@@ -17,12 +17,14 @@ function formatDateEs(value?: Date | string): string | null {
   if (!value) return null;
   const d = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return d.toLocaleDateString('es-CO', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 }
 
-export function renderSubscriptionContent(
-  opts: SubscriptionContentOptions
-) {
+export function renderSubscriptionContent(opts: SubscriptionContentOptions) {
   const nameUser = opts.nameUser || 'Usuario';
   const dateText = formatDateEs(opts.dateUntil);
   const variant = opts.variant || 'created';

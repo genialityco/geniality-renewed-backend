@@ -7,12 +7,18 @@ import { Organization } from 'src/organizations/schemas/organization.schema';
 import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema'; // ajusta ruta
 import { renderEmailLayout } from 'src/templates/Layout';
 
-
 type OrgStylesLean = {
-  style?: { banner_image_email?: string; FooterImage?: string; footerImage?: string };
-  styles?: { banner_image_email?: string; FooterImage?: string; footerImage?: string };
+  style?: {
+    banner_image_email?: string;
+    FooterImage?: string;
+    footerImage?: string;
+  };
+  styles?: {
+    banner_image_email?: string;
+    FooterImage?: string;
+    footerImage?: string;
+  };
 };
-
 
 @Injectable()
 export class EmailService {
@@ -23,8 +29,10 @@ export class EmailService {
 
   constructor(
     private readonly configService: ConfigService,
-    @InjectModel(Organization.name) private readonly orgModel: Model<Organization>,
-    @InjectModel(OrganizationUser.name) private readonly orgUserModel: Model<OrganizationUser>,
+    @InjectModel(Organization.name)
+    private readonly orgModel: Model<Organization>,
+    @InjectModel(OrganizationUser.name)
+    private readonly orgUserModel: Model<OrganizationUser>,
   ) {
     this.ses = new AWS.SES({
       region: this.configService.get<string>('AWS_REGION'),
@@ -233,8 +241,9 @@ export class EmailService {
       .lean<{ organization_id?: string | any }>()
       .exec();
 
-    const organizationId =
-      orgUser?.organization_id ? String(orgUser.organization_id) : undefined;
+    const organizationId = orgUser?.organization_id
+      ? String(orgUser.organization_id)
+      : undefined;
 
     if (!organizationId) {
       return { heroUrl: '', logosUrl: '' };
@@ -267,12 +276,16 @@ export class EmailService {
     opts?: {
       preheader?: string;
       blueBar?: boolean;
-      heroUrl?: string;  // override explícito (opcional)
+      heroUrl?: string; // override explícito (opcional)
       logosUrl?: string; // override explícito (opcional)
     },
   ) {
     console.log('sendLayoutEmail opts:', dataId);
-    const { heroUrl: orgHero, logosUrl: orgLogos, organization_id } = await this.resolveStrictForOrg(dataId);
+    const {
+      heroUrl: orgHero,
+      logosUrl: orgLogos,
+      organization_id,
+    } = await this.resolveStrictForOrg(dataId);
 
     // Si te pasan overrides explícitos, se usan; si no, lo de la colección (o "")
     const heroUrl = (opts?.heroUrl ?? orgHero) || '';
@@ -283,8 +296,8 @@ export class EmailService {
       URL,
       preheader: opts?.preheader,
       blueBar: opts?.blueBar ?? true,
-      heroCid: heroUrl,   // URL pública o ''
-      logosCid: logosUrl,  // URL pública o ''
+      heroCid: heroUrl, // URL pública o ''
+      logosCid: logosUrl, // URL pública o ''
     });
 
     return this.sendEmail(to, subject, fullHtml);

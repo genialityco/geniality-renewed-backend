@@ -15,7 +15,7 @@ export class PaymentPlansService {
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
     private readonly emailService: EmailService,
-  ) { }
+  ) {}
 
   // Método para obtener el email a partir del organizationUserId
   private async getEmailByOrganizationUserId(
@@ -26,7 +26,6 @@ export class PaymentPlansService {
       .exec();
     return orgUser?.properties?.email || null;
   }
-
 
   // Método para obtener el plan de pago de una organización (o usuario) por su ID
   async getPaymentPlanByOrganizationUserId(
@@ -81,13 +80,14 @@ export class PaymentPlansService {
       const html = renderSubscriptionContent({
         dateUntil: date_until,
         variant: 'created',
+        nameUser: UserName,
       });
       const Subject = '¡Gracias por tu suscripción a EndoCampus!';
       await this.emailService.sendLayoutEmail(
         email,
-        Subject,     // subject
+        Subject, // subject
         html,
-        organizationUserId // Opcional: para usar el layout de la organización
+        organizationUserId, // Opcional: para usar el layout de la organización
       );
     }
     return plan;
@@ -125,9 +125,9 @@ export class PaymentPlansService {
       const Subject = '¡Tu suscripción fue actualizada!';
       await this.emailService.sendLayoutEmail(
         email,
-        Subject,     // subject
+        Subject, // subject
         html,
-        plan.organization_user_id // Opcional: para usar el layout de la organización
+        plan.organization_user_id, // Opcional: para usar el layout de la organización
       );
     }
     return plan;

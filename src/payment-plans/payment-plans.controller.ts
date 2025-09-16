@@ -49,10 +49,12 @@ export class PaymentPlansController {
   async updateDateUntil(
     @Param('id') paymentPlanId: string,
     @Body('date_until') date_until: string,
+    @Body('nameUser') nameUser: string,
   ): Promise<PaymentPlan> {
     return this.paymentPlansService.updateDateUntil(
       paymentPlanId,
       new Date(date_until),
+      nameUser,
     );
   }
 }

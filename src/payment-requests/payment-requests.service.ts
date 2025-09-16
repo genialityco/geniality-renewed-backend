@@ -23,7 +23,7 @@ export class PaymentRequestsService {
     @InjectModel(PaymentPlan.name)
     private paymentPlanModel: Model<PaymentPlan>,
     private readonly paymentPlansService: PaymentPlansService,
-  ) { }
+  ) {}
 
   async create(data: Partial<PaymentRequest>): Promise<PaymentRequest> {
     return this.paymentRequestModel.create(data);
@@ -82,7 +82,7 @@ export class PaymentRequestsService {
     if (!organizationUser) throw new Error('OrganizationUser no encontrado');
 
     // 2. Buscar si ya tiene un PaymentPlan activo
-    let paymentPlan = await this.paymentPlanModel.findOne({
+    const paymentPlan = await this.paymentPlanModel.findOne({
       organization_user_id: organizationUser._id,
     });
 
@@ -128,12 +128,12 @@ export class PaymentRequestsService {
   }: {
     reference: string;
     nextStatus:
-    | 'CREATED'
-    | 'PENDING'
-    | 'APPROVED'
-    | 'DECLINED'
-    | 'VOIDED'
-    | 'ERROR';
+      | 'CREATED'
+      | 'PENDING'
+      | 'APPROVED'
+      | 'DECLINED'
+      | 'VOIDED'
+      | 'ERROR';
     transactionId?: string;
     source: 'webhook' | 'poll' | 'redirect';
     rawWebhook?: any;
