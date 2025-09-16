@@ -2,13 +2,14 @@
 
 export type SubscriptionContentOptions = {
   /** URL absoluta a la organización (se mostrará y será clickeable) */
-  orgUrl: string;
   /** Fecha de vigencia (Date o string). Solo se muestra si viene. */
   dateUntil?: Date | string;
   /** Variante del mensaje principal */
   variant?: 'created' | 'updated'; // 'created' = "Gracias por tu suscripción", 'updated' = "¡Suscripción actualizada!"
   /** Texto del botón/píldora de agradecimiento (opcional) */
   thanksText?: string;
+
+  nameUser?: string; // Nombre del usuario (no se usa en el contenido actual)
 };
 
 /** Formato de fecha email-safe en español (ej: 12/09/2025) */
@@ -22,14 +23,14 @@ function formatDateEs(value?: Date | string): string | null {
 export function renderSubscriptionContent(
   opts: SubscriptionContentOptions
 ) {
-  const url = opts.orgUrl; // debe ser absoluta (https://...)
+  const nameUser = opts.nameUser || 'Usuario';
   const dateText = formatDateEs(opts.dateUntil);
   const variant = opts.variant || 'created';
   const thanksText = opts.thanksText || '¡Gracias por confiar en EndoCampus!';
 
   const headline =
     variant === 'updated'
-      ? '¡Tu suscripción fue actualizada!'
+      ? `${nameUser}, ¡Tu suscripción fue actualizada !`
       : '¡Gracias por tu suscripción a <span style="color:#0b3d91;">EndoCampus</span>!';
 
   // Caja con borde redondeado que simula el bloque grande del flyer
@@ -73,29 +74,18 @@ export function renderSubscriptionContent(
           <div style="color:#111827;font-size:14px;line-height:1.7;text-align:center;margin:14px 0 0 0;">
             Te invitamos a iniciar sesión y comenzar tu recorrido académico en:
           </div>
-
-          <!-- Línea de URL como en el arte (texto grande y negrita) -->
-          <div style="text-align:center;margin:12px 0 0 0;">
-            <a href="${url}"
-               style="font-weight:800;font-size:15px;color:#0b3d91;text-decoration:none;word-break:break-all;">
-              ${url}
-            </a>
-          </div>
         </td>
       </tr>
     </table>
   `;
-
   // Píldora de agradecimiento
   const thanksPill = `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
       <tr>
         <td align="center" style="padding:6px 24px 10px 24px;">
-          <a href="${url}"
-             style="display:inline-block;text-decoration:none;border:2px solid #F05A28;border-radius:999px;padding:10px 20px;
-                    font-weight:800;font-size:14px;color:#0b3d91 !important;">
-            <span style="color:#0b3d91 !important;">${thanksText}</span>
-          </a>
+          <span style="display:inline-block;background:#e0e7ff;color:#3730a3;font-size:13px;font-weight:600;padding:6px 16px;border-radius:9999px;">
+            ${thanksText}
+          </span
         </td>
       </tr>
     </table>

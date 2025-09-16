@@ -63,7 +63,6 @@ export class PaymentPlansService {
     price: number,
     UserName?: string,
   ): Promise<PaymentPlan> {
-    const URL = `https://gencampus-renewed.netlify.app/organization/${organizationUserId}`;
     const newPlan = new this.paymentPlanModel({
       organization_user_id: organizationUserId,
       days,
@@ -80,7 +79,6 @@ export class PaymentPlansService {
       //   `<p>¡Gracias por adquirir tu suscripción! Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
       // );
       const html = renderSubscriptionContent({
-        orgUrl: URL,
         dateUntil: date_until,
         variant: 'created',
       });
@@ -99,6 +97,7 @@ export class PaymentPlansService {
   async updateDateUntil(
     paymentPlanId: string,
     date_until: Date,
+    nameUser: string,
   ): Promise<PaymentPlan> {
     const plan = await this.paymentPlanModel.findByIdAndUpdate(
       paymentPlanId,
@@ -118,11 +117,10 @@ export class PaymentPlansService {
       //   'Actualizó la suscripción',
       //   `<p>Has actualizado la vigencia de tu suscripción. Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
       // );
-      const URL = `https://gencampus-renewed.netlify.app/organization/${plan.organization_user_id}`;
       const html = renderSubscriptionContent({
-        orgUrl: URL,
         dateUntil: date_until,
         variant: 'updated',
+        nameUser: nameUser,
       });
       const Subject = '¡Tu suscripción fue actualizada!';
       await this.emailService.sendLayoutEmail(

@@ -5,6 +5,7 @@ import { Model } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
 import { EmailService } from 'src/email/email.service';
 import { renderWelcomeContent } from '../templates/Welcome';
+import { Types } from 'mongoose';
 
 @Injectable()
 export class OrganizationUsersService {
@@ -21,7 +22,6 @@ export class OrganizationUsersService {
     user_id: string,
     payment_plan_id?: string,
   ): Promise<OrganizationUser> {
-    const URL = `https://gencampus-renewed.netlify.app/organization/${organization_id}`;
     const existingUser = await this.organizationUserModel
       .findOne({ user_id })
       .exec();
@@ -34,16 +34,16 @@ export class OrganizationUsersService {
       }
       const saved = await existingUser.save();
       // Email destino (prioriza el que llega en properties)
-      const toEmail =
-        properties?.email ||
-        saved?.properties?.email ||
-        null;
-      if (toEmail) {
-        const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue actualizada`;
-        const html = renderWelcomeContent(saved?.properties?.nombres, URL);
-        // no bloquear la respuesta si el email falla
-        this.sendEmailSafely(toEmail, subject, html, saved.organization_id);
-      }
+      // const toEmail =
+      //   properties?.email ||
+      //   saved?.properties?.email ||
+      //   null;
+      // if (toEmail) {
+      //   const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue actualizada`;
+      //   const html = renderWelcomeContent(saved?.properties?.nombres, URL);
+      //   // no bloquear la respuesta si el email falla
+      //   this.sendEmailSafely(toEmail, subject, html, saved.organization_id);
+      // }
       return saved;
     }
     // -------- crear --------
@@ -61,8 +61,9 @@ export class OrganizationUsersService {
       null;
     if (toEmail) {
       const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue creada`;
-      const contentHtml = renderWelcomeContent(saved?.properties?.nombres, URL);
-      this.sendEmailSafely(toEmail, subject, contentHtml, saved.organization_id);
+      const contentHtml = renderWelcomeContent(saved?.properties?.nombres);
+      const organizationUserId = String(saved._id);
+      await this.emailService.sendLayoutEmail(toEmail, subject, contentHtml, organizationUserId);
     }
     return saved;
   }
@@ -148,12 +149,6 @@ export class OrganizationUsersService {
       .exec();
   }
 
-  private async sendEmailSafely(to: string, subject: string, html: string, organizationId?: string) {
-    try {
-      await this.emailService.sendLayoutEmail(to, subject, html, organizationId);
-    } catch (err: any) {
-      console.log(`No se pudo enviar email a ${Array.isArray(to) ? to.join(', ') : to}: ${err?.message || err}`);
-    }
-  }
+ 
 
 }

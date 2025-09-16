@@ -222,6 +222,7 @@ export class EmailService {
       return {
         heroUrl: (st?.banner_image_email ?? '').trim(),
         logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
+        organization_id: dataId,
       };
     }
 
@@ -250,6 +251,7 @@ export class EmailService {
     return {
       heroUrl: (st?.banner_image_email ?? '').trim(),
       logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
+      organization_id: organizationId,
     };
   }
 
@@ -270,14 +272,15 @@ export class EmailService {
     },
   ) {
     console.log('sendLayoutEmail opts:', dataId);
-    const { heroUrl: orgHero, logosUrl: orgLogos } = await this.resolveStrictForOrg(dataId);
+    const { heroUrl: orgHero, logosUrl: orgLogos, organization_id } = await this.resolveStrictForOrg(dataId);
 
     // Si te pasan overrides explícitos, se usan; si no, lo de la colección (o "")
     const heroUrl = (opts?.heroUrl ?? orgHero) || '';
     const logosUrl = (opts?.logosUrl ?? orgLogos) || '';
-
+    const URL = `https://app.geniality.com.co/organization/${organization_id}`;
     const fullHtml = renderEmailLayout({
       contentHtml,
+      URL,
       preheader: opts?.preheader,
       blueBar: opts?.blueBar ?? true,
       heroCid: heroUrl,   // URL pública o ''

@@ -3,9 +3,8 @@
  * Contenido variable para el correo de bienvenida.
  * Se inserta dentro del layout (no incluye header/footer).
  */
-export function renderWelcomeContent(displayName: string, ctaUrl: string) {
+export function renderWelcomeContent(displayName: string) {
   const safeName = displayName || 'Usuario';
-  const URL = ctaUrl;
   return `
   <!-- Caja 'Asunto' -->
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="padding:18px 20px 8px 20px;">
@@ -64,16 +63,6 @@ export function renderWelcomeContent(displayName: string, ctaUrl: string) {
   </table>
 
   <!-- Botón -->
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-    <tr>
-      <td align="center" style="padding:10px 24px 6px 24px;">
-        <a href="${URL}"
-           style="display:inline-block;text-decoration:none;border:2px solid #F05A28;border-radius:999px;padding:12px 22px;
-                  font-weight:800;font-size:14px;color:#0b3d91 !important;">
-          <span style="color:#0b3d91 !important;">¡Gracias por confiar en EndoCampus!</span>
-        </a>
-      </td>
-    </tr>
-  </table>
+  
   `;
 }

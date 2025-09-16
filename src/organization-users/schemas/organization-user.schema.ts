@@ -1,8 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Schema as MongooseSchema } from 'mongoose';
+import { Types, Document, Schema as MongooseSchema } from 'mongoose';
 
 @Schema({ timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } })
 export class OrganizationUser extends Document {
+
+  _id: Types.ObjectId;
+
   // Deja properties como un objeto libre
   @Prop({ type: MongooseSchema.Types.Mixed, required: true })
   properties: any;

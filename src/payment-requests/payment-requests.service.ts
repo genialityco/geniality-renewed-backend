@@ -94,21 +94,22 @@ export class PaymentRequestsService {
       await this.paymentPlansService.updateDateUntil(
         paymentPlan._id.toString(),
         dateUntil,
+        organizationUser.properties?.nombres || 'Usuario',
       );
     } else {
       // Si no tiene, crea uno nuevo
-      paymentPlan = await this.paymentPlanModel.create({
-        days: MEMBERSHIP_DAYS,
-        date_until: dateUntil,
-        price: amount,
-        organization_user_id: organizationUser._id,
-      });
+      // paymentPlan = await this.paymentPlanModel.create({
+      //   days: MEMBERSHIP_DAYS,
+      //   date_until: dateUntil,
+      //   price: amount,
+      //   organization_user_id: organizationUser._id,
+      // });
       await this.paymentPlansService.createPaymentPlan(
         organizationUser._id.toString(),
         MEMBERSHIP_DAYS,
         dateUntil,
         amount,
-        organizationUser.properties?.name || 'Usuario',
+        organizationUser.properties?.nombres || 'Usuario',
       );
     }
 

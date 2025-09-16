@@ -1,9 +1,10 @@
 
 export type LayoutOptions = {
-    preheader?: string;
-    heroCid?: string;   // default: 'hero@endo'
-    logosCid?: string;  // default: 'logos-footer@endo'
-    blueBar?: boolean;  // default: true
+  URL: string;
+  preheader?: string;
+  heroCid?: string;   // default: 'hero@endo'
+  logosCid?: string;  // default: 'logos-footer@endo'
+  blueBar?: boolean;  // default: true
 };
 
 /**
@@ -11,20 +12,21 @@ export type LayoutOptions = {
  * Solo cambia el contentHtml; el header/footer permanecen iguales.
  */
 export function renderEmailLayout(
-    args: { contentHtml: string } & LayoutOptions
+  args: { contentHtml: string } & LayoutOptions,
 ): string {
-    const {
-        contentHtml,
-        heroCid = 'hero@endo',
-        logosCid = 'logos-footer@endo',
-        blueBar = true,
-    } = args;
+  const {
+    URL = 'https://app.geniality.com.co/organization',
+    contentHtml,
+    heroCid = 'hero@endo',
+    logosCid = 'logos-footer@endo',
+    blueBar = true,
+  } = args;
 
-    // Guardia: evita que el content traiga rutas locales de Windows
-    if (/([A-Za-z]:\\\\|\\\\\\\\)/.test(contentHtml)) {
-        throw new Error('contentHtml contiene rutas locales de Windows; use CIDs o URLs públicas.');
-    }
-    return `
+  // Guardia: evita que el content traiga rutas locales de Windows
+  if (/([A-Za-z]:\\\\|\\\\\\\\)/.test(contentHtml)) {
+    throw new Error('contentHtml contiene rutas locales de Windows; use CIDs o URLs públicas.');
+  }
+  return `
   <div style="margin:0;padding:0;background-color:#f4f6f8;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;background-color:#f4f6f8;">
       <tr>
@@ -44,6 +46,20 @@ export function renderEmailLayout(
               </td>
             </tr>
 
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td align="center" style="padding:10px 24px 6px 24px;">
+                  <a href="${URL}"
+                    style="display:inline-block;text-decoration:none;border:2px solid #F05A28;border-radius:999px;padding:12px 22px;
+                            font-weight:800;font-size:14px;color:#0b3d91 !important;">
+                    <span style="color:#0b3d91 !important;">Accede a tu cuenta</span>
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+
+            
             <!-- LOGOS FOOTER (imagen fija por CID) -->
             <tr>
               <td style="padding:18px 24px 6px 24px;" align="center">
@@ -52,10 +68,10 @@ export function renderEmailLayout(
               </td>
             </tr>
             ${blueBar
-            ? `<tr>
+      ? `<tr>
                    <td style="background-color:#0b3d91;height:28px;line-height:28px;font-size:0;">&nbsp;</td>
                  </tr>`
-            : ''}
+      : ''}
           </table>
         </td>
       </tr>

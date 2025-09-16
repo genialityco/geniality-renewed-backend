@@ -1,9 +1,11 @@
 import { Controller, Post, Body } from '@nestjs/common';
 import { EmailService } from './email.service';
+import { renderWelcomeContent } from '../templates/Welcome';
+import { renderSubscriptionContent } from 'src/templates/PaySuscription';
 
 @Controller('email')
 export class EmailController {
-  constructor(private readonly emailService: EmailService) {}
+  constructor(private readonly emailService: EmailService) { }
   @Post('test')
   async sendTestEmail(
     @Body() body: { to: string; subject: string; html: string },
@@ -67,11 +69,14 @@ export class EmailController {
   ) {
     email = 'Sebastian.cardona.rios2000@gmail.com'
     Subject = "¡Tu suscripción fue actualizada!"
-    html = '<p>Prueba de email con layout</p>'
-    organizationUserId = '68c8d585eea29b3c7264ad5d'
+    html = renderSubscriptionContent({ dateUntil: new Date(), variant: 'updated', thanksText: '¡Gracias por confiar en EndoCampus!' });
+    organizationUserId = '68c8db2f7fb2b80e98a1bb48'
     try {
       const result = await this.emailService.sendLayoutEmail(email, Subject, html, organizationUserId);
       return {
+        email,
+        Subject,
+        html,
         success: true,
         message: 'Email enviado correctamente',
         result,
