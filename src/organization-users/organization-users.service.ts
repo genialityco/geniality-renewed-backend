@@ -42,7 +42,7 @@ export class OrganizationUsersService {
         const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue actualizada`;
         const html = renderWelcomeContent(saved?.properties?.nombres, URL);
         // no bloquear la respuesta si el email falla
-        this.sendEmailSafely(toEmail, subject, html);
+        this.sendEmailSafely(toEmail, subject, html, saved.organization_id);
       }
       return saved;
     }
@@ -62,7 +62,7 @@ export class OrganizationUsersService {
     if (toEmail) {
       const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue creada`;
       const contentHtml = renderWelcomeContent(saved?.properties?.nombres, URL);
-      this.sendEmailSafely(toEmail, subject, contentHtml);
+      this.sendEmailSafely(toEmail, subject, contentHtml, saved.organization_id);
     }
     return saved;
   }
@@ -148,9 +148,9 @@ export class OrganizationUsersService {
       .exec();
   }
 
-  private async sendEmailSafely(to: string, subject: string, html: string) {
+  private async sendEmailSafely(to: string, subject: string, html: string, organizationId?: string) {
     try {
-      await this.emailService.sendLayoutEmail(to, subject, html);
+      await this.emailService.sendLayoutEmail(to, subject, html, organizationId);
     } catch (err: any) {
       console.log(`No se pudo enviar email a ${Array.isArray(to) ? to.join(', ') : to}: ${err?.message || err}`);
     }

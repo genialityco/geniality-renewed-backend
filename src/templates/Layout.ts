@@ -33,7 +33,7 @@ export function renderEmailLayout(
             <!-- HEADER (imagen fija por CID) -->
             <tr>
               <td style="padding:0;">
-                <img src="cid:${heroCid}" alt="EndoCampus" width="600" style="display:block;width:100%;height:auto;border:0;">
+                <img src="${heroCid}" alt="EndoCampus" width="600" style="display:block;width:100%;height:auto;border:0;">
               </td>
             </tr>
 
@@ -47,7 +47,7 @@ export function renderEmailLayout(
             <!-- LOGOS FOOTER (imagen fija por CID) -->
             <tr>
               <td style="padding:18px 24px 6px 24px;" align="center">
-                <img src="cid:${logosCid}" alt="EndoCampus + ACE" width="220"
+                <img src="${logosCid}" alt="EndoCampus + ACE" width="220"
                      style="display:block;border:0;max-width:100%;height:auto;margin:0 auto;-ms-interpolation-mode:bicubic;">
               </td>
             </tr>

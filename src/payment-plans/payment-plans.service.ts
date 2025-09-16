@@ -89,6 +89,7 @@ export class PaymentPlansService {
         email,
         Subject,     // subject
         html,
+        organizationUserId // Opcional: para usar el layout de la organización
       );
     }
     return plan;
@@ -98,7 +99,6 @@ export class PaymentPlansService {
   async updateDateUntil(
     paymentPlanId: string,
     date_until: Date,
-    UserName?: string,
   ): Promise<PaymentPlan> {
     const plan = await this.paymentPlanModel.findByIdAndUpdate(
       paymentPlanId,
@@ -129,6 +129,7 @@ export class PaymentPlansService {
         email,
         Subject,     // subject
         html,
+        plan.organization_user_id // Opcional: para usar el layout de la organización
       );
     }
     return plan;

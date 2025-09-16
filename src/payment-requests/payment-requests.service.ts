@@ -94,7 +94,6 @@ export class PaymentRequestsService {
       await this.paymentPlansService.updateDateUntil(
         paymentPlan._id.toString(),
         dateUntil,
-        organizationUser.properties?.name || 'Usuario',
       );
     } else {
       // Si no tiene, crea uno nuevo
