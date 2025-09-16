@@ -17,6 +17,8 @@ export class Organization extends Document {
   @Prop() visibility: 'PUBLIC' | 'PRIVATE';
   @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
   user_properties: any[];
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  styles?: { banner_image_email?: string; FooterImage?: string };
 }
 
 export const OrganizationSchema = SchemaFactory.createForClass(Organization);

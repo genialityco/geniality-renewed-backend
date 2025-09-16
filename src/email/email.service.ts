@@ -1,6 +1,18 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as AWS from 'aws-sdk';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Organization } from 'src/organizations/schemas/organization.schema';
+import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema'; // ajusta ruta
+import { renderEmailLayout } from 'src/templates/Layout';
+
+
+type OrgStylesLean = {
+  style?: { banner_image_email?: string; FooterImage?: string; footerImage?: string };
+  styles?: { banner_image_email?: string; FooterImage?: string; footerImage?: string };
+};
+
 
 @Injectable()
 export class EmailService {
@@ -9,7 +21,11 @@ export class EmailService {
   private readonly from: string;
   private readonly fromName: string;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @InjectModel(Organization.name) private readonly orgModel: Model<Organization>,
+    @InjectModel(OrganizationUser.name) private readonly orgUserModel: Model<OrganizationUser>,
+  ) {
     this.ses = new AWS.SES({
       region: this.configService.get<string>('AWS_REGION'),
       accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID'),
@@ -17,24 +33,19 @@ export class EmailService {
     });
     this.from = this.configService.get<string>('AWS_SES_EMAIL_FROM');
     this.fromName =
-      this.configService.get<string>('AWS_SES_EMAIL_FROM_NAME') || 'No-Reply';
+      this.configService.get<string>('AWS_SES_EMAIL_FROM_NAME') || 'EndoCampus';
   }
 
   // ----------------- Helpers: limpieza y validación -----------------
   /** Remueve espacios/control invisibles y normaliza Unicode */
   private cleanEmail(email: string): string {
     if (typeof email !== 'string') return '';
-    return (
-      email
-        .normalize('NFKC') // Normaliza Unicode
-        .trim() // Quita espacios extremos
-        // Quita caracteres de control ASCII (0x00–0x1F, 0x7F–0x9F)
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
-        // Quita espacios de ancho cero y similares
-        .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-        // Elimina cualquier whitespace restante (no deberían existir en emails)
-        .replace(/\s+/g, '')
-    );
+    return email
+      .normalize('NFKC')
+      .trim()
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+      .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+      .replace(/\s+/g, '');
   }
 
   /** Regex sencilla y suficiente para SES (sin espacios) */
@@ -65,8 +76,7 @@ export class EmailService {
       })
       .filter(Boolean);
 
-    // Dedup
-    return Array.from(new Set(cleaned));
+    return Array.from(new Set(cleaned)); // dedup
   }
 
   /** Construye el campo Source asegurando limpieza en el from */
@@ -75,23 +85,24 @@ export class EmailService {
     if (!this.isValidEmail(cleanFrom)) {
       throw new BadRequestException(`FROM inválido: ${fromEmail}`);
     }
-    // Nota: fromName puede tener espacios; SES acepta "Name <email>"
+    // SES acepta "Name <email>"
     return `${fromName || this.fromName} <${cleanFrom}>`;
   }
   // ------------------------------------------------------------------
 
-  // Método anterior, con limpieza/validación
-  async sendEmail(to: string, subject: string, html: string) {
-    const fromName = 'EndoCampus'; // Fijo (como tenías)
-    const source = this.buildSource(this.from, fromName);
+  // ======================
+  // Envío básico (SendEmail)
+  // ======================
+  async sendEmail(to: string | string[], subject: string, html: string) {
+    const source = this.buildSource(this.from, this.fromName);
     const toList = this.prepareAddressList(to, 'to');
 
     const params: AWS.SES.SendEmailRequest = {
       Source: source,
       Destination: { ToAddresses: toList },
       Message: {
-        Subject: { Data: subject },
-        Body: { Html: { Data: html } },
+        Subject: { Data: subject, Charset: 'UTF-8' },
+        Body: { Html: { Data: html, Charset: 'UTF-8' } },
       },
     };
 
@@ -109,8 +120,19 @@ export class EmailService {
     }
   }
 
-  // NUEVO: Método universal y flexible (con limpieza/validación en to/cc/bcc/from)
-  async sendUniversalEmail(body: any) {
+  // ======================
+  // Universal (to/cc/bcc/fromName/fromEmail)
+  // ======================
+  async sendUniversalEmail(body: {
+    to: string | string[];
+    subject: string;
+    html: string;
+    fromName?: string;
+    fromEmail?: string;
+    cc?: string | string[];
+    bcc?: string | string[];
+    text?: string;
+  }) {
     const {
       to,
       cc,
@@ -138,10 +160,10 @@ export class EmailService {
     }
 
     const message: AWS.SES.Message = {
-      Subject: { Data: subject || '' },
+      Subject: { Data: subject || '', Charset: 'UTF-8' },
       Body: {
-        ...(html ? { Html: { Data: html } } : {}),
-        ...(text ? { Text: { Data: text } } : {}),
+        ...(html ? { Html: { Data: html, Charset: 'UTF-8' } } : {}),
+        ...(text ? { Text: { Data: text, Charset: 'UTF-8' } } : {}),
       },
     };
 
@@ -149,8 +171,8 @@ export class EmailService {
       Source: source,
       Destination: {
         ToAddresses: toList,
-        CcAddresses: ccList,
-        BccAddresses: bccList,
+        CcAddresses: ccList.length ? ccList : undefined,
+        BccAddresses: bccList.length ? bccList : undefined,
       },
       Message: message,
     };
@@ -171,5 +193,100 @@ export class EmailService {
       );
       throw error;
     }
+  }
+
+  // ======================
+  // Layout con imágenes desde Organization
+  // ======================
+
+  /**
+   * Devuelve EXACTAMENTE lo que está en la colección para esa org:
+   * - heroUrl = styles.banner_image_email || style.banner_image_email || ''
+   * - logosUrl = styles.footerImage || style.footerImage || ''
+   * Si no hay organizationUserId, retorna ambos en '' (no renderiza imágenes).
+   */
+  private async resolveStrictForOrg(dataId?: string) {
+    if (!dataId) {
+      return { heroUrl: '', logosUrl: '' };
+    }
+
+    // 1) ¿Es un Organization?
+    const orgDirect = await this.orgModel
+      .findById(dataId)
+      .select({ style: 1, styles: 1 })
+      .lean<OrgStylesLean>()
+      .exec();
+
+    if (orgDirect) {
+      const st = orgDirect.style ?? orgDirect.styles ?? {};
+      return {
+        heroUrl: (st?.banner_image_email ?? '').trim(),
+        logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
+        organization_id: dataId,
+      };
+    }
+
+    // 2) Si no es Organization, intento como OrganizationUser
+    const orgUser = await this.orgUserModel
+      .findById(dataId)
+      .select({ organization_id: 1 })
+      .lean<{ organization_id?: string | any }>()
+      .exec();
+
+    const organizationId =
+      orgUser?.organization_id ? String(orgUser.organization_id) : undefined;
+
+    if (!organizationId) {
+      return { heroUrl: '', logosUrl: '' };
+    }
+
+    // 3) Con organizationId, ahora sí leo Organization
+    const org = await this.orgModel
+      .findById(organizationId)
+      .select({ style: 1, styles: 1 })
+      .lean<OrgStylesLean>()
+      .exec();
+
+    const st = org?.style ?? org?.styles ?? {};
+    return {
+      heroUrl: (st?.banner_image_email ?? '').trim(),
+      logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
+      organization_id: organizationId,
+    };
+  }
+
+  /**
+   * Rindea el layout usando <img src="https://..."> con URLs públicas
+   * obtenidas de la colección. Si la org no tiene imágenes, no las imprime.
+   */
+  async sendLayoutEmail(
+    to: string | string[],
+    subject: string,
+    contentHtml: string,
+    dataId: string,
+    opts?: {
+      preheader?: string;
+      blueBar?: boolean;
+      heroUrl?: string;  // override explícito (opcional)
+      logosUrl?: string; // override explícito (opcional)
+    },
+  ) {
+    console.log('sendLayoutEmail opts:', dataId);
+    const { heroUrl: orgHero, logosUrl: orgLogos, organization_id } = await this.resolveStrictForOrg(dataId);
+
+    // Si te pasan overrides explícitos, se usan; si no, lo de la colección (o "")
+    const heroUrl = (opts?.heroUrl ?? orgHero) || '';
+    const logosUrl = (opts?.logosUrl ?? orgLogos) || '';
+    const URL = `https://app.geniality.com.co/organization/${organization_id}`;
+    const fullHtml = renderEmailLayout({
+      contentHtml,
+      URL,
+      preheader: opts?.preheader,
+      blueBar: opts?.blueBar ?? true,
+      heroCid: heroUrl,   // URL pública o ''
+      logosCid: logosUrl,  // URL pública o ''
+    });
+
+    return this.sendEmail(to, subject, fullHtml);
   }
 }
