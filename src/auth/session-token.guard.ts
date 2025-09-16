@@ -1,4 +1,3 @@
-// src/auth/session-token.guard.ts
 import {
   CanActivate,
   ExecutionContext,
@@ -11,48 +10,57 @@ import { UsersService } from 'src/users/users.service';
 export class SessionTokenGuard implements CanActivate {
   constructor(private readonly usersService: UsersService) {}
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const req = context.switchToHttp().getRequest();
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const req = ctx.switchToHttp().getRequest();
 
-    // uid puede venir del middleware que valida Firebase o de headers
-    const uid = req.user?.uid || req.headers['x-uid'] || req.headers['x_uid']; // por si algún proxy convierte guiones
+    // 1) Permitir preflight CORS
+    if (req.method === 'OPTIONS') return true;
 
-    // Normaliza el token desde headers
-    let incomingToken =
-      req.headers['x-session-token'] ||
-      req.headers['x_session_token'] ||
-      req.headers['x-sessiontoken'];
-    if (Array.isArray(incomingToken)) incomingToken = incomingToken[0];
+    // 2) uid desde middleware de Firebase o headers
+    const uid: string | undefined =
+      (req.user?.uid as string) ||
+      (req.headers['x-uid'] as string) ||
+      (req.headers['x_uid'] as string);
 
-    if (!uid || !incomingToken) {
+    // 3) Token normalizado desde headers
+    let token =
+      (req.headers['x-session-token'] as string) ||
+      (req.headers['x_session_token'] as string) ||
+      (req.headers['x-sessiontoken'] as string);
+    if (Array.isArray(token)) token = token[0];
+
+    if (!uid || !token) {
       throw new UnauthorizedException('No autenticado');
     }
 
-    const user = await this.usersService.findByFirebaseUid(String(uid));
-    if (!user) throw new UnauthorizedException('No autenticado');
+    // 4) Leer sólo tokens (sin lanzar 404 → normalizamos a 401 aquí)
+    const userTokens = await this.usersService.findTokensByUid(String(uid));
+    if (!userTokens) {
+      throw new UnauthorizedException('No autenticado');
+    }
 
-    // Construye el set de tokens activos (compat con legado)
+    // 5) Verificación contra tokens activos (nuevo esquema + legado)
     const active = new Set<string>();
-
-    // Nuevo esquema: sessionTokens: [{ token, createdAt }]
-    const list = Array.isArray((user as any).sessionTokens)
-      ? (user as any).sessionTokens
+    const list = Array.isArray(userTokens.sessionTokens)
+      ? userTokens.sessionTokens
       : [];
+
     for (const entry of list) {
       if (!entry) continue;
       const t = typeof entry === 'string' ? entry : entry.token;
       if (t) active.add(String(t));
     }
 
-    // Campo legado: sessionToken (string)
-    if ((user as any).sessionToken) {
-      active.add(String((user as any).sessionToken));
+    if (userTokens.legacyToken) {
+      active.add(String(userTokens.legacyToken));
     }
 
-    if (!active.has(String(incomingToken))) {
-      // El token enviado no está entre los 2 activos del usuario
+    if (!active.has(String(token))) {
       throw new UnauthorizedException('SESSION_EXPIRED');
     }
+
+    // (Opcional) Deja disponible en la request
+    (req as any).auth = { uid: String(uid), sessionToken: String(token) };
 
     return true;
   }
