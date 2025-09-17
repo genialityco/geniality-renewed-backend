@@ -27,6 +27,69 @@ function normalizeTokens(arr: any[]): TokenEntry[] {
 export class UsersService {
   constructor(@InjectModel(User.name) private userModel: Model<User>) {}
 
+  // ========= Helper para obtener uid desde userId =========
+  private async resolveUidByUserIdOrThrow(userId: string): Promise<string> {
+    const doc = await this.userModel.findById(userId, { uid: 1 }).lean();
+    if (!doc) {
+      throw new NotFoundException(`No existe usuario con id ${userId}`);
+    }
+    const uid = (doc as any).uid;
+    if (!uid) {
+      throw new BadRequestException(
+        `El usuario ${userId} no tiene vinculado un uid de Firebase.`,
+      );
+    }
+    return uid;
+  }
+
+  // ========= Helpers por UID (reutilizables) =========
+  private assertPasswordOk(password?: string) {
+    if (!password || password.trim().length < 6) {
+      throw new BadRequestException(
+        'La contraseña debe tener al menos 6 caracteres.',
+      );
+    }
+  }
+
+  async changePasswordByUid(uid: string, newPassword: string) {
+    this.assertPasswordOk(newPassword);
+    await admin.auth().updateUser(uid, { password: newPassword.trim() });
+    return { success: true, message: 'Contraseña cambiada correctamente' };
+  }
+
+  async changeEmailByUid(uid: string, newEmail: string) {
+    const cleanEmail = (newEmail || '').trim().toLowerCase();
+    if (!cleanEmail) throw new BadRequestException('Nuevo email requerido.');
+
+    // Comprobar colisión de email
+    const existing = await admin
+      .auth()
+      .getUserByEmail(cleanEmail)
+      .catch(() => null);
+    if (existing && existing.uid !== uid) {
+      throw new BadRequestException(
+        'Ese correo ya está en uso por otro usuario.',
+      );
+    }
+
+    const updated = await admin.auth().updateUser(uid, { email: cleanEmail });
+
+    // Sincroniza en Mongo si existe
+    const userDoc = await this.userModel.findOne({ uid }).exec();
+    if (userDoc) {
+      userDoc.email = cleanEmail;
+      await userDoc.save();
+    }
+
+    return {
+      success: true,
+      message: 'Email actualizado correctamente',
+      uid: updated.uid,
+      email: cleanEmail,
+    };
+  }
+
+  // ========= CRUD =========
   async createOrUpdateUser(
     uid: string,
     name: string,
@@ -38,7 +101,6 @@ export class UsersService {
       existingUser.names = name;
       existingUser.email = email;
       if (phone) existingUser.phone = phone;
-      // Asegura que exista el arreglo:
       if (!Array.isArray(existingUser.sessionTokens))
         existingUser.sessionTokens = [];
       return existingUser.save();
@@ -57,7 +119,6 @@ export class UsersService {
   async findByFirebaseUid(uid: string): Promise<User> {
     const user = await this.userModel.findOne({ uid }).exec();
     if (!user) throw new NotFoundException('Usuario no encontrado');
-    // Asegura consistencia:
     if (!Array.isArray(user.sessionTokens)) user.sessionTokens = [];
     return user;
   }
@@ -72,9 +133,7 @@ export class UsersService {
     const user = await this.userModel
       .findOne({ uid }, { sessionTokens: 1, sessionToken: 1, _id: 0 })
       .lean();
-
     if (!user) return null;
-
     return {
       sessionTokens: Array.isArray((user as any).sessionTokens)
         ? (user as any).sessionTokens
@@ -95,16 +154,14 @@ export class UsersService {
   }
 
   // ===== CAMBIAR CONTRASEÑA =====
-  async changePasswordByUid(uid: string, newPassword: string) {
-    if (!newPassword || newPassword.trim().length < 6) {
-      throw new BadRequestException(
-        'La contraseña debe tener al menos 6 caracteres.',
-      );
-    }
+  async changePasswordByUserId(userId: string, newPassword: string) {
+    this.assertPasswordOk(newPassword);
+    const uid = await this.resolveUidByUserIdOrThrow(userId);
     await admin.auth().updateUser(uid, { password: newPassword.trim() });
     return { success: true, message: 'Contraseña cambiada correctamente' };
   }
 
+  // LEGACY por email
   async changePasswordByEmail(email: string, newPassword: string) {
     const cleanEmail = (email || '').trim().toLowerCase();
     if (!cleanEmail) throw new BadRequestException('Email requerido.');
@@ -112,34 +169,18 @@ export class UsersService {
       .auth()
       .getUserByEmail(cleanEmail)
       .catch(() => null);
-    if (!user)
+    if (!user) {
       throw new NotFoundException(
         'No existe un usuario con ese email en Firebase.',
       );
+    }
     return this.changePasswordByUid(user.uid, newPassword);
   }
 
   // ===== CAMBIAR EMAIL =====
-  async changeEmailByUid(uid: string, newEmail: string) {
-    const cleanEmail = (newEmail || '').trim().toLowerCase();
-    if (!cleanEmail) throw new BadRequestException('Nuevo email requerido.');
-
-    // 1) Actualiza en Firebase
-    const updated = await admin.auth().updateUser(uid, { email: cleanEmail });
-
-    // 2) Sincroniza en Mongo si existe
-    const userDoc = await this.userModel.findOne({ uid }).exec();
-    if (userDoc) {
-      userDoc.email = cleanEmail;
-      await userDoc.save();
-    }
-
-    return {
-      success: true,
-      message: 'Email actualizado correctamente',
-      uid: updated.uid,
-      email: cleanEmail,
-    };
+  async changeEmailByUserId(userId: string, newEmail: string) {
+    const uid = await this.resolveUidByUserIdOrThrow(userId);
+    return this.changeEmailByUid(uid, newEmail);
   }
 
   async changeEmailByCurrentEmail(currentEmail: string, newEmail: string) {
@@ -148,66 +189,76 @@ export class UsersService {
       .auth()
       .getUserByEmail(cleanCurrent)
       .catch(() => null);
-    if (!user)
+    if (!user) {
       throw new NotFoundException(
         'No existe un usuario con ese email en Firebase.',
       );
+    }
     return this.changeEmailByUid(user.uid, newEmail);
   }
 
   // ===== CAMBIAR AMBOS (EMAIL y/o PASSWORD) =====
-  /**
-   * Cambia email y/o password en Firebase y sincroniza Mongo.
-   * Cualquier campo es opcional, pero al menos uno debe venir.
-   */
   async changeCredentials(opts: {
+    userId?: string; // <<<< NUEVO: permite venir userId
     uid?: string;
     currentEmail?: string;
     newEmail?: string;
     newPassword?: string;
   }) {
-    const { uid, currentEmail, newEmail, newPassword } = opts;
+    const { userId, uid, currentEmail, newEmail, newPassword } = opts;
 
     if (!newEmail && !newPassword) {
       throw new BadRequestException('Debes enviar newEmail y/o newPassword.');
     }
 
+    // Resolver uid con prioridad: userId -> uid -> currentEmail
     let targetUid = uid;
-
+    if (userId) {
+      targetUid = await this.resolveUidByUserIdOrThrow(userId);
+    }
     if (!targetUid && currentEmail) {
-      const user = await admin
+      const fbUser = await admin
         .auth()
         .getUserByEmail(currentEmail.trim().toLowerCase())
         .catch(() => null);
-      if (!user)
+      if (!fbUser)
         throw new NotFoundException(
           'No existe un usuario con ese email en Firebase.',
         );
-      targetUid = user.uid;
+      targetUid = fbUser.uid;
     }
-
     if (!targetUid) {
-      throw new BadRequestException('Debes enviar uid o currentEmail.');
+      throw new BadRequestException('Debes enviar userId, uid o currentEmail.');
     }
 
     const update: admin.auth.UpdateRequest = {};
-    if (newEmail) update.email = newEmail.trim().toLowerCase();
-    if (newPassword) {
-      if (newPassword.trim().length < 6) {
+    if (newEmail) {
+      const cleanEmail = newEmail.trim().toLowerCase();
+      if (!cleanEmail) throw new BadRequestException('Nuevo email requerido.');
+      // Colisión
+      const existing = await admin
+        .auth()
+        .getUserByEmail(cleanEmail)
+        .catch(() => null);
+      if (existing && existing.uid !== targetUid) {
         throw new BadRequestException(
-          'La contraseña debe tener al menos 6 caracteres.',
+          'Ese correo ya está en uso por otro usuario.',
         );
       }
+      update.email = cleanEmail;
+    }
+    if (newPassword) {
+      this.assertPasswordOk(newPassword);
       update.password = newPassword.trim();
     }
 
     const updated = await admin.auth().updateUser(targetUid, update);
 
     // Sincroniza email en Mongo si cambió
-    if (newEmail) {
+    if (update.email) {
       const userDoc = await this.userModel.findOne({ uid: targetUid }).exec();
       if (userDoc) {
-        userDoc.email = newEmail.trim().toLowerCase();
+        userDoc.email = update.email;
         await userDoc.save();
       }
     }
@@ -239,16 +290,13 @@ export class UsersService {
       (a, b) => +a.createdAt - +b.createdAt,
     );
 
-    // Mantén solo los dos últimos
     const kept: TokenEntry[] = next.slice(-2);
     const keptSet = new Set(kept.map((e) => e.token));
 
-    // Revocados = todo lo que no quedó en kept
     const revokedTokens = next
       .map((e) => e.token)
       .filter((t) => !keptSet.has(t));
 
-    // Guarda en Mongo (dos tokens)
     const saved = await this.userModel
       .findOneAndUpdate(
         { uid },
@@ -257,7 +305,6 @@ export class UsersService {
       )
       .exec();
 
-    // RTDB: añade el nuevo y borra solo los revocados
     const rtdb = admin.database();
     await rtdb.ref(`sessions/${uid}/${newToken}`).set({
       createdAt: admin.database.ServerValue.TIMESTAMP,
@@ -268,16 +315,13 @@ export class UsersService {
 
     return { sessionToken: newToken, user: saved, revokedTokens };
   }
-  // users.service.ts
+
   async revokeSessionToken(uid: string, sessionToken: string) {
     await this.userModel.updateOne(
       { uid },
       { $pull: { sessionTokens: { token: sessionToken } } },
     );
-
-    // RTDB: borra el nodo del token
     await admin.database().ref(`sessions/${uid}/${sessionToken}`).remove();
-
     return { success: true };
   }
 }

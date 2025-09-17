@@ -29,7 +29,8 @@ export class UsersController {
   }
 
   @Post('/refresh-session')
-  async refreshSessionToken(@Body() body: { uid: string }) {
+  async refreshSessionToken(@Body() body: any) {
+    if (!body?.uid) throw new BadRequestException('uid requerido');
     return this.usersService.updateSessionToken(body.uid); // => { sessionToken, user }
   }
 
@@ -55,58 +56,60 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
-  @Post('change-password')
-  async changePassword(@Body() body: { uid: string; newPassword: string }) {
-    return this.usersService.changePasswordByUid(body.uid, body.newPassword);
+  // ===== Password =====
+  @Post('change-password') // espera { userId, newPassword }
+  async changePassword(@Body() body: any) {
+    const { userId, newPassword } = body || {};
+    if (!userId) throw new BadRequestException('userId requerido');
+    return this.usersService.changePasswordByUserId(userId, newPassword);
   }
 
-  @Post('change-password-by-email')
-  async changePasswordByEmail(
-    @Body() body: { email: string; newPassword: string },
-  ) {
-    return this.usersService.changePasswordByEmail(
-      body.email,
-      body.newPassword,
-    );
+  // Legacy (por email)
+  @Post('change-password-by-email') // { email, newPassword }
+  async changePasswordByEmail(@Body() body: any) {
+    const { email, newPassword } = body || {};
+    if (!email) throw new BadRequestException('email requerido');
+    return this.usersService.changePasswordByEmail(email, newPassword);
   }
 
-  @Post('change-email-by-uid')
-  async changeEmailByUid(@Body() body: { uid: string; newEmail: string }) {
-    return this.usersService.changeEmailByUid(body.uid, body.newEmail);
+  // ===== Email =====
+  @Post('change-email-by-userid')
+  async changeEmailByUserId(@Body() body: any) {
+    const { userId, newEmail } = body || {};
+    if (!userId) throw new BadRequestException('userId requerido');
+    if (!newEmail) throw new BadRequestException('newEmail requerido');
+    return this.usersService.changeEmailByUserId(userId, newEmail);
   }
 
-  @Post('change-email-by-email')
-  async changeEmailByEmail(
-    @Body() body: { currentEmail: string; newEmail: string },
-  ) {
-    return this.usersService.changeEmailByCurrentEmail(
-      body.currentEmail,
-      body.newEmail,
-    );
+  // Legacy (por email actual)
+  @Post('change-email-by-email') // { currentEmail, newEmail }
+  async changeEmailByEmail(@Body() body: any) {
+    const { currentEmail, newEmail } = body || {};
+    if (!currentEmail) throw new BadRequestException('currentEmail requerido');
+    if (!newEmail) throw new BadRequestException('newEmail requerido');
+    return this.usersService.changeEmailByCurrentEmail(currentEmail, newEmail);
   }
 
-  // Cambiar ambos (email y/o password) con uid o currentEmail
+  // ===== Ambos (email y/o password) =====
   @Post('change-credentials')
-  async changeCredentials(
-    @Body()
-    body: {
-      uid?: string;
-      currentEmail?: string;
-      newEmail?: string;
-      newPassword?: string;
-    },
-  ) {
+  async changeCredentials(@Body() body: any) {
+    // Admite { userId } o { uid } o { currentEmail } + { newEmail/newPassword }
+    const { newEmail, newPassword } = body || {};
+    if (!newEmail && !newPassword) {
+      throw new BadRequestException('Debes enviar newEmail y/o newPassword.');
+    }
     return this.usersService.changeCredentials(body);
   }
 
+  // ===== Logout (revocar token de sesión) =====
   @UseGuards(SessionTokenGuard)
   @Post('logout')
-  async logout(
-    @Req() req: any,
-    @Body() body: { uid?: string; sessionToken?: string },
-  ) {
-    const uid = req.auth?.uid ?? body.uid;
-    const token = req.auth?.sessionToken ?? body.sessionToken;
+  async logout(@Req() req: any, @Body() body: any) {
+    const uid = req.auth?.uid ?? body?.uid;
+    const token = req.auth?.sessionToken ?? body?.sessionToken;
+    if (!uid || !token) {
+      throw new BadRequestException('Faltan uid o sessionToken.');
+    }
     await this.usersService.revokeSessionToken(String(uid), String(token));
     return { success: true };
   }
