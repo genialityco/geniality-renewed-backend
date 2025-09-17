@@ -7,6 +7,15 @@ import { OrganizationUser } from '../organization-users/schemas/organization-use
 import { EmailService } from '../email/email.service'; // Ajusta la ruta
 import { renderSubscriptionContent } from '../templates/PaySuscription';
 
+type PlanMeta = {
+  source?: 'gateway' | 'manual' | 'admin';
+  status_history?: any[];
+  reference?: string;
+  transactionId?: string;
+  currency?: string;
+  rawWebhook?: any;
+};
+
 @Injectable()
 export class PaymentPlansService {
   constructor(
@@ -55,28 +64,32 @@ export class PaymentPlansService {
   }
 
   // Nuevo método para crear un PaymentPlan
+
   async createPaymentPlan(
     organizationUserId: string,
     days: number,
     date_until: Date,
     price: number,
     UserName?: string,
+    meta?: PlanMeta, // ← NUEVO
   ): Promise<PaymentPlan> {
     const newPlan = new this.paymentPlanModel({
       organization_user_id: organizationUserId,
       days,
       date_until,
       price,
+      source: meta?.source ?? 'manual',
+      status_history: meta?.status_history ?? [],
+      reference: meta?.reference,
+      transactionId: meta?.transactionId,
+      currency: meta?.currency ?? 'COP',
+      rawWebhook: meta?.rawWebhook,
     });
+
     const plan = await newPlan.save();
-    // ENVÍA EMAIL: Adquirió una suscripción
+
     const email = await this.getEmailByOrganizationUserId(organizationUserId);
     if (email) {
-      // await this.emailService.sendEmail(
-      //   email,
-      //   'Adquirió una suscripción',
-      //   `<p>¡Gracias por adquirir tu suscripción! Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
-      // );
       const html = renderSubscriptionContent({
         dateUntil: date_until,
         variant: 'created',
@@ -85,9 +98,9 @@ export class PaymentPlansService {
       const Subject = '¡Gracias por tu suscripción a EndoCampus!';
       await this.emailService.sendLayoutEmail(
         email,
-        Subject, // subject
+        Subject,
         html,
-        organizationUserId, // Opcional: para usar el layout de la organización
+        organizationUserId,
       );
     }
     return plan;

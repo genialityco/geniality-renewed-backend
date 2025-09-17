@@ -58,6 +58,8 @@ export class PaymentRequestsService {
   /**
    * Crea o actualiza el PaymentPlan para el usuario tras un pago aprobado.
    * Asocia el paymentPlan al organizationUser correspondiente.
+   *
+   * TEMP: Se usa `any` para unificar tipos Mongoose findOne vs create.
    */
   async activateMembershipForPayment(
     paymentRequest: PaymentRequest,
@@ -69,7 +71,7 @@ export class PaymentRequestsService {
       now.getTime() + MEMBERSHIP_DAYS * 24 * 60 * 60 * 1000,
     );
 
-    // 1. Buscar organizationUser por user_id (como ObjectId)
+    // 1) organizationUser
     const userObjectId =
       typeof paymentRequest.userId === 'string'
         ? new Types.ObjectId(paymentRequest.userId)
@@ -78,16 +80,13 @@ export class PaymentRequestsService {
     const organizationUser = await this.organizationUserModel.findOne({
       user_id: userObjectId,
     });
-
     if (!organizationUser) throw new Error('OrganizationUser no encontrado');
 
-    // 2. Buscar si ya tiene un PaymentPlan activo
-    const paymentPlan = await this.paymentPlanModel.findOne({
+    let paymentPlan = (await this.paymentPlanModel.findOne({
       organization_user_id: organizationUser._id,
-    });
+    })) as any;
 
     if (paymentPlan) {
-      // Si ya tiene, actualiza la fecha hasta
       paymentPlan.date_until = dateUntil;
       paymentPlan.price = amount;
       await paymentPlan.save();
@@ -97,25 +96,30 @@ export class PaymentRequestsService {
         organizationUser.properties?.nombres || 'Usuario',
       );
     } else {
-      // Si no tiene, crea uno nuevo
-      // paymentPlan = await this.paymentPlanModel.create({
-      //   days: MEMBERSHIP_DAYS,
-      //   date_until: dateUntil,
-      //   price: amount,
-      //   organization_user_id: organizationUser._id,
-      // });
-      await this.paymentPlansService.createPaymentPlan(
+      paymentPlan = (await this.paymentPlansService.createPaymentPlan(
         organizationUser._id.toString(),
         MEMBERSHIP_DAYS,
         dateUntil,
         amount,
         organizationUser.properties?.nombres || 'Usuario',
-      );
+        {
+          source: 'gateway',
+          status_history: paymentRequest.status_history ?? [],
+          reference: paymentRequest.reference,
+          transactionId: paymentRequest.transactionId,
+          currency: paymentRequest.currency ?? 'COP',
+          rawWebhook: paymentRequest.rawWebhook ?? undefined,
+        },
+      )) as any;
     }
 
-    // 3. Asociar el PaymentPlan al organizationUser
-    organizationUser.payment_plan_id = paymentPlan._id as unknown as string;
-    await organizationUser.save();
+    if (
+      !organizationUser.payment_plan_id ||
+      String(organizationUser.payment_plan_id) !== String(paymentPlan._id)
+    ) {
+      organizationUser.payment_plan_id = paymentPlan._id as any;
+      await organizationUser.save();
+    }
   }
 
   // src/payment-requests/payment-requests.service.ts

@@ -5,7 +5,6 @@ import { Model } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
 import { EmailService } from 'src/email/email.service';
 import { renderWelcomeContent } from '../templates/Welcome';
-import { Types } from 'mongoose';
 
 @Injectable()
 export class OrganizationUsersService {
@@ -13,7 +12,7 @@ export class OrganizationUsersService {
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
     private readonly emailService: EmailService,
-  ) { }
+  ) {}
 
   async createOrUpdateUser(
     properties: any,
@@ -55,15 +54,17 @@ export class OrganizationUsersService {
       payment_plan_id,
     });
     const saved = await newUser.save();
-    const toEmail =
-      properties?.email ||
-      saved?.properties?.email ||
-      null;
+    const toEmail = properties?.email || saved?.properties?.email || null;
     if (toEmail) {
       const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue creada`;
       const contentHtml = renderWelcomeContent(saved?.properties?.nombres);
       const organizationUserId = String(saved._id);
-      await this.emailService.sendLayoutEmail(toEmail, subject, contentHtml, organizationUserId);
+      await this.emailService.sendLayoutEmail(
+        toEmail,
+        subject,
+        contentHtml,
+        organizationUserId,
+      );
     }
     return saved;
   }
@@ -148,7 +149,4 @@ export class OrganizationUsersService {
       .populate('payment_plan_id')
       .exec();
   }
-
- 
-
 }
