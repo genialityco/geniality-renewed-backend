@@ -8,7 +8,7 @@ export class PaymentPlansController {
   constructor(
     private readonly paymentPlansService: PaymentPlansService,
     private readonly organizationUsersService: OrganizationUsersService,
-  ) {}
+  ) { }
 
   // Endpoint existente para validar acceso...
   @Get('validate/:organizationUserId')
@@ -78,5 +78,12 @@ export class PaymentPlansController {
       new Date(date_until),
       nameUser,
     );
+  }
+
+  // DELETE /payment-plans/:id
+  @Post(':id/delete')
+  async deletePaymentPlan(@Param('id') paymentPlanId: string): Promise<{ message: string }> {
+    await this.paymentPlansService.deletePaymentPlan(paymentPlanId);
+    return { message: 'PaymentPlan eliminado exitosamente' };
   }
 }

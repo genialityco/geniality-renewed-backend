@@ -1,18 +1,22 @@
 // organization-users.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
 import { EmailService } from 'src/email/email.service';
 import { renderWelcomeContent } from '../templates/Welcome';
-
+import { PaymentPlansService } from 'src/payment-plans/payment-plans.service';
+import { UsersService } from 'src/users/users.service';
 @Injectable()
 export class OrganizationUsersService {
   constructor(
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
+    @Inject(forwardRef(() => PaymentPlansService))
+    private readonly paymentPlansService: PaymentPlansService,
     private readonly emailService: EmailService,
-  ) {}
+    private readonly usersService: UsersService,
+  ) { }
 
   async createOrUpdateUser(
     properties: any,
@@ -67,6 +71,21 @@ export class OrganizationUsersService {
       );
     }
     return saved;
+  }
+
+  async deleteOrganizationUser(user_id: string): Promise<void> {
+    const user = await this.findByUserId(user_id);
+    if (!user) {
+      console.log('No se encontró el usuario de la organización con user_id:', user_id);
+      throw new NotFoundException('Organization user not found');
+    }
+    const paymentID = user.payment_plan_id;
+    const User_id = user.user_id;
+    if (paymentID) {
+      await this.paymentPlansService.deletePaymentPlan(paymentID);
+    }
+    await this.usersService.deleteUserByID(User_id);
+    await this.organizationUserModel.deleteOne({ user_id }).exec();
   }
 
   async findByUserId(user_id: string): Promise<OrganizationUser> {

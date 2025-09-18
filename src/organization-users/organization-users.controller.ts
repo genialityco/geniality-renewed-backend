@@ -6,7 +6,7 @@ import { OrganizationUser } from './schemas/organization-user.schema';
 export class OrganizationUsersController {
   constructor(
     private readonly organizationUsersService: OrganizationUsersService,
-  ) {}
+  ) { }
 
   @Post()
   async createOrUpdateUser(
@@ -30,6 +30,13 @@ export class OrganizationUsersController {
       payment_plan_id,
     );
   }
+
+  @Post(':user_id/delete')
+  async deleteById(@Param('user_id') user_id: string) {
+    await this.organizationUsersService.deleteOrganizationUser(user_id);
+    return { message: 'Usuario eliminado' };
+  }
+
 
   @Get(':user_id')
   async getUserByUserId(

@@ -16,7 +16,7 @@ import { SessionTokenGuard } from 'src/auth/session-token.guard';
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @Post()
   async createOrUpdateUser(@Body() body: any): Promise<User> {
@@ -26,6 +26,12 @@ export class UsersController {
       throw new BadRequestException('Faltan datos: uid, names, email');
     }
     return this.usersService.createOrUpdateUser(uid, finalName, email, phone);
+  }
+
+  @Post(':id/delete')
+  async deleteById(@Param('id') id: string) {
+    await this.usersService.deleteUserByID(id);
+    return { message: 'Usuario eliminado' };
   }
 
   @Post('/refresh-session')
@@ -113,4 +119,6 @@ export class UsersController {
     await this.usersService.revokeSessionToken(String(uid), String(token));
     return { success: true };
   }
+
+
 }
