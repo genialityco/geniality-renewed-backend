@@ -61,7 +61,13 @@ export class PaymentRequestsController {
       nextStatus: status,
       transactionId,
       source: 'webhook',
-      rawWebhook: body,
+      rawWompi: {
+        // guarda algo útil y “crudo”
+        headers: undefined,
+        event: body?.event,
+        signature: body?.signature,
+        transaction: tx,
+      },
     });
 
     if (res.becameApproved && res.doc) {

@@ -62,13 +62,15 @@ export class WompiController {
   async syncByTransaction(@Param('id') id: string) {
     if (!id) throw new BadRequestException('transaction id requerido');
 
-    const { data: tx } = (await this.wompi.getTransaction(id)) as any;
+    const txResp = (await this.wompi.getTransaction(id)) as any;
+    const tx = txResp.data;
 
     const res = await this.prService.safeUpdateStatus({
       reference: tx.reference,
       nextStatus: tx.status,
       transactionId: tx.id,
       source: 'poll',
+      rawWompi: txResp,
     });
 
     if (!res.doc) {

@@ -32,14 +32,23 @@ export class WompiReconcile {
             continue;
           }
 
-          const tx = (await this.wompi.getTransaction(
+          // Trae el "raw" completo de Wompi para snapshot
+          const txResp = (await this.wompi.getTransaction(
             p.transactionId,
-          )) as unknown as {
+          )) as any;
+          const tx = txResp?.data as {
             status?: string;
             reference: string;
             id: string;
             amount_in_cents: number;
           };
+
+          if (!tx || !tx.reference) {
+            this.logger.warn(
+              `Respuesta inválida de Wompi para txId=${p.transactionId}; skip`,
+            );
+            continue;
+          }
 
           const allowedStatuses = [
             'CREATED',
@@ -50,6 +59,7 @@ export class WompiReconcile {
             'ERROR',
           ] as const;
           type AllowedStatus = (typeof allowedStatuses)[number];
+
           const nextStatus = (tx.status || '').toUpperCase() as AllowedStatus;
 
           if (!allowedStatuses.includes(nextStatus)) {
@@ -59,22 +69,31 @@ export class WompiReconcile {
             continue;
           }
 
-          await this.pr.safeUpdateStatus({
+          // Guarda snapshot SIEMPRE (rawWompi) e intenta transición de estado
+          const res = await this.pr.safeUpdateStatus({
             reference: tx.reference,
             nextStatus,
             transactionId: tx.id,
-            source: 'poll',
+            source: 'reconcile',
+            rawWompi: txResp, // ← se guardará en wompi_snapshots
           });
 
-          if (nextStatus === 'APPROVED') {
-            // Cargar el PaymentRequest completo (no lean) para activar membresía
-            const full = await this.pr.findByReference(tx.reference);
-            if (full) {
-              await this.pr.activateMembershipForPayment(
-                full,
-                tx.amount_in_cents / 100,
-              );
-            }
+          if (!res.doc) {
+            this.logger.warn(
+              `No existe PaymentRequest con reference ${tx.reference}`,
+            );
+            continue;
+          }
+
+          // Solo activa si la transición a APPROVED ocurrió AHORA
+          if (res.becameApproved) {
+            await this.pr.activateMembershipForPayment(
+              res.doc,
+              tx.amount_in_cents / 100,
+            );
+            this.logger.log(
+              `Activada membresía por reconcile para reference=${tx.reference}`,
+            );
           }
         } catch (e: any) {
           this.logger.warn(

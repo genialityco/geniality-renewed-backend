@@ -144,7 +144,7 @@ export class PaymentRequestsService {
     nextStatus,
     transactionId,
     source,
-    rawWebhook,
+    rawWompi,
   }: {
     reference: string;
     nextStatus:
@@ -155,8 +155,8 @@ export class PaymentRequestsService {
       | 'VOIDED'
       | 'ERROR';
     transactionId?: string;
-    source: 'webhook' | 'poll' | 'redirect';
-    rawWebhook?: any;
+    source: 'webhook' | 'poll' | 'redirect' | 'reconcile';
+    rawWompi?: any;
   }): Promise<{
     doc: PaymentRequest | null;
     changed: boolean;
@@ -167,6 +167,20 @@ export class PaymentRequestsService {
 
     const prev = current.status;
     const next = nextStatus;
+
+    // SIEMPRE: si llega raw, persistimos snapshot (aunque no cambie el estado)
+    if (rawWompi) {
+      current.wompi_snapshots = current.wompi_snapshots || [];
+      current.wompi_snapshots.push({
+        source,
+        at: new Date(),
+        payload: rawWompi,
+      });
+      // (opcional) limitar tamaño del historial:
+      // if (current.wompi_snapshots.length > 20) {
+      //   current.wompi_snapshots = current.wompi_snapshots.slice(-20);
+      // }
+    }
 
     // Idempotencia dura: si estado y txId no cambian, no toques nada
     const sameStatus = prev === next;
@@ -188,7 +202,9 @@ export class PaymentRequestsService {
 
     current.status = next;
     if (transactionId) current.transactionId = transactionId;
-    if (rawWebhook) current.rawWebhook = rawWebhook;
+    if (source === 'webhook' && rawWompi) {
+      current.rawWebhook = rawWompi;
+    }
 
     await current.save();
 
