@@ -134,6 +134,7 @@ export class OrganizationUsersService {
       this.organizationUserModel
         .find(filter)
         .skip(skip)
+        .sort({ created_at: -1 })
         .limit(limit)
         .populate('payment_plan_id') // <--- Poblamos el payment_plan_id
         .exec(),
