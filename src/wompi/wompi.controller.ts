@@ -64,25 +64,27 @@ export class WompiController {
 
     const { data: tx } = (await this.wompi.getTransaction(id)) as any;
 
-    const updated = await this.prService.safeUpdateStatus({
+    const res = await this.prService.safeUpdateStatus({
       reference: tx.reference,
       nextStatus: tx.status,
       transactionId: tx.id,
       source: 'poll',
     });
 
-    if (!updated) {
+    if (!res.doc) {
       throw new BadRequestException(
         `No existe PaymentRequest con reference ${tx.reference}`,
       );
     }
 
-    if (tx.status === 'APPROVED') {
+    // Solo activa si la transición a APPROVED ocurrió AHORA
+    if (res.becameApproved) {
       await this.prService.activateMembershipForPayment(
-        updated,
+        res.doc,
         tx.amount_in_cents / 100,
       );
     }
-    return updated;
+
+    return res.doc;
   }
 }

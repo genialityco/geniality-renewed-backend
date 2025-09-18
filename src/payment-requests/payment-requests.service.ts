@@ -86,15 +86,31 @@ export class PaymentRequestsService {
       organization_user_id: organizationUser._id,
     })) as any;
 
+    // Si ya aplicaste este mismo pago (misma tx), sal temprano
+    if (
+      paymentPlan?.transactionId &&
+      paymentRequest.transactionId &&
+      paymentPlan.transactionId === paymentRequest.transactionId
+    ) {
+      return paymentPlan; // no enviar correos otra vez
+    }
+
     if (paymentPlan) {
-      paymentPlan.date_until = dateUntil;
+      // Solo enviar correo “updated” si realmente extendemos la fecha
+      const shouldExtend =
+        !paymentPlan.date_until || new Date(paymentPlan.date_until) < dateUntil;
       paymentPlan.price = amount;
-      await paymentPlan.save();
-      await this.paymentPlansService.updateDateUntil(
-        paymentPlan._id.toString(),
-        dateUntil,
-        organizationUser.properties?.nombres || 'Usuario',
-      );
+      if (shouldExtend) {
+        paymentPlan.date_until = dateUntil;
+        await paymentPlan.save();
+        await this.paymentPlansService.updateDateUntil(
+          paymentPlan._id.toString(),
+          dateUntil,
+          organizationUser.properties?.nombres || 'Usuario',
+        );
+      } else {
+        await paymentPlan.save(); // actualiza precio, sin correo
+      }
     } else {
       paymentPlan = (await this.paymentPlansService.createPaymentPlan(
         organizationUser._id.toString(),
@@ -141,27 +157,43 @@ export class PaymentRequestsService {
     transactionId?: string;
     source: 'webhook' | 'poll' | 'redirect';
     rawWebhook?: any;
-  }) {
+  }): Promise<{
+    doc: PaymentRequest | null;
+    changed: boolean;
+    becameApproved: boolean;
+  }> {
     const current = await this.paymentRequestModel.findOne({ reference });
-    if (!current) return null;
+    if (!current) return { doc: null, changed: false, becameApproved: false };
 
-    // si ya está en APPROVED y llega algo repetido, no dispares efectos otra vez
-    if (current.status === 'APPROVED' && nextStatus !== 'APPROVED')
-      return current;
+    const prev = current.status;
+    const next = nextStatus;
+
+    // Idempotencia dura: si estado y txId no cambian, no toques nada
+    const sameStatus = prev === next;
+    const sameTx =
+      !transactionId ||
+      (current.transactionId && current.transactionId === transactionId);
+
+    if (sameStatus && sameTx) {
+      return { doc: current, changed: false, becameApproved: false };
+    }
 
     current.status_history = current.status_history || [];
     current.status_history.push({
       at: new Date(),
-      from: current.status,
-      to: nextStatus,
+      from: prev,
+      to: next,
       source,
     });
 
-    current.status = nextStatus;
+    current.status = next;
     if (transactionId) current.transactionId = transactionId;
     if (rawWebhook) current.rawWebhook = rawWebhook;
+
     await current.save();
-    return current;
+
+    const becameApproved = prev !== 'APPROVED' && next === 'APPROVED';
+    return { doc: current, changed: true, becameApproved };
   }
 
   async listStalePendings(staleMinutes = 10, limit = 200) {

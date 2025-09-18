@@ -29,6 +29,14 @@ import { PaymentPlansModule } from 'src/payment-plans/payment-plans.module';
   ],
   controllers: [PaymentRequestsController],
   providers: [PaymentRequestsService],
-  exports: [PaymentRequestsService ],
+  exports: [PaymentRequestsService],
 })
 export class PaymentRequestsModule {}
+// export class PaymentRequestsModule implements NestModule {
+//   configure(consumer: MiddlewareConsumer) {
+//     consumer.apply(WebhookTapMiddleware).forRoutes({
+//       path: 'payment-requests/webhook', // coincide con tu @Controller('payment-requests') + @Post('webhook')
+//       method: RequestMethod.POST, // o ALL si quieres interceptar todo
+//     });
+//   }
+// }

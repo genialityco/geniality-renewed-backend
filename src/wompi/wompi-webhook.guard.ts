@@ -1,3 +1,4 @@
+/* eslint-disable prefer-const */
 // src/wompi/wompi-webhook.guard.ts
 import {
   CanActivate,
@@ -19,7 +20,6 @@ export class WompiWebhookGuard implements CanActivate {
   canActivate(ctx: ExecutionContext): boolean {
     const req = ctx.switchToHttp().getRequest();
 
-    // Headers vienen normalizados a minúsculas en Node/Nest
     const headerChecksum = (
       req.headers['x-event-checksum'] as string | undefined
     )?.toUpperCase();
@@ -31,35 +31,56 @@ export class WompiWebhookGuard implements CanActivate {
       throw new BadRequestException('Invalid body: signature/data missing');
     }
 
-    const { properties, timestamp, checksum } = body.signature ?? {};
+    const sig = body.signature ?? {};
+    let { properties, checksum } = sig as {
+      properties?: string[];
+      checksum?: string;
+      timestamp?: string | number;
+    };
+
+    // timestamp: usa signature.timestamp si existe si no, cae a body.timestamp o body.sent_at
+    let tsRaw: string | number | undefined =
+      (sig as any).timestamp ?? body.timestamp ?? body.sent_at;
+
     if (
       !Array.isArray(properties) ||
       !properties.every((p) => typeof p === 'string')
     ) {
       throw new BadRequestException('Invalid signature.properties');
     }
-    if (typeof timestamp !== 'string' && typeof timestamp !== 'number') {
+    if (typeof tsRaw !== 'string' && typeof tsRaw !== 'number') {
+      // log para depurar si llegara a faltar otra vez
+      // console.error('[WOMPI GUARD] missing timestamp on body/signature', { sig, bodyKeys: Object.keys(body || {}) });
       throw new BadRequestException('Invalid signature.timestamp');
     }
+    const timestamp = String(tsRaw);
+
     if (typeof checksum !== 'string') {
       throw new BadRequestException('Invalid signature.checksum');
     }
 
-    // Elegir secret por entorno
+    // (Opcional) anti-replay ±5 min si el timestamp es numérico (epoch ms)
+    const tsNum = Number(timestamp);
+    if (!Number.isNaN(tsNum) && Math.abs(Date.now() - tsNum) > 5 * 60 * 1000) {
+      // console.warn('[WOMPI GUARD] stale timestamp', { tsNum });
+      // decide si solo avisa o rechaza
+    }
+
+    // secreto por entorno
     const isProd = process.env.WOMPI_ENV === 'production';
     const eventsSecret = isProd
       ? process.env.WOMPI_EVENTS_SECRET_PROD
       : process.env.WOMPI_EVENTS_SECRET_TEST;
-    if (!eventsSecret)
+    if (!eventsSecret) {
       throw new UnauthorizedException(
         'Events secret not configured for current env',
       );
+    }
 
-    // Concatenar en el ORDEN exacto que llega en properties
+    // concat EXACTO según properties, tomando datos desde body.data (tal como llega)
     const concatProps = properties
-      .map((path: string) => {
+      .map((path) => {
         const v = get(body.data, path);
-        // Si alguno no existe, Wompi espera cadena vacía en esa posición
         return v == null ? '' : String(v);
       })
       .join('');
@@ -72,6 +93,7 @@ export class WompiWebhookGuard implements CanActivate {
     const remote = String(checksum).toUpperCase();
 
     if (local !== remote || local !== headerChecksum) {
+      // console.error('[WOMPI GUARD] checksum mismatch', { local, remote, headerChecksum, properties, timestamp });
       throw new UnauthorizedException('Invalid checksum');
     }
     return true;
