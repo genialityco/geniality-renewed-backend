@@ -36,7 +36,7 @@ export class PaymentRequestsController {
   @UseGuards(WompiWebhookGuard)
   async wompiWebhook(@Body() body: any) {
     const tx = body.data?.transaction;
-    if (!tx) return { ok: true }; // responde 200 para no forzar reintentos
+    if (!tx) return { ok: true };
 
     const {
       reference,
@@ -56,21 +56,26 @@ export class PaymentRequestsController {
       /* log discrepancy */
     }
 
-    const updated = await this.service.safeUpdateStatus({
+    const res = await this.service.safeUpdateStatus({
       reference,
       nextStatus: status,
       transactionId,
       source: 'webhook',
-      rawWebhook: body,
+      rawWompi: {
+        // guarda algo útil y “crudo”
+        headers: undefined,
+        event: body?.event,
+        signature: body?.signature,
+        transaction: tx,
+      },
     });
 
-    if (status === 'APPROVED') {
+    if (res.becameApproved && res.doc) {
       await this.service.activateMembershipForPayment(
-        updated,
+        res.doc,
         amount_in_cents / 100,
       );
     }
-
     return { ok: true };
   }
 
