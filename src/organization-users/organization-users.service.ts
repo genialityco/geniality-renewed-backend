@@ -114,12 +114,18 @@ export class OrganizationUsersService {
     organization_id: string,
     page = 1,
     limit = 20,
-    search?: string, // <--- Añadido
+    search?: string,
   ): Promise<{ results: OrganizationUser[]; total: number }> {
     const skip = (page - 1) * limit;
 
-    // Armar filtro base
-    const filter: any = { organization_id };
+    // Armar filtro base con campos obligatorios
+    const filter: any = {
+      organization_id,
+      // 🔥 Filtrar usuarios que tengan ID, email y phone
+      'properties.ID': { $exists: true, $nin: [null, ''] },
+      'properties.email': { $exists: true, $nin: [null, ''] },
+      'properties.phone': { $exists: true, $nin: [null, ''] }
+    };
 
     // Si hay search, buscar en properties.email, properties.name, properties.names
     if (search && search.trim() !== '') {
@@ -127,6 +133,9 @@ export class OrganizationUsersService {
         { 'properties.email': { $regex: search, $options: 'i' } },
         { 'properties.name': { $regex: search, $options: 'i' } },
         { 'properties.names': { $regex: search, $options: 'i' } },
+        { 'properties.nombres': { $regex: search, $options: 'i' } },
+        { 'properties.ID': { $regex: search, $options: 'i' } },
+        { 'properties.phone': { $regex: search, $options: 'i' } }, // 🔥 Añadido phone al search
       ];
     }
 
@@ -136,7 +145,7 @@ export class OrganizationUsersService {
         .skip(skip)
         .sort({ created_at: -1 })
         .limit(limit)
-        .populate('payment_plan_id') // <--- Poblamos el payment_plan_id
+        .populate('payment_plan_id')
         .exec(),
       this.organizationUserModel.countDocuments(filter),
     ]);
