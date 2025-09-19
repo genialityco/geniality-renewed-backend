@@ -11,6 +11,16 @@ import { OrganizationUser } from '../organization-users/schemas/organization-use
 import { PaymentPlan } from '../payment-plans/schemas/payment-plan.schema';
 import { PaymentPlansService } from '../payment-plans/payment-plans.service';
 
+type SearchParams = {
+  organizationId: string;
+  q?: string;
+  status?: string;
+  page: number;
+  pageSize: number;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 @Injectable()
 export class PaymentRequestsService {
   constructor(
@@ -224,5 +234,143 @@ export class PaymentRequestsService {
       .sort({ updatedAt: 1 })
       .limit(limit)
       .lean();
+  }
+
+  async search(params: SearchParams) {
+    const { organizationId, q, status, page, pageSize, dateFrom, dateTo } =
+      params;
+
+    const match: any = { organizationId };
+    if (status && status !== 'ALL') match.status = status;
+
+    if (dateFrom || dateTo) {
+      match.createdAt = {};
+      if (dateFrom) match.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) match.createdAt.$lte = new Date(dateTo);
+    }
+
+    if (q) {
+      match.$or = [
+        { reference: { $regex: q, $options: 'i' } },
+        { transactionId: { $regex: q, $options: 'i' } },
+      ];
+    }
+
+    const pipeline: any[] = [
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          items: [
+            { $skip: (page - 1) * pageSize },
+            { $limit: pageSize },
+
+            // userId (string) -> ObjectId (seguro)
+            {
+              $addFields: {
+                userObjectId: {
+                  $convert: {
+                    input: '$userId',
+                    to: 'objectId',
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+              },
+            },
+
+            // Join OrganizationUser por user_id
+            {
+              $lookup: {
+                from: this.organizationUserModel.collection.name,
+                let: { uId: '$userObjectId' },
+                pipeline: [
+                  { $match: { $expr: { $eq: ['$user_id', '$$uId'] } } },
+                  { $limit: 1 },
+                ],
+                as: 'organizationUser',
+              },
+            },
+            {
+              $unwind: {
+                path: '$organizationUser',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+
+            // Join PaymentPlan por organization_user_id; prioriza el que apunte a este PR
+            {
+              $lookup: {
+                from: this.paymentPlanModel.collection.name,
+                let: { ouId: '$organizationUser._id', prId: '$_id' },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: { $eq: ['$organization_user_id', '$$ouId'] },
+                    },
+                  },
+                  {
+                    $addFields: {
+                      _score: {
+                        $cond: [
+                          { $eq: ['$payment_request_id', '$$prId'] },
+                          2,
+                          1,
+                        ],
+                      },
+                    },
+                  },
+                  { $sort: { _score: -1, updated_at: -1, created_at: -1 } },
+                  { $limit: 1 },
+                ],
+                as: 'paymentPlan',
+              },
+            },
+            {
+              $unwind: {
+                path: '$paymentPlan',
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+
+            {
+              $project: {
+                _id: 0,
+                reference: 1,
+                transactionId: 1,
+                status: 1,
+                amount: 1,
+                currency: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                wompi_snapshots: 1,
+                rawWebhook: 1,
+                organizationUser: {
+                  _id: '$organizationUser._id',
+                  properties: '$organizationUser.properties',
+                  user_id: '$organizationUser.user_id',
+                },
+                paymentPlan: {
+                  _id: '$paymentPlan._id',
+                  date_until: '$paymentPlan.date_until',
+                  payment_request_id: '$paymentPlan.payment_request_id',
+                },
+              },
+            },
+          ],
+          meta: [{ $count: 'total' }],
+        },
+      },
+      {
+        $project: {
+          items: 1,
+          total: { $ifNull: [{ $arrayElemAt: ['$meta.total', 0] }, 0] },
+        },
+      },
+    ];
+    const [res] = await this.paymentRequestModel
+      .aggregate(pipeline)
+      .allowDiskUse(true);
+    return { items: res?.items ?? [], total: res?.total ?? 0 };
   }
 }

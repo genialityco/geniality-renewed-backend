@@ -6,6 +6,8 @@ import {
   Param,
   UseGuards,
   NotFoundException,
+  BadRequestException,
+  Query,
 } from '@nestjs/common';
 import { PaymentRequestsService } from './payment-requests.service';
 import { WompiWebhookGuard } from 'src/wompi/wompi-webhook.guard';
@@ -30,6 +32,32 @@ export class PaymentRequestsController {
   @Get('by-transaction/:transactionId')
   async getByTransactionId(@Param('transactionId') transactionId: string) {
     return this.service.findByTransactionId(transactionId);
+  }
+
+  @Get('search')
+  async search(
+    @Query('organizationId') organizationId: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+    @Query('page') pageRaw?: string,
+    @Query('pageSize') pageSizeRaw?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    if (!organizationId) {
+      throw new BadRequestException('organizationId requerido');
+    }
+    const page = Math.max(1, Number(pageRaw || 1));
+    const pageSize = Math.min(100, Math.max(1, Number(pageSizeRaw || 20)));
+    return this.service.search({
+      organizationId,
+      q: q?.trim(),
+      status: status?.trim(),
+      page,
+      pageSize,
+      dateFrom,
+      dateTo,
+    });
   }
 
   @Post('webhook')
