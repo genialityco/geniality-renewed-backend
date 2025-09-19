@@ -14,6 +14,7 @@ type PlanMeta = {
   transactionId?: string;
   currency?: string;
   rawWebhook?: any;
+  payment_request_id?: any;
 };
 
 @Injectable()
@@ -71,7 +72,7 @@ export class PaymentPlansService {
     date_until: Date,
     price: number,
     UserName?: string,
-    meta?: PlanMeta, // ← NUEVO
+    meta?: PlanMeta,
   ): Promise<PaymentPlan> {
     const newPlan = new this.paymentPlanModel({
       organization_user_id: organizationUserId,
@@ -84,6 +85,7 @@ export class PaymentPlansService {
       transactionId: meta?.transactionId,
       currency: meta?.currency ?? 'COP',
       rawWebhook: meta?.rawWebhook,
+      payment_request_id: meta?.payment_request_id,
     });
 
     const plan = await newPlan.save();

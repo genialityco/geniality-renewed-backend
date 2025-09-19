@@ -47,6 +47,7 @@ export class PaymentPlansController {
       currency,
       rawWebhook,
       nameUser,
+      payment_request_id,
     } = body;
 
     return this.paymentPlansService.createPaymentPlan(
@@ -62,6 +63,7 @@ export class PaymentPlansController {
         transactionId,
         currency,
         rawWebhook,
+        payment_request_id,
       },
     );
   }

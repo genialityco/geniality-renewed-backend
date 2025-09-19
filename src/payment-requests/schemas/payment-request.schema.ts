@@ -1,10 +1,12 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export type PaymentRequestDocument = PaymentRequest & Document;
 
 @Schema({ timestamps: true })
 export class PaymentRequest {
+  _id: Types.ObjectId;
+
   @Prop({ required: true, unique: true, index: true })
   reference: string;
 
