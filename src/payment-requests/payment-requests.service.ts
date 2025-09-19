@@ -125,6 +125,7 @@ export class PaymentRequestsService {
           transactionId: paymentRequest.transactionId,
           currency: paymentRequest.currency ?? 'COP',
           rawWebhook: paymentRequest.rawWebhook ?? undefined,
+          payment_request_id: paymentRequest._id,
         },
       )) as any;
     }

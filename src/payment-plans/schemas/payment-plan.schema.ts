@@ -20,7 +20,14 @@ export class PaymentPlan extends Document {
   })
   organization_user_id: string;
 
-  // --- NUEVO: para rastrear origen y estados ---
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'PaymentRequest',
+    index: true,
+  })
+  payment_request_id?: string;
+
+  //para rastrear origen y estados
   @Prop({ enum: ['gateway', 'manual', 'admin'], default: 'manual' })
   source: 'gateway' | 'manual' | 'admin';
 
