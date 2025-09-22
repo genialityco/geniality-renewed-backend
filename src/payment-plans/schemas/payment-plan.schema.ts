@@ -28,7 +28,7 @@ export class PaymentPlan extends Document {
   payment_request_id?: string;
 
   //para rastrear origen y estados
-  @Prop({ enum: ['gateway', 'manual', 'admin'], default: 'manual' })
+  @Prop({ enum: ['gateway', 'manual', 'admin'] })
   source: 'gateway' | 'manual' | 'admin';
 
   @Prop({ type: [Object], default: [] })
