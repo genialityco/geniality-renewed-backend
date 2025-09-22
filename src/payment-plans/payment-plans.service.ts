@@ -25,7 +25,7 @@ export class PaymentPlansService {
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
     private readonly emailService: EmailService,
-  ) { }
+  ) {}
 
   // Método para obtener el email a partir del organizationUserId
   private async getEmailByOrganizationUserId(
@@ -149,7 +149,9 @@ export class PaymentPlansService {
   }
   // Nuevo método para eliminar un PaymentPlan
   async deletePaymentPlan(paymentPlanId: string): Promise<void> {
-    const deleted = await this.paymentPlanModel.findByIdAndDelete(paymentPlanId).exec();
+    const deleted = await this.paymentPlanModel
+      .findByIdAndDelete(paymentPlanId)
+      .exec();
     if (!deleted) {
       throw new NotFoundException('PaymentPlan no encontrado');
     }

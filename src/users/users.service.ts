@@ -25,7 +25,7 @@ function normalizeTokens(arr: any[]): TokenEntry[] {
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<User>) { }
+  constructor(@InjectModel(User.name) private userModel: Model<User>) {}
 
   // ========= Helper para obtener uid desde userId =========
   private async resolveUidByUserIdOrThrow(userId: string): Promise<string> {
@@ -116,12 +116,17 @@ export class UsersService {
     }
   }
 
-  async deleteUserByID(user_id: string): Promise<{ authDeleted: boolean; mongoDeleted: boolean }> {
+  async deleteUserByID(
+    user_id: string,
+  ): Promise<{ authDeleted: boolean; mongoDeleted: boolean }> {
     if (!this.findById(user_id)) {
       throw new BadRequestException('user_id inválido');
     }
     // 1) Buscar el doc para obtener el uid de Firebase
-    const user = await this.userModel.findById(user_id).select({ uid: 1 }).lean();
+    const user = await this.userModel
+      .findById(user_id)
+      .select({ uid: 1 })
+      .lean();
     if (!user) {
       throw new NotFoundException('Usuario no encontrado');
     }
@@ -141,7 +146,9 @@ export class UsersService {
     const res = await this.userModel.deleteOne({ _id: user_id }).exec();
     const mongoDeleted = res.deletedCount === 1;
     if (!mongoDeleted) {
-      throw new NotFoundException('No se pudo eliminar el documento de usuario');
+      throw new NotFoundException(
+        'No se pudo eliminar el documento de usuario',
+      );
     }
     return { authDeleted, mongoDeleted };
   }
@@ -354,5 +361,4 @@ export class UsersService {
     await admin.database().ref(`sessions/${uid}/${sessionToken}`).remove();
     return { success: true };
   }
-
 }

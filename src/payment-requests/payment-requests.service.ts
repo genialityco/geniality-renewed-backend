@@ -240,99 +240,107 @@ export class PaymentRequestsService {
     const { organizationId, q, status, page, pageSize, dateFrom, dateTo } =
       params;
 
-    const match: any = { organizationId };
-    if (status && status !== 'ALL') match.status = status;
+    // Filtros "baratos" que sí existen en la colección base (sin joins)
+    const baseMatch: any = { organizationId };
+    if (status && status !== 'ALL') baseMatch.status = status;
 
     if (dateFrom || dateTo) {
-      match.createdAt = {};
-      if (dateFrom) match.createdAt.$gte = new Date(dateFrom);
-      if (dateTo) match.createdAt.$lte = new Date(dateTo);
+      baseMatch.createdAt = {};
+      if (dateFrom) baseMatch.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) baseMatch.createdAt.$lte = new Date(dateTo);
     }
 
-    if (q) {
-      match.$or = [
-        { reference: { $regex: q, $options: 'i' } },
-        { transactionId: { $regex: q, $options: 'i' } },
-      ];
-    }
-
+    // Construimos el pipeline:
+    // 1) Filtrar por base, 2) ordenar, 3) lookups, 4) filtrar por 'q' (incluye campos del join), 5) facet
     const pipeline: any[] = [
-      { $match: match },
+      { $match: baseMatch },
       { $sort: { createdAt: -1 } },
+
+      // userId (string) -> ObjectId (seguro) para poder hacer join por user_id
+      {
+        $addFields: {
+          userObjectId: {
+            $convert: {
+              input: '$userId',
+              to: 'objectId',
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+
+      // Join OrganizationUser por user_id
+      {
+        $lookup: {
+          from: this.organizationUserModel.collection.name,
+          let: { uId: '$userObjectId' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$user_id', '$$uId'] } } },
+            { $limit: 1 },
+          ],
+          as: 'organizationUser',
+        },
+      },
+      {
+        $unwind: {
+          path: '$organizationUser',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+
+      // Join PaymentPlan por organization_user_id; prioriza el que apunte a este PR
+      {
+        $lookup: {
+          from: this.paymentPlanModel.collection.name,
+          let: { ouId: '$organizationUser._id', prId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$organization_user_id', '$$ouId'] } } },
+            {
+              $addFields: {
+                _score: {
+                  $cond: [{ $eq: ['$payment_request_id', '$$prId'] }, 2, 1],
+                },
+              },
+            },
+            { $sort: { _score: -1, updated_at: -1, created_at: -1 } },
+            { $limit: 1 },
+          ],
+          as: 'paymentPlan',
+        },
+      },
+      {
+        $unwind: {
+          path: '$paymentPlan',
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+    ];
+
+    // --- Filtro de búsqueda 'q' AHORA que ya tenemos el join ---
+    if (q && q.trim()) {
+      const regex = new RegExp(q.trim(), 'i');
+      pipeline.push({
+        $match: {
+          $or: [
+            { reference: { $regex: regex } },
+            { transactionId: { $regex: regex } },
+            { 'organizationUser.properties.email': { $regex: regex } },
+            { 'organizationUser.properties.names': { $regex: regex } },
+            { 'organizationUser.properties.nombres': { $regex: regex } },
+            { 'organizationUser.properties.apellidos': { $regex: regex } },
+          ],
+        },
+      });
+    }
+
+    // Facet para paginar y contar DESPUÉS de todos los filtros
+    pipeline.push(
       {
         $facet: {
           items: [
             { $skip: (page - 1) * pageSize },
             { $limit: pageSize },
-
-            // userId (string) -> ObjectId (seguro)
-            {
-              $addFields: {
-                userObjectId: {
-                  $convert: {
-                    input: '$userId',
-                    to: 'objectId',
-                    onError: null,
-                    onNull: null,
-                  },
-                },
-              },
-            },
-
-            // Join OrganizationUser por user_id
-            {
-              $lookup: {
-                from: this.organizationUserModel.collection.name,
-                let: { uId: '$userObjectId' },
-                pipeline: [
-                  { $match: { $expr: { $eq: ['$user_id', '$$uId'] } } },
-                  { $limit: 1 },
-                ],
-                as: 'organizationUser',
-              },
-            },
-            {
-              $unwind: {
-                path: '$organizationUser',
-                preserveNullAndEmptyArrays: true,
-              },
-            },
-
-            // Join PaymentPlan por organization_user_id; prioriza el que apunte a este PR
-            {
-              $lookup: {
-                from: this.paymentPlanModel.collection.name,
-                let: { ouId: '$organizationUser._id', prId: '$_id' },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: { $eq: ['$organization_user_id', '$$ouId'] },
-                    },
-                  },
-                  {
-                    $addFields: {
-                      _score: {
-                        $cond: [
-                          { $eq: ['$payment_request_id', '$$prId'] },
-                          2,
-                          1,
-                        ],
-                      },
-                    },
-                  },
-                  { $sort: { _score: -1, updated_at: -1, created_at: -1 } },
-                  { $limit: 1 },
-                ],
-                as: 'paymentPlan',
-              },
-            },
-            {
-              $unwind: {
-                path: '$paymentPlan',
-                preserveNullAndEmptyArrays: true,
-              },
-            },
-
             {
               $project: {
                 _id: 0,
@@ -367,7 +375,8 @@ export class PaymentRequestsService {
           total: { $ifNull: [{ $arrayElemAt: ['$meta.total', 0] }, 0] },
         },
       },
-    ];
+    );
+
     const [res] = await this.paymentRequestModel
       .aggregate(pipeline)
       .allowDiskUse(true);
