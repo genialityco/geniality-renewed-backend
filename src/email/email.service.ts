@@ -18,6 +18,7 @@ type OrgStylesLean = {
     FooterImage?: string;
     footerImage?: string;
   };
+  domains?: string[];
 };
 
 @Injectable()
@@ -215,19 +216,22 @@ export class EmailService {
    */
   private async resolveStrictForOrg(dataId?: string) {
     if (!dataId) {
-      return { heroUrl: '', logosUrl: '' };
+      return { domain: '', heroUrl: '', logosUrl: '' };
     }
-
     // 1) ¿Es un Organization?
     const orgDirect = await this.orgModel
       .findById(dataId)
-      .select({ style: 1, styles: 1 })
+      .select({ style: 1, styles: 1, domains: 1 })
       .lean<OrgStylesLean>()
       .exec();
 
     if (orgDirect) {
       const st = orgDirect.style ?? orgDirect.styles ?? {};
+      const domainStr = Array.isArray(orgDirect.domains)
+        ? (orgDirect.domains[0] ?? '')
+        : (orgDirect.domains as unknown as string) ?? ''; // por si viniera string
       return {
+        domain: domainStr.trim(),
         heroUrl: (st?.banner_image_email ?? '').trim(),
         logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
         organization_id: dataId,
@@ -252,12 +256,16 @@ export class EmailService {
     // 3) Con organizationId, ahora sí leo Organization
     const org = await this.orgModel
       .findById(organizationId)
-      .select({ style: 1, styles: 1 })
+      .select({ style: 1, styles: 1, domains: 1 })
       .lean<OrgStylesLean>()
       .exec();
 
     const st = org?.style ?? org?.styles ?? {};
+    const domainStr = Array.isArray(org?.domains)
+      ? (org!.domains![0] ?? '')
+      : (org?.domains as unknown as string) ?? '';
     return {
+      domain: domainStr.trim(),
       heroUrl: (st?.banner_image_email ?? '').trim(),
       logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
       organization_id: organizationId,
@@ -274,20 +282,22 @@ export class EmailService {
     contentHtml: string,
     dataId: string,
     opts?: {
+      domain?: string; // override explícito (opcional)
       preheader?: string;
       blueBar?: boolean;
       heroUrl?: string; // override explícito (opcional)
       logosUrl?: string; // override explícito (opcional)
     },
   ) {
-    console.log('sendLayoutEmail opts:', dataId);
     const {
+      domain: orgDomain,
       heroUrl: orgHero,
       logosUrl: orgLogos,
       organization_id,
     } = await this.resolveStrictForOrg(dataId);
 
     // Si te pasan overrides explícitos, se usan; si no, lo de la colección (o "")
+    const domain = (opts?.domain ?? orgDomain) || '';
     const heroUrl = (opts?.heroUrl ?? orgHero) || '';
     const logosUrl = (opts?.logosUrl ?? orgLogos) || '';
     const URL = `https://app.geniality.com.co/organization/${organization_id}`;
@@ -298,6 +308,7 @@ export class EmailService {
       blueBar: opts?.blueBar ?? true,
       heroCid: heroUrl, // URL pública o ''
       logosCid: logosUrl, // URL pública o ''
+      domain: domain, // dominio o ''
     });
 
     return this.sendEmail(to, subject, fullHtml);

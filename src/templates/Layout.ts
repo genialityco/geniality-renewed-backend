@@ -1,10 +1,12 @@
+import { Domain } from "domain";
 
 export type LayoutOptions = {
   URL: string;
   preheader?: string;
   heroCid?: string;   // default: 'hero@endo'
   logosCid?: string;  // default: 'logos-footer@endo'
-  blueBar?: boolean;  // default: true
+  blueBar?: boolean;
+  domain?: string;  // default: true
 };
 
 /**
@@ -20,6 +22,7 @@ export function renderEmailLayout(
     heroCid = 'hero@endo',
     logosCid = 'logos-footer@endo',
     blueBar = true,
+    domain = 'https://app.geniality.com.co',
   } = args;
 
   // Guardia: evita que el content traiga rutas locales de Windows
@@ -49,7 +52,7 @@ export function renderEmailLayout(
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
               <tr>
                 <td align="center" style="padding:10px 24px 6px 24px;">
-                  <a href="${URL}"
+                  <a href="${domain}"
                     style="display:inline-block;text-decoration:none;border:2px solid #F05A28;border-radius:999px;padding:12px 22px;
                             font-weight:800;font-size:14px;color:#0b3d91 !important;">
                     <span style="color:#0b3d91 !important;">Accede a tu cuenta</span>
