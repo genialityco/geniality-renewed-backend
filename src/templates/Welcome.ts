@@ -10,7 +10,7 @@ export function renderWelcomeContent(displayName: string) {
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="padding:18px 20px 8px 20px;">
     <tr>
       <td align="center" style="padding:10px 16px;border:2px solid #d6e0ea;border-radius:12px;color:#0b3d91;font-weight:700;font-size:16px;">
-        Asunto: ${safeName} ¡Bienvenido(a) a EndoCampus!
+        ${safeName} ¡Bienvenido(a) a EndoCampus!
       </td>
     </tr>
     <tr>
