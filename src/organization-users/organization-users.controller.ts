@@ -79,4 +79,9 @@ export class OrganizationUsersController {
       search,
     );
   }
+
+  @Get('organizations-by-user/:user_id')
+  async getOrganizationsByUser(@Param('user_id') user_id: string) {
+    return this.organizationUsersService.findOrganizationsByUserId(user_id);
+  }
 }

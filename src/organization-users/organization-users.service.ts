@@ -1,7 +1,7 @@
 // organization-users.service.ts
 import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
 import { EmailService } from 'src/email/email.service';
 import { renderWelcomeContent } from '../templates/Welcome';
@@ -177,5 +177,54 @@ export class OrganizationUsersService {
       .find(filter)
       .populate('payment_plan_id')
       .exec();
+  }
+  
+  async findOrganizationsByUserId(user_id: string): Promise<
+    Array<{
+      organization: any; // puedes tipar con tu interfaz Organization si quieres
+      membership: {
+        _id: string;
+        rol_id?: string;
+        properties?: any;
+        created_at?: Date;
+        updated_at?: Date;
+      };
+    }>
+  > {
+    if (!Types.ObjectId.isValid(user_id)) {
+      throw new NotFoundException('Invalid user_id');
+    }
+    const uid = new Types.ObjectId(user_id);
+
+    const rows = await this.organizationUserModel
+      .aggregate([
+        { $match: { user_id: uid } },
+        {
+          $lookup: {
+            from: 'organizations',          // nombre real de la colección
+            localField: 'organization_id',  // campo en OrganizationUser
+            foreignField: '_id',            // campo en Organization
+            as: 'org',
+          },
+        },
+        { $unwind: '$org' },        
+        {
+          $project: {
+            _id: 0,
+            organization: '$org',
+            membership: {
+              _id: '$_id',
+              rol_id: '$rol_id',
+              properties: '$properties',
+              created_at: '$created_at',
+              updated_at: '$updated_at',
+            },
+          },
+        },
+        { $sort: { 'organization.name': 1 } },
+      ])
+      .exec();
+
+    return rows;
   }
 }
