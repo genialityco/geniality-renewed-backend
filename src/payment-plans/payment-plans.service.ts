@@ -25,7 +25,7 @@ export class PaymentPlansService {
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
     private readonly emailService: EmailService,
-  ) {}
+  ) { }
 
   // Método para obtener el email a partir del organizationUserId
   private async getEmailByOrganizationUserId(
@@ -113,25 +113,34 @@ export class PaymentPlansService {
     paymentPlanId: string,
     date_until: Date,
     nameUser: string,
+    additionalFields?: {
+      price?: number;
+      payment_request_id?: any;
+      transactionId?: string;
+      reference?: string;
+      currency?: string;
+      rawWebhook?: any;
+    }
   ): Promise<PaymentPlan> {
+    const updateData: any = { date_until };
+
+    // Agregar campos adicionales si se proporcionan
+    if (additionalFields) {
+      Object.assign(updateData, additionalFields);
+    }
+
     const plan = await this.paymentPlanModel.findByIdAndUpdate(
       paymentPlanId,
-      { date_until },
+      updateData,
       { new: true },
     );
     if (!plan) {
       throw new NotFoundException('PaymentPlan no encontrado');
     }
-    // ENVÍA EMAIL: Actualizó la suscripción
     const email = await this.getEmailByOrganizationUserId(
       plan.organization_user_id,
     );
     if (email) {
-      // await this.emailService.sendEmail(
-      //   email,
-      //   'Actualizó la suscripción',
-      //   `<p>Has actualizado la vigencia de tu suscripción. Ahora tienes acceso hasta el <b>${date_until.toLocaleDateString()}</b>.</p>`,
-      // );
       const html = renderSubscriptionContent({
         dateUntil: date_until,
         variant: 'updated',
@@ -140,9 +149,9 @@ export class PaymentPlansService {
       const Subject = '¡Tu suscripción fue actualizada!';
       await this.emailService.sendLayoutEmail(
         email,
-        Subject, // subject
+        Subject,
         html,
-        plan.organization_user_id, // Opcional: para usar el layout de la organización
+        plan.organization_user_id,
       );
     }
     return plan;

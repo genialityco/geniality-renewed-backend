@@ -106,40 +106,28 @@ export class PaymentRequestsService {
     }
 
     if (paymentPlan) {
-      // Solo enviar correo "updated" si realmente extendemos la fecha
       const shouldExtend =
         !paymentPlan.date_until || new Date(paymentPlan.date_until) < dateUntil;
-      paymentPlan.price = amount;
-      paymentPlan.payment_request_id = paymentRequest._id;
-      paymentPlan.transactionId = paymentRequest.transactionId;
       if (shouldExtend) {
-        paymentPlan.date_until = dateUntil;
-        await paymentPlan.save();
         await this.paymentPlansService.updateDateUntil(
           paymentPlan._id.toString(),
           dateUntil,
           organizationUser.properties?.nombres || 'Usuario',
+          {
+            price: amount,
+            payment_request_id: paymentRequest._id,
+            transactionId: paymentRequest.transactionId,
+            reference: paymentRequest.reference,
+            currency: paymentRequest.currency,
+            rawWebhook: paymentRequest.rawWebhook,
+          }
         );
       } else {
-        await paymentPlan.save(); // actualiza precio y payment_request_id, sin correo
+        paymentPlan.price = amount;
+        paymentPlan.payment_request_id = paymentRequest._id;
+        paymentPlan.transactionId = paymentRequest.transactionId;
+        await paymentPlan.save();
       }
-    } else {
-      paymentPlan = (await this.paymentPlansService.createPaymentPlan(
-        organizationUser._id.toString(),
-        MEMBERSHIP_DAYS,
-        dateUntil,
-        amount,
-        organizationUser.properties?.nombres || 'Usuario',
-        {
-          source: 'gateway',
-          status_history: paymentRequest.status_history ?? [],
-          reference: paymentRequest.reference,
-          transactionId: paymentRequest.transactionId,
-          currency: paymentRequest.currency ?? 'COP',
-          rawWebhook: paymentRequest.rawWebhook ?? undefined,
-          payment_request_id: paymentRequest._id,
-        },
-      )) as any;
     }
 
     if (
