@@ -33,7 +33,7 @@ export class PaymentRequestsService {
     @InjectModel(PaymentPlan.name)
     private paymentPlanModel: Model<PaymentPlan>,
     private readonly paymentPlansService: PaymentPlansService,
-  ) {}
+  ) { }
 
   async create(data: Partial<PaymentRequest>): Promise<PaymentRequest> {
     return this.paymentRequestModel.create(data);
@@ -106,10 +106,12 @@ export class PaymentRequestsService {
     }
 
     if (paymentPlan) {
-      // Solo enviar correo “updated” si realmente extendemos la fecha
+      // Solo enviar correo "updated" si realmente extendemos la fecha
       const shouldExtend =
         !paymentPlan.date_until || new Date(paymentPlan.date_until) < dateUntil;
       paymentPlan.price = amount;
+      paymentPlan.payment_request_id = paymentRequest._id;
+      paymentPlan.transactionId = paymentRequest.transactionId;
       if (shouldExtend) {
         paymentPlan.date_until = dateUntil;
         await paymentPlan.save();
@@ -119,7 +121,7 @@ export class PaymentRequestsService {
           organizationUser.properties?.nombres || 'Usuario',
         );
       } else {
-        await paymentPlan.save(); // actualiza precio, sin correo
+        await paymentPlan.save(); // actualiza precio y payment_request_id, sin correo
       }
     } else {
       paymentPlan = (await this.paymentPlansService.createPaymentPlan(
@@ -159,12 +161,12 @@ export class PaymentRequestsService {
   }: {
     reference: string;
     nextStatus:
-      | 'CREATED'
-      | 'PENDING'
-      | 'APPROVED'
-      | 'DECLINED'
-      | 'VOIDED'
-      | 'ERROR';
+    | 'CREATED'
+    | 'PENDING'
+    | 'APPROVED'
+    | 'DECLINED'
+    | 'VOIDED'
+    | 'ERROR';
     transactionId?: string;
     source: 'webhook' | 'poll' | 'redirect' | 'reconcile';
     rawWompi?: any;
