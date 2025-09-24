@@ -178,53 +178,32 @@ export class OrganizationUsersService {
       .populate('payment_plan_id')
       .exec();
   }
-  
-  async findOrganizationsByUserId(user_id: string): Promise<
-    Array<{
-      organization: any; // puedes tipar con tu interfaz Organization si quieres
-      membership: {
-        _id: string;
-        rol_id?: string;
-        properties?: any;
-        created_at?: Date;
-        updated_at?: Date;
-      };
-    }>
-  > {
+
+
+
+  async findOrganizationsByUserId(user_id: string) {
     if (!Types.ObjectId.isValid(user_id)) {
       throw new NotFoundException('Invalid user_id');
     }
     const uid = new Types.ObjectId(user_id);
-
     const rows = await this.organizationUserModel
-      .aggregate([
-        { $match: { user_id: uid } },
-        {
-          $lookup: {
-            from: 'organizations',          // nombre real de la colección
-            localField: 'organization_id',  // campo en OrganizationUser
-            foreignField: '_id',            // campo en Organization
-            as: 'org',
-          },
-        },
-        { $unwind: '$org' },        
-        {
-          $project: {
-            _id: 0,
-            organization: '$org',
-            membership: {
-              _id: '$_id',
-              rol_id: '$rol_id',
-              properties: '$properties',
-              created_at: '$created_at',
-              updated_at: '$updated_at',
-            },
-          },
-        },
-        { $sort: { 'organization.name': 1 } },
-      ])
+      .find({ user_id: uid })
+      .select('_id rol_id properties created_at updated_at organization_id')
+      .populate({
+        path: 'organization_id',
+        select: 'name styles author updated_at created_at', // ajusta campos si quieres
+      })
+      .lean()
       .exec();
-
-    return rows;
+    const mapped = rows
+      .map(r => ({
+        organization: r.organization_id, // doc poblado
+        membership: {
+          _id: String(r._id),
+          rol_id: r.rol_id ?? null,
+          properties: r.properties,
+        },
+      }));
+    return mapped;
   }
 }
