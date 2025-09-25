@@ -305,9 +305,56 @@ export class PaymentRequestsService {
           preserveNullAndEmptyArrays: true,
         },
       },
+      {
+        $addFields: {
+          _snapCount: { $size: { $ifNull: ['$wompi_snapshots', []] } },
+        },
+      },
+      {
+        $addFields: {
+          _lastSnap: {
+            $cond: [
+              { $gt: ['$_snapCount', 0] },
+              { $arrayElemAt: ['$wompi_snapshots', { $subtract: ['$_snapCount', 1] }] },
+              null,
+            ],
+          },
+        },
+      },
+      // Extraer candidate transaction desde el último snapshot (cubre formatos comunes)
+      {
+        $addFields: {
+          _txPayload: '$_lastSnap.payload',
+          _txData: { $ifNull: ['$_lastSnap.payload.data', null] },
+          _txDataTx: {
+            $ifNull: ['$_lastSnap.payload.data.transaction', null],
+          },
+          _txRootTx: { $ifNull: ['$_lastSnap.payload.transaction', null] },
+        },
+      },
+      // customer_email preferente desde snapshot y desde rawWebhook
+      {
+        $addFields: {
+          _customerEmailFromSnap: {
+            $ifNull: [
+              { $ifNull: ['$_txData.customer_email', null] },
+              {
+                $ifNull: [
+                  '$_txDataTx.customer_email',
+                  { $ifNull: ['$_txRootTx.customer_email', { $ifNull: ['$_txPayload.customer_email', null] }] },
+                ],
+              },
+            ],
+          },
+          _customerEmailFromRaw: {
+            $ifNull: [
+              '$rawWebhook.data.transaction.customer_email', // algunos payloads
+              '$rawWebhook.transaction.customer_email',      // tu ejemplo concreto
+            ],
+          },
+        },
+      },
     ];
-
-    // --- Filtro de búsqueda 'q' AHORA que ya tenemos el join ---
     if (q && q.trim()) {
       const regex = new RegExp(q.trim(), 'i');
       pipeline.push({
@@ -319,6 +366,8 @@ export class PaymentRequestsService {
             { 'organizationUser.properties.names': { $regex: regex } },
             { 'organizationUser.properties.nombres': { $regex: regex } },
             { 'organizationUser.properties.apellidos': { $regex: regex } },
+            { _customerEmailFromSnap: { $regex: regex } },
+            { _customerEmailFromRaw: { $regex: regex } },
           ],
         },
       });
