@@ -85,11 +85,8 @@ export class PaymentPlansService {
       transactionId: meta?.transactionId,
       currency: meta?.currency ?? 'COP',
       rawWebhook: meta?.rawWebhook,
+      payment_request_id: meta?.payment_request_id,
     });
-
-    if (meta?.payment_request_id) {
-      newPlan.payment_request_id = meta.payment_request_id;
-    }
 
     const plan = await newPlan.save();
 
