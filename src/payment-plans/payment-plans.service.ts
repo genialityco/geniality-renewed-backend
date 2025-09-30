@@ -25,7 +25,7 @@ export class PaymentPlansService {
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
     private readonly emailService: EmailService,
-  ) { }
+  ) {}
 
   // Método para obtener el email a partir del organizationUserId
   private async getEmailByOrganizationUserId(
@@ -120,7 +120,7 @@ export class PaymentPlansService {
       reference?: string;
       currency?: string;
       rawWebhook?: any;
-    }
+    },
   ): Promise<PaymentPlan> {
     const updateData: any = { date_until };
 
@@ -138,7 +138,7 @@ export class PaymentPlansService {
       throw new NotFoundException('PaymentPlan no encontrado');
     }
     const email = await this.getEmailByOrganizationUserId(
-      plan.organization_user_id,
+      plan.organization_user_id as unknown as string,
     );
     if (email) {
       const html = renderSubscriptionContent({
@@ -151,7 +151,7 @@ export class PaymentPlansService {
         email,
         Subject,
         html,
-        plan.organization_user_id,
+        plan.organization_user_id as unknown as string,
       );
     }
     return plan;

@@ -1,3 +1,4 @@
+/* eslint-disable prefer-const */
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -33,7 +34,7 @@ export class PaymentRequestsService {
     @InjectModel(PaymentPlan.name)
     private paymentPlanModel: Model<PaymentPlan>,
     private readonly paymentPlansService: PaymentPlansService,
-  ) { }
+  ) {}
 
   async create(data: Partial<PaymentRequest>): Promise<PaymentRequest> {
     return this.paymentRequestModel.create(data);
@@ -77,9 +78,14 @@ export class PaymentRequestsService {
   ) {
     const MEMBERSHIP_DAYS = 365;
     const now = new Date();
-    const dateUntil = new Date(
+    const dateUntilTarget = new Date(
       now.getTime() + MEMBERSHIP_DAYS * 24 * 60 * 60 * 1000,
     );
+
+    // 0) Defensas mínimas
+    if (!paymentRequest?.userId) {
+      throw new Error('PaymentRequest sin userId');
+    }
 
     // 1) organizationUser
     const userObjectId =
@@ -92,26 +98,51 @@ export class PaymentRequestsService {
     });
     if (!organizationUser) throw new Error('OrganizationUser no encontrado');
 
-    let paymentPlan = (await this.paymentPlanModel.findOne({
-      organization_user_id: organizationUser._id,
-    })) as any;
+    // 2) Busca plan actual
+    let paymentPlan = await this.paymentPlanModel
+      .findOne({
+        organization_user_id: organizationUser._id,
+      })
+      .exec();
 
-    // Si ya aplicaste este mismo pago (misma tx), sal temprano
+    // 2.1) Idempotencia por transactionId: si ya se aplicó este mismo pago, salir
     if (
       paymentPlan?.transactionId &&
       paymentRequest.transactionId &&
       paymentPlan.transactionId === paymentRequest.transactionId
     ) {
-      return paymentPlan; // no enviar correos otra vez
+      return paymentPlan; // evita correos duplicados
     }
 
-    if (paymentPlan) {
-      const shouldExtend =
-        !paymentPlan.date_until || new Date(paymentPlan.date_until) < dateUntil;
+    // 3) Si no hay plan, créalo vía servicio (esto además dispara email 'created')
+    if (!paymentPlan) {
+      paymentPlan = (await this.paymentPlansService.createPaymentPlan(
+        organizationUser._id.toString(),
+        MEMBERSHIP_DAYS,
+        dateUntilTarget,
+        amount,
+        organizationUser.properties?.nombres || 'Usuario',
+        {
+          source: 'gateway',
+          reference: paymentRequest.reference,
+          transactionId: paymentRequest.transactionId,
+          currency: paymentRequest.currency,
+          rawWebhook: paymentRequest.rawWebhook,
+          payment_request_id: paymentRequest._id,
+        },
+      )) as any; // Cast to 'any' to bypass the __v type error
+    } else {
+      // 4) Existe plan: extender o solo actualizar meta/price
+      const currentUntil = paymentPlan.date_until
+        ? new Date(paymentPlan.date_until)
+        : null;
+      const shouldExtend = !currentUntil || currentUntil < dateUntilTarget;
+
       if (shouldExtend) {
-        await this.paymentPlansService.updateDateUntil(
+        // Usa el servicio (esto además dispara email 'updated')
+        paymentPlan = (await this.paymentPlansService.updateDateUntil(
           paymentPlan._id.toString(),
-          dateUntil,
+          dateUntilTarget,
           organizationUser.properties?.nombres || 'Usuario',
           {
             price: amount,
@@ -120,16 +151,21 @@ export class PaymentRequestsService {
             reference: paymentRequest.reference,
             currency: paymentRequest.currency,
             rawWebhook: paymentRequest.rawWebhook,
-          }
-        );
+          },
+        )) as any;
       } else {
+        // No se extiende fecha; pero sí actualiza campos de transacción
         paymentPlan.price = amount;
         paymentPlan.payment_request_id = paymentRequest._id;
         paymentPlan.transactionId = paymentRequest.transactionId;
+        paymentPlan.reference = paymentRequest.reference;
+        paymentPlan.currency = paymentRequest.currency;
+        paymentPlan.rawWebhook = paymentRequest.rawWebhook;
         await paymentPlan.save();
       }
     }
 
+    // 5) Enlazar plan al OrganizationUser (ya existe plan aquí)
     if (
       !organizationUser.payment_plan_id ||
       String(organizationUser.payment_plan_id) !== String(paymentPlan._id)
@@ -137,6 +173,8 @@ export class PaymentRequestsService {
       organizationUser.payment_plan_id = paymentPlan._id as any;
       await organizationUser.save();
     }
+
+    return paymentPlan;
   }
 
   // src/payment-requests/payment-requests.service.ts
@@ -149,12 +187,12 @@ export class PaymentRequestsService {
   }: {
     reference: string;
     nextStatus:
-    | 'CREATED'
-    | 'PENDING'
-    | 'APPROVED'
-    | 'DECLINED'
-    | 'VOIDED'
-    | 'ERROR';
+      | 'CREATED'
+      | 'PENDING'
+      | 'APPROVED'
+      | 'DECLINED'
+      | 'VOIDED'
+      | 'ERROR';
     transactionId?: string;
     source: 'webhook' | 'poll' | 'redirect' | 'reconcile';
     rawWompi?: any;
@@ -315,7 +353,12 @@ export class PaymentRequestsService {
           _lastSnap: {
             $cond: [
               { $gt: ['$_snapCount', 0] },
-              { $arrayElemAt: ['$wompi_snapshots', { $subtract: ['$_snapCount', 1] }] },
+              {
+                $arrayElemAt: [
+                  '$wompi_snapshots',
+                  { $subtract: ['$_snapCount', 1] },
+                ],
+              },
               null,
             ],
           },
@@ -341,7 +384,12 @@ export class PaymentRequestsService {
               {
                 $ifNull: [
                   '$_txDataTx.customer_email',
-                  { $ifNull: ['$_txRootTx.customer_email', { $ifNull: ['$_txPayload.customer_email', null] }] },
+                  {
+                    $ifNull: [
+                      '$_txRootTx.customer_email',
+                      { $ifNull: ['$_txPayload.customer_email', null] },
+                    ],
+                  },
                 ],
               },
             ],
@@ -349,7 +397,7 @@ export class PaymentRequestsService {
           _customerEmailFromRaw: {
             $ifNull: [
               '$rawWebhook.data.transaction.customer_email', // algunos payloads
-              '$rawWebhook.transaction.customer_email',      // tu ejemplo concreto
+              '$rawWebhook.transaction.customer_email', // tu ejemplo concreto
             ],
           },
         },
