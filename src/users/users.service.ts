@@ -327,7 +327,7 @@ export class UsersService {
       (a, b) => +a.createdAt - +b.createdAt,
     );
 
-    const kept: TokenEntry[] = next.slice(-1);
+    const kept: TokenEntry[] = next.slice(-2);
     const keptSet = new Set(kept.map((e) => e.token));
 
     const revokedTokens = next
