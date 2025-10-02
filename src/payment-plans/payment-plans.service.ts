@@ -113,6 +113,7 @@ export class PaymentPlansService {
     paymentPlanId: string,
     date_until: Date,
     nameUser: string,
+    source?: string,
     additionalFields?: {
       price?: number;
       payment_request_id?: any;
@@ -123,6 +124,11 @@ export class PaymentPlansService {
     },
   ): Promise<PaymentPlan> {
     const updateData: any = { date_until };
+
+    // Agregar 'source' si lo envían
+    if (source) {
+      updateData.source = source;
+    }
 
     // Agregar campos adicionales si se proporcionan
     if (additionalFields) {

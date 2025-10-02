@@ -74,11 +74,13 @@ export class PaymentPlansController {
     @Param('id') paymentPlanId: string,
     @Body('date_until') date_until: string,
     @Body('nameUser') nameUser: string,
+    @Body('source') source?: string,
   ): Promise<PaymentPlan> {
     return this.paymentPlansService.updateDateUntil(
       paymentPlanId,
       new Date(date_until),
       nameUser,
+      source,
     );
   }
 

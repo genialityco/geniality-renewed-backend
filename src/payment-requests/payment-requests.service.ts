@@ -144,6 +144,7 @@ export class PaymentRequestsService {
           paymentPlan._id.toString(),
           dateUntilTarget,
           organizationUser.properties?.nombres || 'Usuario',
+          'gateway',
           {
             price: amount,
             payment_request_id: paymentRequest._id,
