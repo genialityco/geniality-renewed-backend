@@ -1,5 +1,10 @@
 // organization-users.service.ts
-import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  forwardRef,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
@@ -19,7 +24,7 @@ export class OrganizationUsersService {
     private readonly paymentPlansService: PaymentPlansService,
     private readonly emailService: EmailService,
     private readonly usersService: UsersService,
-  ) { }
+  ) {}
 
   async createOrUpdateUser(
     properties: any,
@@ -79,7 +84,10 @@ export class OrganizationUsersService {
   async deleteOrganizationUser(user_id: string): Promise<void> {
     const user = await this.findByUserId(user_id);
     if (!user) {
-      console.log('No se encontró el usuario de la organización con user_id:', user_id);
+      console.log(
+        'No se encontró el usuario de la organización con user_id:',
+        user_id,
+      );
       throw new NotFoundException('Organization user not found');
     }
     const paymentID = user.payment_plan_id;
@@ -127,7 +135,7 @@ export class OrganizationUsersService {
       // 🔥 Filtrar usuarios que tengan ID, email y phone
       'properties.ID': { $exists: true, $nin: [null, ''] },
       'properties.email': { $exists: true, $nin: [null, ''] },
-      'properties.phone': { $exists: true, $nin: [null, ''] }
+      'properties.phone': { $exists: true, $nin: [null, ''] },
     };
 
     // Si hay search, buscar en properties.email, properties.name, properties.names
@@ -192,8 +200,11 @@ export class OrganizationUsersService {
       await this.emailService.sendLayoutEmail(
         email,
         'Recuperación de contraseña',
-        `Para ingresar a tu cuenta, en la parte de Número de Identificación, ingresa el siguiente valor: 
-      ${user.properties.ID} en el siguiente link: http://localhost:5173/organization/63f552d916065937427b3b02/recuperar-datos`,
+        `<p>Las credenciales para ingresar son:</p>
+        \n<strong>Email: ${user.properties.email}</strong>\n<strong>ID: ${user.properties.ID}</strong>\n
+        Por favor, utiliza estos datos para iniciar sesión\n
+        Si deseas cambiar tu contraseña, puedes hacerlo desde el siguiente link.
+        <a href="https://app.geniality.com.co/organization/${user.organization_id}/recuperar-datos">Cambiar contraseña</a>`,
         user.organization_id,
       );
     } catch (error) {
@@ -216,8 +227,7 @@ export class OrganizationUsersService {
       })
       .lean()
       .exec();
-    const mapped = rows
-      .map(r => ({
+    const mapped = rows.map((r) => ({
       organization: r.organization_id, // doc poblado
       membership: {
         _id: String(r._id),
