@@ -7,6 +7,9 @@ import { EmailService } from 'src/email/email.service';
 import { renderWelcomeContent } from '../templates/Welcome';
 import { PaymentPlansService } from 'src/payment-plans/payment-plans.service';
 import { UsersService } from 'src/users/users.service';
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 @Injectable()
 export class OrganizationUsersService {
   constructor(
@@ -153,8 +156,9 @@ export class OrganizationUsersService {
   }
 
   async findByEmail(email: string): Promise<OrganizationUser | null> {
+    const pattern = `^${escapeRegex(email)}$`;
     return this.organizationUserModel
-      .findOne({ 'properties.email': email })
+      .findOne({ 'properties.email': { $regex: pattern, $options: 'i' } })
       .exec();
   }
 
@@ -179,7 +183,24 @@ export class OrganizationUsersService {
       .exec();
   }
 
-
+  async recoverPassword(email: string): Promise<void> {
+    try {
+      const user = await this.findByEmail(email);
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+      await this.emailService.sendLayoutEmail(
+        email,
+        'Recuperación de contraseña',
+        `Para ingresar a tu cuenta, en la parte de Número de Identificación, ingresa el siguiente valor: 
+      ${user.properties.ID} en el siguiente link: http://localhost:5173/organization/63f552d916065937427b3b02/recuperar-datos`,
+        user.organization_id,
+      );
+    } catch (error) {
+      console.error('Error recovering password:', error);
+      throw new NotFoundException('Error recovering password');
+    }
+  }
 
   async findOrganizationsByUserId(user_id: string) {
     if (!Types.ObjectId.isValid(user_id)) {
@@ -197,13 +218,13 @@ export class OrganizationUsersService {
       .exec();
     const mapped = rows
       .map(r => ({
-        organization: r.organization_id, // doc poblado
-        membership: {
-          _id: String(r._id),
-          rol_id: r.rol_id ?? null,
-          properties: r.properties,
-        },
-      }));
+      organization: r.organization_id, // doc poblado
+      membership: {
+        _id: String(r._id),
+        rol_id: r.rol_id ?? null,
+        properties: r.properties,
+      },
+    }));
     return mapped;
   }
 }

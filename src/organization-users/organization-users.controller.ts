@@ -36,7 +36,7 @@ export class OrganizationUsersController {
     await this.organizationUsersService.deleteOrganizationUser(user_id);
     return { message: 'Usuario eliminado' };
   }
-
+  
 
   @Get(':user_id')
   async getUserByUserId(
@@ -67,6 +67,11 @@ export class OrganizationUsersController {
     @Param('email') email: string,
   ): Promise<OrganizationUser | null> {
     return this.organizationUsersService.findByEmail(email);
+  }
+
+  @Get('/recovery-password/:email')
+  async recoverPassword(@Param('email') email: string) {
+    return this.organizationUsersService.recoverPassword(email);
   }
 
   @Get('all-by-organization/:organization_id')
