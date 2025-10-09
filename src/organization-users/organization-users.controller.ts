@@ -68,6 +68,11 @@ export class OrganizationUsersController {
     return this.organizationUsersService.findByEmail(email);
   }
 
+  @Get('/recovery-password/:email')
+  async recoverPassword(@Param('email') email: string) {
+    return this.organizationUsersService.recoverPassword(email);
+  }
+
   @Get('all-by-organization/:organization_id')
   async getAllUsersByOrganizationId(
     @Param('organization_id') organization_id: string,

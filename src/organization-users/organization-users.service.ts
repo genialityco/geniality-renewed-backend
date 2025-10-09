@@ -1,5 +1,6 @@
 // organization-users.service.ts
 import {
+  BadRequestException,
   forwardRef,
   Inject,
   Injectable,
@@ -12,6 +13,10 @@ import { EmailService } from 'src/email/email.service';
 import { renderWelcomeContent } from '../templates/Welcome';
 import { PaymentPlansService } from 'src/payment-plans/payment-plans.service';
 import { UsersService } from 'src/users/users.service';
+import * as admin from 'firebase-admin';
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 @Injectable()
 export class OrganizationUsersService {
   constructor(
@@ -158,8 +163,9 @@ export class OrganizationUsersService {
   }
 
   async findByEmail(email: string): Promise<OrganizationUser | null> {
+    const pattern = `^${escapeRegex(email)}$`;
     return this.organizationUserModel
-      .findOne({ 'properties.email': email })
+      .findOne({ 'properties.email': { $regex: pattern, $options: 'i' } })
       .exec();
   }
 
@@ -182,6 +188,63 @@ export class OrganizationUsersService {
       .find(filter)
       .populate('payment_plan_id')
       .exec();
+  }
+
+  async recoverPassword(email: string): Promise<void> {
+    try {
+      const user = await this.findByEmail(email);
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      const newPassword = String(user?.properties?.ID ?? '1234567890').trim();
+
+      // ✅ Validaciones mínimas (Firebase por defecto exige ≥ 6 caracteres)
+      if (!newPassword) {
+        throw new BadRequestException('El ID del usuario no está definido.');
+      }
+      if (newPassword.length < 6) {
+        throw new BadRequestException(
+          'El ID es menor a 6 caracteres. Firebase rechazará la contraseña.',
+        );
+      }
+
+      // 1) Buscar usuario en Firebase por email (case-insensitive a nivel app)
+      const fbUser = await admin.auth().getUserByEmail(email);
+
+      // 2) Actualizar contraseña en Firebase al ID
+      await admin.auth().updateUser(fbUser.uid, { password: newPassword });
+
+      // 3) (Opcional pero recomendado) Revocar sesiones para forzar re-login
+      await admin.auth().revokeRefreshTokens(fbUser.uid);
+
+      // 4) Enviar correo con las credenciales / link
+      await this.emailService.sendLayoutEmail(
+        email,
+        'Recuperación de contraseña',
+        `<p>Las credenciales para ingresar son:</p>
+        <strong>Email: ${user.properties.email}</strong><br/>
+        <strong>ID (nueva contraseña): ${user.properties.ID}</strong><br/><br/>
+        Por favor, utiliza estos datos para iniciar sesión.<br/>
+        Si deseas cambiar tu contraseña, puedes hacerlo desde el siguiente link:
+        <a href="https://app.geniality.com.co/organization/${user.organization_id}/recuperar-datos">Cambiar contraseña</a>`,
+        user.organization_id,
+      );
+    } catch (error: any) {
+      // Mapea algunos errores típicos del Admin SDK a excepciones HTTP útiles
+      if (error?.code === 'auth/user-not-found') {
+        throw new NotFoundException(
+          'El usuario no existe en Firebase Authentication.',
+        );
+      }
+      if (error?.code === 'auth/invalid-password') {
+        throw new BadRequestException(
+          'La nueva contraseña no cumple las reglas de Firebase.',
+        );
+      }
+      console.error('Error recovering password:', error);
+      throw new NotFoundException('Error recovering password');
+    }
   }
 
   async findOrganizationsByUserId(user_id: string) {

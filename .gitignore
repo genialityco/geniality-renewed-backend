@@ -59,3 +59,12 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # firebase-sdk.json
 firebase-sdk.json
+
+# script debug credenciales
+auth-auth-audit-email-not-found.json
+auth-audit-missing-email.json
+auth-audit-missing-password.json
+auth-audit-phone-only.json
+auth-audit-report.csv
+auth-audit-report.json
+auth-audit-summary-by-org.json
