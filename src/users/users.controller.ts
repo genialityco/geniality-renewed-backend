@@ -16,7 +16,7 @@ import { SessionTokenGuard } from 'src/auth/session-token.guard';
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) { }
+  constructor(private readonly usersService: UsersService) {}
 
   @Post()
   async createOrUpdateUser(@Body() body: any): Promise<User> {
@@ -119,6 +119,4 @@ export class UsersController {
     await this.usersService.revokeSessionToken(String(uid), String(token));
     return { success: true };
   }
-
-
 }

@@ -1,0 +1,12 @@
+{
+  "63f552d916065937427b3b02": {
+    "OK": 1977,
+    "INVALID_PASSWORD": 36,
+    "USER_DISABLED": 0,
+    "EMAIL_NOT_FOUND": 0,
+    "MISSING_EMAIL": 1,
+    "MISSING_PASSWORD": 15,
+    "PHONE_ONLY": 0,
+    "ERROR": 0
+  }
+}

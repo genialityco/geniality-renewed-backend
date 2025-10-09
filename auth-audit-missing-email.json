@@ -1,0 +1,15 @@
+[
+  {
+    "organization_id": "63f552d916065937427b3b02",
+    "user_mongo_id": "656e1f495a3bc8afaa022d2b",
+    "email_checked": "",
+    "email_source": "",
+    "email_field": "",
+    "password_source": "",
+    "password_field": "",
+    "password_masked": "",
+    "verify_status": "MISSING_EMAIL",
+    "action": "none",
+    "notes": "Falta email en properties/users."
+  }
+]

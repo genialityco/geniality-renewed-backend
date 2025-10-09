@@ -57,7 +57,10 @@ function toCSV(rows: Row[]) {
 
 async function main() {
   const inArg = process.argv.find((a) => a.startsWith('--in='))?.split('=')[1];
-  const inputPath = path.resolve(process.cwd(), inArg || 'auth-audit-report.json');
+  const inputPath = path.resolve(
+    process.cwd(),
+    inArg || 'auth-audit-report.json',
+  );
 
   if (!fs.existsSync(inputPath)) {
     console.error(`No se encontró el archivo de entrada: ${inputPath}`);
@@ -68,11 +71,11 @@ async function main() {
   const rows: Row[] = JSON.parse(raw);
 
   const filtered = rows.filter((r) =>
-    /(^|[ \t|])INVALID_LOGIN_CREDENTIALS([ \t|]|$)/i.test(r.notes ?? '')
+    /(^|[ \t|])INVALID_LOGIN_CREDENTIALS([ \t|]|$)/i.test(r.notes ?? ''),
   );
 
   const outJson = path.resolve(process.cwd(), 'auth-invalid-login.json');
-  const outCsv  = path.resolve(process.cwd(), 'auth-invalid-login.csv');
+  const outCsv = path.resolve(process.cwd(), 'auth-invalid-login.csv');
 
   fs.writeFileSync(outJson, JSON.stringify(filtered, null, 2), 'utf8');
   fs.writeFileSync(outCsv, toCSV(filtered), 'utf8');

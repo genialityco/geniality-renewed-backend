@@ -1,5 +1,10 @@
 // organization-users.service.ts
-import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  forwardRef,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
@@ -16,7 +21,7 @@ export class OrganizationUsersService {
     private readonly paymentPlansService: PaymentPlansService,
     private readonly emailService: EmailService,
     private readonly usersService: UsersService,
-  ) { }
+  ) {}
 
   async createOrUpdateUser(
     properties: any,
@@ -76,7 +81,10 @@ export class OrganizationUsersService {
   async deleteOrganizationUser(user_id: string): Promise<void> {
     const user = await this.findByUserId(user_id);
     if (!user) {
-      console.log('No se encontró el usuario de la organización con user_id:', user_id);
+      console.log(
+        'No se encontró el usuario de la organización con user_id:',
+        user_id,
+      );
       throw new NotFoundException('Organization user not found');
     }
     const paymentID = user.payment_plan_id;
@@ -118,24 +126,20 @@ export class OrganizationUsersService {
   ): Promise<{ results: OrganizationUser[]; total: number }> {
     const skip = (page - 1) * limit;
 
-    // Armar filtro base con campos obligatorios
     const filter: any = {
-      organization_id,
-      // 🔥 Filtrar usuarios que tengan ID, email y phone
-      'properties.ID': { $exists: true, $nin: [null, ''] },
-      'properties.email': { $exists: true, $nin: [null, ''] },
-      'properties.phone': { $exists: true, $nin: [null, ''] }
+      organization_id: new Types.ObjectId(organization_id),
     };
 
-    // Si hay search, buscar en properties.email, properties.name, properties.names
-    if (search && search.trim() !== '') {
+    if (search?.trim()) {
+      const s = search.trim();
       filter.$or = [
-        { 'properties.email': { $regex: search, $options: 'i' } },
-        { 'properties.name': { $regex: search, $options: 'i' } },
-        { 'properties.names': { $regex: search, $options: 'i' } },
-        { 'properties.nombres': { $regex: search, $options: 'i' } },
-        { 'properties.ID': { $regex: search, $options: 'i' } },
-        { 'properties.phone': { $regex: search, $options: 'i' } }, // 🔥 Añadido phone al search
+        { 'properties.email': { $regex: s, $options: 'i' } },
+        { 'properties.name': { $regex: s, $options: 'i' } },
+        { 'properties.names': { $regex: s, $options: 'i' } },
+        { 'properties.nombres': { $regex: s, $options: 'i' } },
+        { 'properties.apellidos': { $regex: s, $options: 'i' } },
+        { 'properties.ID': { $regex: s, $options: 'i' } },
+        { 'properties.phone': { $regex: s, $options: 'i' } },
       ];
     }
 
@@ -149,6 +153,7 @@ export class OrganizationUsersService {
         .exec(),
       this.organizationUserModel.countDocuments(filter),
     ]);
+
     return { results, total };
   }
 
@@ -179,8 +184,6 @@ export class OrganizationUsersService {
       .exec();
   }
 
-
-
   async findOrganizationsByUserId(user_id: string) {
     if (!Types.ObjectId.isValid(user_id)) {
       throw new NotFoundException('Invalid user_id');
@@ -195,15 +198,14 @@ export class OrganizationUsersService {
       })
       .lean()
       .exec();
-    const mapped = rows
-      .map(r => ({
-        organization: r.organization_id, // doc poblado
-        membership: {
-          _id: String(r._id),
-          rol_id: r.rol_id ?? null,
-          properties: r.properties,
-        },
-      }));
+    const mapped = rows.map((r) => ({
+      organization: r.organization_id, // doc poblado
+      membership: {
+        _id: String(r._id),
+        rol_id: r.rol_id ?? null,
+        properties: r.properties,
+      },
+    }));
     return mapped;
   }
 }
