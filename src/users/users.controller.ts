@@ -20,12 +20,18 @@ export class UsersController {
 
   @Post()
   async createOrUpdateUser(@Body() body: any): Promise<User> {
-    const { uid, name, names, email, phone } = body;
+    const { uid, name, names, email, phone, password } = body;
     const finalName = names ?? name;
     if (!uid || !email || !finalName) {
       throw new BadRequestException('Faltan datos: uid, names, email');
     }
-    return this.usersService.createOrUpdateUser(uid, finalName, email, phone);
+    return this.usersService.createOrUpdateUser(
+      uid,
+      finalName,
+      email,
+      phone,
+      password,
+    );
   }
 
   @Post(':id/delete')

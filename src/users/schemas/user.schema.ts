@@ -16,6 +16,9 @@ export class User extends Document {
   @Prop()
   phone: string;
 
+  @Prop()
+  password?: string;
+
   // DEPRECADO: sessionToken: string;
 
   @Prop({

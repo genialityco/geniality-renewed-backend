@@ -95,6 +95,7 @@ export class UsersService {
     name: string,
     email: string,
     phone?: string,
+    password?: string,
   ): Promise<User> {
     const existingUser = await this.userModel.findOne({ uid }).exec();
     if (existingUser) {
@@ -111,6 +112,7 @@ export class UsersService {
         email,
         phone,
         sessionTokens: [],
+        password,
       });
       return newUser.save();
     }
