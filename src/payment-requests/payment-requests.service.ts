@@ -1,5 +1,5 @@
 /* eslint-disable prefer-const */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -11,6 +11,7 @@ import {
 import { OrganizationUser } from '../organization-users/schemas/organization-user.schema';
 import { PaymentPlan } from '../payment-plans/schemas/payment-plan.schema';
 import { PaymentPlansService } from '../payment-plans/payment-plans.service';
+import { PaymentLogsService } from 'src/payment-logs/payment-logs.service';
 
 type SearchParams = {
   organizationId: string;
@@ -34,10 +35,25 @@ export class PaymentRequestsService {
     @InjectModel(PaymentPlan.name)
     private paymentPlanModel: Model<PaymentPlan>,
     private readonly paymentPlansService: PaymentPlansService,
+
+    private readonly paymentLogs: PaymentLogsService,
   ) {}
 
   async create(data: Partial<PaymentRequest>): Promise<PaymentRequest> {
-    return this.paymentRequestModel.create(data);
+    const pr = await this.paymentRequestModel.create(data);
+    await this.paymentLogs.write({
+      level: 'info',
+      message: 'PaymentRequest creado service',
+      source: 'service',
+      reference: pr.reference,
+      transactionId: pr.transactionId,
+      organizationId: pr.organizationId,
+      userId: String(pr.userId),
+      amount: pr.amount,
+      currency: pr.currency ?? 'COP',
+      status: pr.status,
+    });
+    return pr;
   }
 
   async findByReference(reference: string): Promise<PaymentRequest | null> {
@@ -59,11 +75,26 @@ export class PaymentRequestsService {
     const $set: any = { status };
     if (transactionId) $set.transactionId = transactionId;
     if (rawWebhook) $set.rawWebhook = rawWebhook;
-    return this.paymentRequestModel.findOneAndUpdate(
+
+    const doc = await this.paymentRequestModel.findOneAndUpdate(
       { reference },
       { $set },
       { new: true },
     );
+
+    // Log: link de txId / update de status directo
+    await this.paymentLogs.write({
+      level: 'info',
+      message: 'updateStatusAndTransactionId',
+      source: 'service',
+      reference,
+      transactionId,
+      status: status?.toUpperCase?.(),
+      amount: doc?.amount,
+      currency: doc?.currency ?? 'COP',
+    });
+
+    return doc;
   }
 
   /**
@@ -82,12 +113,22 @@ export class PaymentRequestsService {
       now.getTime() + MEMBERSHIP_DAYS * 24 * 60 * 60 * 1000,
     );
 
-    // 0) Defensas mínimas
     if (!paymentRequest?.userId) {
+      // Log error y lanza
+      await this.paymentLogs.write({
+        level: 'error',
+        message: 'activateMembershipForPayment: PaymentRequest sin userId',
+        source: 'service',
+        reference: paymentRequest?.reference,
+        transactionId: paymentRequest?.transactionId,
+        organizationId: paymentRequest?.organizationId,
+        amount,
+        currency: paymentRequest?.currency ?? 'COP',
+      });
       throw new Error('PaymentRequest sin userId');
     }
 
-    // 1) organizationUser
+    // 1) organizationUser (filtrando por organización también)
     const userObjectId =
       typeof paymentRequest.userId === 'string'
         ? new Types.ObjectId(paymentRequest.userId)
@@ -95,87 +136,190 @@ export class PaymentRequestsService {
 
     const organizationUser = await this.organizationUserModel.findOne({
       user_id: userObjectId,
+      organization_id: paymentRequest.organizationId,
     });
-    if (!organizationUser) throw new Error('OrganizationUser no encontrado');
+
+    if (!organizationUser) {
+      await this.paymentLogs.write({
+        level: 'error',
+        message: 'activateMembershipForPayment: OrganizationUser no encontrado',
+        source: 'service',
+        reference: paymentRequest.reference,
+        transactionId: paymentRequest.transactionId,
+        organizationId: paymentRequest.organizationId,
+        userId: String(paymentRequest.userId),
+        amount,
+        currency: paymentRequest.currency ?? 'COP',
+      });
+      throw new Error('OrganizationUser no encontrado');
+    }
 
     // 2) Busca plan actual
     let paymentPlan = await this.paymentPlanModel
-      .findOne({
-        organization_user_id: organizationUser._id,
-      })
+      .findOne({ organization_user_id: organizationUser._id })
       .exec();
 
-    // 2.1) Idempotencia por transactionId: si ya se aplicó este mismo pago, salir
+    // 2.1) Idempotencia por Tx
     if (
       paymentPlan?.transactionId &&
       paymentRequest.transactionId &&
       paymentPlan.transactionId === paymentRequest.transactionId
     ) {
-      return paymentPlan; // evita correos duplicados
+      await this.paymentLogs.write({
+        level: 'info',
+        message:
+          'activateMembershipForPayment: idempotente (misma transactionId)',
+        source: 'service',
+        reference: paymentRequest.reference,
+        transactionId: paymentRequest.transactionId,
+        organizationId: paymentRequest.organizationId,
+        userId: String(paymentRequest.userId),
+        amount,
+        currency: paymentRequest.currency ?? 'COP',
+        meta: { paymentPlanId: String(paymentPlan._id) },
+      });
+      return paymentPlan;
     }
 
-    // 3) Si no hay plan, créalo vía servicio (esto además dispara email 'created')
-    if (!paymentPlan) {
-      paymentPlan = (await this.paymentPlansService.createPaymentPlan(
-        organizationUser._id.toString(),
-        MEMBERSHIP_DAYS,
-        dateUntilTarget,
-        amount,
-        organizationUser.properties?.nombres || 'Usuario',
-        {
-          source: 'gateway',
-          reference: paymentRequest.reference,
-          transactionId: paymentRequest.transactionId,
-          currency: paymentRequest.currency,
-          rawWebhook: paymentRequest.rawWebhook,
-          payment_request_id: paymentRequest._id,
-        },
-      )) as any; // Cast to 'any' to bypass the __v type error
-    } else {
-      // 4) Existe plan: extender o solo actualizar meta/price
-      const currentUntil = paymentPlan.date_until
-        ? new Date(paymentPlan.date_until)
-        : null;
-      const shouldExtend = !currentUntil || currentUntil < dateUntilTarget;
-
-      if (shouldExtend) {
-        // Usa el servicio (esto además dispara email 'updated')
-        paymentPlan = (await this.paymentPlansService.updateDateUntil(
-          paymentPlan._id.toString(),
+    try {
+      // 3) Crear si no existe
+      if (!paymentPlan) {
+        paymentPlan = (await this.paymentPlansService.createPaymentPlan(
+          organizationUser._id.toString(),
+          MEMBERSHIP_DAYS,
           dateUntilTarget,
+          amount,
           organizationUser.properties?.nombres || 'Usuario',
-          'gateway',
           {
-            price: amount,
-            payment_request_id: paymentRequest._id,
-            transactionId: paymentRequest.transactionId,
+            source: 'gateway',
             reference: paymentRequest.reference,
+            transactionId: paymentRequest.transactionId,
             currency: paymentRequest.currency,
             rawWebhook: paymentRequest.rawWebhook,
+            payment_request_id: paymentRequest._id,
           },
         )) as any;
+
+        await this.paymentLogs.write({
+          level: 'info',
+          message: 'PaymentPlan creado (gateway)',
+          source: 'service',
+          reference: paymentRequest.reference,
+          transactionId: paymentRequest.transactionId,
+          organizationId: paymentRequest.organizationId,
+          userId: String(paymentRequest.userId),
+          amount,
+          currency: paymentRequest.currency ?? 'COP',
+          meta: {
+            paymentPlanId: String(paymentPlan._id),
+            action: 'create',
+            dateUntil: paymentPlan.date_until,
+          },
+        });
       } else {
-        // No se extiende fecha; pero sí actualiza campos de transacción
-        paymentPlan.price = amount;
-        paymentPlan.payment_request_id = paymentRequest._id;
-        paymentPlan.transactionId = paymentRequest.transactionId;
-        paymentPlan.reference = paymentRequest.reference;
-        paymentPlan.currency = paymentRequest.currency;
-        paymentPlan.rawWebhook = paymentRequest.rawWebhook;
-        await paymentPlan.save();
+        // 4) Actualizar / Extender
+        const currentUntil = paymentPlan.date_until
+          ? new Date(paymentPlan.date_until)
+          : null;
+        const shouldExtend = !currentUntil || currentUntil < dateUntilTarget;
+
+        if (shouldExtend) {
+          paymentPlan = (await this.paymentPlansService.updateDateUntil(
+            paymentPlan._id.toString(),
+            dateUntilTarget,
+            organizationUser.properties?.nombres || 'Usuario',
+            'gateway',
+            {
+              price: amount,
+              payment_request_id: paymentRequest._id,
+              transactionId: paymentRequest.transactionId,
+              reference: paymentRequest.reference,
+              currency: paymentRequest.currency,
+              rawWebhook: paymentRequest.rawWebhook,
+            },
+          )) as any;
+
+          await this.paymentLogs.write({
+            level: 'info',
+            message: 'PaymentPlan extendido (gateway)',
+            source: 'service',
+            reference: paymentRequest.reference,
+            transactionId: paymentRequest.transactionId,
+            organizationId: paymentRequest.organizationId,
+            userId: String(paymentRequest.userId),
+            amount,
+            currency: paymentRequest.currency ?? 'COP',
+            meta: {
+              paymentPlanId: String(paymentPlan._id),
+              action: 'extend',
+              dateUntil: paymentPlan.date_until,
+            },
+          });
+        } else {
+          // Solo metadata
+          paymentPlan.price = amount;
+          paymentPlan.payment_request_id = paymentRequest._id;
+          paymentPlan.transactionId = paymentRequest.transactionId;
+          paymentPlan.reference = paymentRequest.reference;
+          paymentPlan.currency = paymentRequest.currency;
+          paymentPlan.rawWebhook = paymentRequest.rawWebhook;
+          await paymentPlan.save();
+
+          await this.paymentLogs.write({
+            level: 'info',
+            message: 'PaymentPlan metadata actualizada (gateway)',
+            source: 'service',
+            reference: paymentRequest.reference,
+            transactionId: paymentRequest.transactionId,
+            organizationId: paymentRequest.organizationId,
+            userId: String(paymentRequest.userId),
+            amount,
+            currency: paymentRequest.currency ?? 'COP',
+            meta: {
+              paymentPlanId: String(paymentPlan._id),
+              action: 'metadata',
+              dateUntil: paymentPlan.date_until,
+            },
+          });
+        }
       }
-    }
 
-    // 5) Enlazar plan al OrganizationUser (ya existe plan aquí)
-    if (
-      !organizationUser.payment_plan_id ||
-      String(organizationUser.payment_plan_id) !== String(paymentPlan._id)
-    ) {
-      organizationUser.payment_plan_id = paymentPlan._id as any;
-      await organizationUser.save();
-    }
+      // 5) Enlazar plan al OrganizationUser
+      if (
+        !organizationUser.payment_plan_id ||
+        String(organizationUser.payment_plan_id) !== String(paymentPlan._id)
+      ) {
+        organizationUser.payment_plan_id = paymentPlan._id as any;
+        await organizationUser.save();
 
-    return paymentPlan;
+        await this.paymentLogs.write({
+          level: 'info',
+          message: 'OrganizationUser.link payment_plan_id',
+          source: 'service',
+          reference: paymentRequest.reference,
+          transactionId: paymentRequest.transactionId,
+          organizationId: paymentRequest.organizationId,
+          userId: String(paymentRequest.userId),
+          meta: { paymentPlanId: String(paymentPlan._id) },
+        });
+      }
+
+      return paymentPlan;
+    } catch (e: any) {
+      await this.paymentLogs.write({
+        level: 'error',
+        message: 'activateMembershipForPayment: fallo',
+        source: 'service',
+        reference: paymentRequest.reference,
+        transactionId: paymentRequest.transactionId,
+        organizationId: paymentRequest.organizationId,
+        userId: String(paymentRequest.userId),
+        amount,
+        currency: paymentRequest.currency ?? 'COP',
+        meta: { error: e?.message || String(e) },
+      });
+      throw e;
+    }
   }
 
   // src/payment-requests/payment-requests.service.ts
@@ -195,7 +339,7 @@ export class PaymentRequestsService {
       | 'VOIDED'
       | 'ERROR';
     transactionId?: string;
-    source: 'webhook' | 'poll' | 'redirect' | 'reconcile';
+    source: 'frontend' | 'webhook' | 'poll' | 'reconcile' | 'service';
     rawWompi?: any;
   }): Promise<{
     doc: PaymentRequest | null;
@@ -203,12 +347,46 @@ export class PaymentRequestsService {
     becameApproved: boolean;
   }> {
     const current = await this.paymentRequestModel.findOne({ reference });
-    if (!current) return { doc: null, changed: false, becameApproved: false };
+    if (!current) {
+      await this.paymentLogs.write({
+        level: 'warn',
+        message: 'safeUpdateStatus: PR no encontrado',
+        source,
+        reference,
+        transactionId,
+        status: String(nextStatus).toUpperCase(),
+      });
+      return { doc: null, changed: false, becameApproved: false };
+    }
 
-    const prev = current.status;
-    const next = nextStatus;
+    const allowed = [
+      'CREATED',
+      'PENDING',
+      'APPROVED',
+      'DECLINED',
+      'VOIDED',
+      'ERROR',
+    ] as const;
+    type Allowed = (typeof allowed)[number];
 
-    // SIEMPRE: si llega raw, persistimos snapshot (aunque no cambie el estado)
+    const prev = (current.status || 'CREATED').toUpperCase() as Allowed;
+    const next = (String(nextStatus || '') as string).toUpperCase() as Allowed;
+
+    // Rechazar silenciosamente estados no permitidos
+    if (!allowed.includes(next)) {
+      await this.paymentLogs.write({
+        level: 'warn',
+        message: 'safeUpdateStatus: estado no permitido',
+        source,
+        reference,
+        transactionId,
+        status: next,
+        meta: { prev },
+      });
+      return { doc: current, changed: false, becameApproved: false };
+    }
+
+    // Siempre: si llega raw, persistimos snapshot (aunque no cambie el estado)
     if (rawWompi) {
       current.wompi_snapshots = current.wompi_snapshots || [];
       current.wompi_snapshots.push({
@@ -216,39 +394,162 @@ export class PaymentRequestsService {
         at: new Date(),
         payload: rawWompi,
       });
-      // (opcional) limitar tamaño del historial:
-      // if (current.wompi_snapshots.length > 20) {
-      //   current.wompi_snapshots = current.wompi_snapshots.slice(-20);
-      // }
+      // opcional: limitar historial a últimos 20
+      if (current.wompi_snapshots.length > 20) {
+        current.wompi_snapshots = current.wompi_snapshots.slice(-20);
+      }
     }
 
-    // Idempotencia dura: si estado y txId no cambian, no toques nada
+    // Idempotencia dura: estado y tx sin cambios
     const sameStatus = prev === next;
     const sameTx =
       !transactionId ||
       (current.transactionId && current.transactionId === transactionId);
-
     if (sameStatus && sameTx) {
+      await this.paymentLogs.write({
+        level: 'info',
+        message: 'safeUpdateStatus: sin cambios (idempotente)',
+        source,
+        reference,
+        transactionId: current.transactionId,
+        status: current.status,
+      });
       return { doc: current, changed: false, becameApproved: false };
     }
 
-    current.status_history = current.status_history || [];
-    current.status_history.push({
-      at: new Date(),
-      from: prev,
-      to: next,
-      source,
-    });
+    // Reglas de transición:
+    // - Estados terminales (APPROVED/DECLINED/VOIDED/ERROR) no retroceden.
+    // - Prioridad simple para evitar "retrocesos" (CREATED < PENDING < TERMINAL)
+    const terminal = new Set<Allowed>([
+      'APPROVED',
+      'DECLINED',
+      'VOIDED',
+      'ERROR',
+    ]);
+    const rank: Record<Allowed, number> = {
+      CREATED: 1,
+      PENDING: 2,
+      APPROVED: 3,
+      DECLINED: 3,
+      VOIDED: 3,
+      ERROR: 3,
+    };
 
-    current.status = next;
-    if (transactionId) current.transactionId = transactionId;
+    // Si ya estamos en terminal y next es distinto, ignorar cambio
+    if (terminal.has(prev) && prev !== next) {
+      await this.paymentLogs.write({
+        level: 'warn',
+        message: 'safeUpdateStatus: intento de retroceso desde terminal',
+        source,
+        reference,
+        transactionId,
+        status: next,
+        meta: { prev },
+      });
+      return { doc: current, changed: false, becameApproved: false };
+    }
+
+    // Si la prioridad del next es menor que la del prev, ignorar (evita retrocesos)
+    if (rank[next] < rank[prev]) {
+      await this.paymentLogs.write({
+        level: 'warn',
+        message: 'safeUpdateStatus: retroceso bloqueado',
+        source,
+        reference,
+        transactionId,
+        status: next,
+        meta: { prev },
+      });
+      return { doc: current, changed: false, becameApproved: false };
+    }
+
+    // Historial solo si hay cambio efectivo de estado
+    if (prev !== next) {
+      current.status_history = current.status_history || [];
+      current.status_history.push({
+        at: new Date(),
+        from: prev,
+        to: next,
+        source,
+      });
+      current.status = next;
+    }
+
+    // Manejo de transactionId:
+    // - Si no hay current.transactionId, setear el nuevo.
+    // - Si ya existe y es diferente, no sobreescribir (evita pisar otro intento).
+
+    if (transactionId) {
+      if (!current.transactionId) {
+        current.transactionId = transactionId;
+      } else if (current.transactionId !== transactionId) {
+        Logger.warn(
+          `Intento de sobrescribir transactionId para ${reference}: ${current.transactionId} -> ${transactionId}`,
+        );
+        await this.paymentLogs.write({
+          level: 'warn',
+          message: 'safeUpdateStatus: intento de sobrescribir transactionId',
+          source,
+          reference,
+          transactionId,
+          status: next,
+          meta: { prevTx: current.transactionId },
+        });
+      }
+    }
+
+    // Si viene de webhook y hay raw, también guarda rawWebhook "principal"
     if (source === 'webhook' && rawWompi) {
       current.rawWebhook = rawWompi;
     }
 
-    await current.save();
-
+    // becameApproved antes de persistir (usa prev y next ya normalizados)
     const becameApproved = prev !== 'APPROVED' && next === 'APPROVED';
+
+    // Guardar con tolerancia a E11000 (collision en transactionId)
+    try {
+      await current.save();
+      await this.paymentLogs.write({
+        level: 'info',
+        message: 'Estado PR actualizado',
+        source,
+        reference,
+        transactionId: current.transactionId,
+        status: current.status,
+        amount: current.amount,
+        currency: current.currency ?? 'COP',
+        meta: { from: prev, to: next, becameApproved },
+      });
+    } catch (e: any) {
+      // Si falla por índice único en transactionId, reintentar sin setearlo
+      if (e?.code === 11000 && e?.message?.includes?.('transactionId')) {
+        // revertir el cambio de transactionId y guardar de nuevo
+        if (transactionId && current.transactionId === transactionId) {
+          current.transactionId = undefined;
+        }
+        await current.save();
+        await this.paymentLogs.write({
+          level: 'warn',
+          message: 'safeUpdateStatus: E11000 transactionId, guardado sin txId',
+          source,
+          reference,
+          status: current.status,
+          meta: { from: prev, to: next, error: e?.message },
+        });
+      } else {
+        await this.paymentLogs.write({
+          level: 'error',
+          message: 'safeUpdateStatus: fallo al guardar',
+          source,
+          reference,
+          transactionId,
+          status: next,
+          meta: { error: e?.message || String(e) },
+        });
+        throw e;
+      }
+    }
+
     return { doc: current, changed: true, becameApproved };
   }
 

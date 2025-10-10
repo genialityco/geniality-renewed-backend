@@ -19,6 +19,7 @@ export class PaymentPlan {
     type: MongooseSchema.Types.ObjectId,
     ref: 'OrganizationUser',
     required: true,
+    unique: true,
   })
   organization_user_id: Types.ObjectId;
 

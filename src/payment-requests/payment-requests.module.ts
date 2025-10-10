@@ -17,6 +17,11 @@ import {
 import { PaymentRequestsService } from './payment-requests.service';
 import { PaymentRequestsController } from './payment-requests.controller';
 import { PaymentPlansModule } from 'src/payment-plans/payment-plans.module';
+import {
+  PaymentLog,
+  PaymentLogSchema,
+} from 'src/payment-logs/schemas/payment-log.schema';
+import { PaymentLogsService } from 'src/payment-logs/payment-logs.service';
 
 @Module({
   imports: [
@@ -24,15 +29,16 @@ import { PaymentPlansModule } from 'src/payment-plans/payment-plans.module';
       { name: PaymentRequest.name, schema: PaymentRequestSchema },
       { name: OrganizationUser.name, schema: OrganizationUserSchema },
       { name: PaymentPlan.name, schema: PaymentPlanSchema },
+      { name: PaymentLog.name, schema: PaymentLogSchema },
     ]),
     PaymentPlansModule,
   ],
   controllers: [PaymentRequestsController],
-  providers: [PaymentRequestsService],
+  providers: [PaymentRequestsService, PaymentLogsService],
   exports: [PaymentRequestsService],
 })
 export class PaymentRequestsModule {}
-// export class PaymentRequestsModule implements NestModule {
+// export class PaymentRequestsModule implements NestModule
 //   configure(consumer: MiddlewareConsumer) {
 //     consumer.apply(WebhookTapMiddleware).forRoutes({
 //       path: 'payment-requests/webhook', // coincide con tu @Controller('payment-requests') + @Post('webhook')

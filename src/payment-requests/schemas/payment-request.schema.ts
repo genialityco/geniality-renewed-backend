@@ -39,7 +39,13 @@ export class PaymentRequest {
 
   @Prop({ type: [Object], default: [] })
   wompi_snapshots?: Array<{
-    source: 'webhook' | 'poll' | 'redirect' | 'reconcile';
+    source:
+      | 'webhook'
+      | 'poll'
+      | 'redirect'
+      | 'reconcile'
+      | 'service'
+      | 'frontend';
     at: Date;
     payload: any; // cuerpo crudo de Wompi (o lo más crudo posible)
   }>;

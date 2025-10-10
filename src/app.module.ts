@@ -20,6 +20,7 @@ import { EmailModule } from './email/email.module';
 import { PaymentRequestsModule } from './payment-requests/payment-requests.module';
 // import { SessionTokenGuard } from './auth/session-token.guard';
 import { WompiModule } from './wompi/wompi.module';
+import { PaymentLogsModule } from './payment-logs/payment-logs.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { WompiModule } from './wompi/wompi.module';
     EmailModule,
     PaymentRequestsModule,
     WompiModule,
+    PaymentLogsModule,
   ],
   // providers: [SessionTokenGuard],
 })
