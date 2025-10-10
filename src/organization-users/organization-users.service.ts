@@ -221,13 +221,13 @@ export class OrganizationUsersService {
       // 4) Enviar correo con las credenciales / link
       await this.emailService.sendLayoutEmail(
         email,
-        'Recuperación de contraseña',
+        'Recuperación de datos',
         `<p>Las credenciales para ingresar son:</p>
         <strong>Email: ${user.properties.email}</strong><br/>
-        <strong>ID (nueva contraseña): ${user.properties.ID}</strong><br/><br/>
+        <strong>Cédula/ID: ${user.properties.ID}</strong><br/><br/>
         Por favor, utiliza estos datos para iniciar sesión.<br/>
-        Si deseas cambiar tu contraseña, puedes hacerlo desde el siguiente link:
-        <a href="https://app.geniality.com.co/organization/${user.organization_id}/recuperar-datos">Cambiar contraseña</a>`,
+        Si deseas actualizar tus datos, puedes hacerlo desde el siguiente link:
+        <a href="https://app.geniality.com.co/organization/${user.organization_id}/recuperar-datos">Cambiar cédula/ID</a>`,
         user.organization_id,
       );
     } catch (error: any) {
