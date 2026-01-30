@@ -8,7 +8,7 @@ import { EmailService } from '../email/email.service'; // Ajusta la ruta
 import { renderSubscriptionContent } from '../templates/PaySuscription';
 
 type PlanMeta = {
-  source?: 'gateway' | 'manual' | 'admin';
+  source?: 'gateway' | 'manual' | 'admin' |'cron_approved';
   status_history?: any[];
   reference?: string;
   transactionId?: string;
