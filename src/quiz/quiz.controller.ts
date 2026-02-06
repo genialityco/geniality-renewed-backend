@@ -1,45 +1,35 @@
-// quiz.controller.ts
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Param,
-  NotFoundException,
-  Delete,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { QuizService } from './quiz.service';
-import { Quiz } from './schemas/quiz.schema';
+import { UpsertQuizDto } from './dto/upsert-quiz.dto';
+import { SubmitQuizDto } from './dto/submit-quiz.dto';
 
 @Controller('quiz')
 export class QuizController {
   constructor(private readonly quizService: QuizService) {}
 
-  /**
-   * Crea o actualiza el quiz para una actividad
-   */
+  // Crear o editar (upsert por eventId)
   @Post()
-  async createOrUpdate(@Body() body: any): Promise<Quiz> {
-    const { activity_id, quiz_json } = body;
-    if (!activity_id || !quiz_json) {
-      throw new NotFoundException('Faltan datos: activity_id, quiz_json');
-    }
-    return this.quizService.createOrUpdateQuiz(activity_id, quiz_json);
+  upsert(@Body() dto: UpsertQuizDto) {
+    return this.quizService.upsert(dto);
   }
 
-  /**
-   * Obtiene el quiz de una actividad
-   */
-  @Get(':activityId')
-  async findOne(@Param('activityId') activityId: string): Promise<Quiz> {
-    return this.quizService.findByActivityId(activityId);
+  @Get(':eventId')
+  get(@Param('eventId') eventId: string) {
+    return this.quizService.getByEventId(eventId);
   }
 
-  /**
-   * Elimina el quiz asociado a una actividad (opcional)
-   */
-  @Delete(':activityId')
-  async remove(@Param('activityId') activityId: string): Promise<Quiz> {
-    return this.quizService.removeQuizByActivity(activityId);
+  @Delete(':eventId')
+  remove(@Param('eventId') eventId: string) {
+    return this.quizService.deleteByEventId(eventId);
+  }
+
+  @Post(':eventId/submit')
+  submit(@Param('eventId') eventId: string, @Body() dto: SubmitQuizDto) {
+    return this.quizService.submit(eventId, dto);
+  }
+
+  @Get('event/:eventId')
+  getForRun(@Param('eventId') eventId: string) {
+    return this.quizService.getForRun(eventId);
   }
 }
