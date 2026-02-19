@@ -23,10 +23,10 @@ export class WompiApprovedCron {
     @InjectModel(PaymentPlan.name) private readonly paymentPlanModel: Model<PaymentPlan>,
   ) {}
 
-  @Cron(CronExpression.EVERY_6_HOURS)
+  @Cron(CronExpression.EVERY_10_MINUTES)
   async run() {
     const until = new Date();
-    const from = new Date(Date.now() - 60 * 60 * 1000); // última hora
+    const from = new Date(Date.now() - 11 * 60 * 1000);
     const fromISO = from.toISOString();
     const untilISO = until.toISOString();
     
