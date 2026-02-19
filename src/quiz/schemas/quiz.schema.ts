@@ -2,6 +2,12 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import * as mongoose from 'mongoose';
+import {
+  SingleChoiceQuestionSchema,
+  MultipleChoiceQuestionSchema,
+  MatchingQuestionSchema,
+  OrderingQuestionSchema,
+} from './question.schema';
 
 export type QuizDocument = HydratedDocument<Quiz>;
 
@@ -15,6 +21,20 @@ export class QuizUserResult {
 }
 
 const QuizUserResultSchema = SchemaFactory.createForClass(QuizUserResult);
+QuizUserResultSchema.set('_id', false); // Asegurar que no genere _id
+
+@Schema({ _id: false })
+export class BaseQuestion {
+  @Prop({ type: String, required: true })
+  id: string;
+
+  @Prop({
+    type: String,
+    enum: ['single-choice', 'multiple-choice', 'matching', 'ordering'],
+    required: true,
+  })
+  type: string;
+}
 
 @Schema({ timestamps: true, collection: 'quizzes' })
 export class Quiz {
@@ -24,8 +44,21 @@ export class Quiz {
   @Prop({ type: String, required: true, unique: true, index: true })
   eventId: string;
 
-  @Prop({ type: mongoose.Schema.Types.Mixed, required: true })
-  questions: any;
+  @Prop({
+    type: [
+      {
+        type: mongoose.Schema.Types.Mixed,
+        required: true,
+      },
+    ],
+    required: true,
+  })
+  questions: (
+    | SingleChoiceQuestionSchema
+    | MultipleChoiceQuestionSchema
+    | MatchingQuestionSchema
+    | OrderingQuestionSchema
+  )[];
 
   // 👇 aquí ya NO se genera _id por elemento
   @Prop({ type: [QuizUserResultSchema], default: [] })

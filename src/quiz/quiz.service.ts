@@ -58,11 +58,11 @@ export class QuizService {
     const idx = quiz.listUser.findIndex((x: any) => x?.userId === dto.userId);
 
     if (idx >= 0) {
-      // actualiza nota
-      quiz.listUser[idx] = { ...quiz.listUser[idx], result: dto.result };
+      // actualiza nota directamente sin reemplazar el objeto
+      quiz.listUser[idx].result = dto.result;
     } else {
-      // agrega
-      quiz.listUser.push({ userId: dto.userId, result: dto.result });
+      // agrega nuevo
+      quiz.listUser.push({ userId: dto.userId, result: dto.result } as any);
     }
 
     await quiz.save();
@@ -88,8 +88,15 @@ export class QuizService {
     if (obj && typeof obj === 'object') {
       const out: any = {};
       for (const [k, v] of Object.entries(obj)) {
-        // SurveyJS usa correctAnswer, otros pueden usar correctAnswers
-        if (k === 'correctAnswer' || k === 'correctAnswers') continue;
+        // Remover respuestas correctas según nuestro modelo
+        if (
+          k === 'respuestacorrecta' ||
+          k === 'respuestascorrectas' ||
+          k === 'correctAnswer' ||
+          k === 'correctAnswers' ||
+          k === 'correctOrder'
+        )
+          continue;
         out[k] = this.removeCorrectAnswers(v);
       }
       return out;
