@@ -1,31 +1,32 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import * as mongoose from 'mongoose';
 
-@Schema({ timestamps: true })
+@Schema({ timestamps: true, collection: 'quiz_attempts' })
 export class QuizAttempt extends Document {
-  @Prop({ type: Types.ObjectId, ref: 'Quiz', required: true })
-  quiz_id: Types.ObjectId;
+  @Prop({ type: String, required: true, index: true })
+  quizId: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  user_id: Types.ObjectId;
+  @Prop({ type: String, required: true, index: true })
+  userId: string;
 
-  // Número de intento (1,2,3...). Podrías usar un autoincremento o
-  // sacarlo contando cuántos attempts existen para este quiz_id + user_id
-  @Prop({ default: 1 })
-  attempt_number: number;
+  @Prop({ default: 1, index: true })
+  attemptNumber: number;
 
-  // Ejemplo: la data con las respuestas
-  @Prop({ type: Object })
-  answers_data: Record<string, any>;
-
-  // Puntaje obtenido, máximo y si está completado
-  @Prop({ default: 0 })
-  total_score: number;
+  // Respuestas del usuario - puede ser array u objeto
+  @Prop({ type: mongoose.Schema.Types.Mixed })
+  answersData: any; // Array o objeto con respuestas del usuario
 
   @Prop({ default: 0 })
-  max_score: number;
+  totalScore: number;
 
-  // Podrías agregar otras propiedades, p.e. tiempo de finalización
+  @Prop({ default: 0 })
+  maxScore: number;
 }
 
 export const QuizAttemptSchema = SchemaFactory.createForClass(QuizAttempt);
+
+// Crear índice compuesto único
+QuizAttemptSchema.index({ quizId: 1, userId: 1, attemptNumber: 1 }, { unique: false });
+
+

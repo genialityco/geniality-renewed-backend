@@ -18,6 +18,9 @@ export class QuizUserResult {
 
   @Prop({ type: Number, required: true })
   result: number;
+
+  @Prop({ type: String, ref: 'QuizAttempt' })
+  quizAttemptId: string; // Referencia al documento en quiz_attempts
 }
 
 const QuizUserResultSchema = SchemaFactory.createForClass(QuizUserResult);
