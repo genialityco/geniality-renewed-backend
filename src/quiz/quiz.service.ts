@@ -8,6 +8,8 @@ import { Model } from 'mongoose';
 import { Quiz, QuizDocument } from './schemas/quiz.schema';
 import { UpsertQuizDto } from './dto/upsert-quiz.dto';
 import { SubmitQuizDto } from './dto/submit-quiz.dto';
+import { SaveQuizResultDto } from './dto/save-quiz-result.dto';
+
 
 @Injectable()
 export class QuizService {
@@ -53,20 +55,46 @@ export class QuizService {
     if (!quiz)
       throw new NotFoundException(`Quiz no encontrado para eventId=${eventId}`);
 
+    // ✅ Solo devolver preguntas con respuestas correctas, sin guardar nada
+    return {
+      id: quiz.id,
+      eventId: quiz.eventId,
+      userId: dto.userId,
+      questions: quiz.questions, // ✅ Incluye respuestas correctas (respuestacorrecta, respuestascorrectas, correctOrder)
+    };
+  }
+
+  async saveResult(eventId: string, dto: SaveQuizResultDto) {
+    const quiz = await this.quizModel.findOne({ eventId });
+    if (!quiz)
+      throw new NotFoundException(`Quiz no encontrado para eventId=${eventId}`);
+
+    if (!dto.result && dto.result !== 0) {
+      throw new BadRequestException('El campo result es requerido y debe ser un número');
+    }
+
     quiz.listUser = Array.isArray(quiz.listUser) ? quiz.listUser : [];
 
     const idx = quiz.listUser.findIndex((x: any) => x?.userId === dto.userId);
 
     if (idx >= 0) {
-      // actualiza nota directamente sin reemplazar el objeto
+      // actualiza nota
       quiz.listUser[idx].result = dto.result;
     } else {
       // agrega nuevo
-      quiz.listUser.push({ userId: dto.userId, result: dto.result } as any);
+      quiz.listUser.push({ userId: dto.userId, result: dto.result });
     }
 
     await quiz.save();
-    return quiz;
+
+    return {
+      id: quiz.id,
+      eventId: quiz.eventId,
+      attempt: {
+        userId: dto.userId,
+        result: dto.result,
+      },
+    };
   }
 
   async getForRun(eventId: string) {
