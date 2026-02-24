@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { v4 as randomUUID } from 'uuid';
 
 // ─────────────────────────────────────────────
 // Sub-schemas
@@ -187,6 +188,9 @@ export type QuizDocument = Quiz & Document;
 
 @Schema({ timestamps: true })
 export class Quiz {
+  @Prop({ type: String, unique: true, sparse: true, default: () => randomUUID() })
+  id: string;
+
   @Prop({ type: Types.ObjectId, ref: 'Event', required: true, index: true })
   eventId: Types.ObjectId;
 
@@ -199,5 +203,5 @@ export class Quiz {
 
 export const QuizSchema = SchemaFactory.createForClass(Quiz);
 
-// Ensure only one quiz per event
-QuizSchema.index({ eventId: 1 }, { unique: true });
+// Ensure only one quiz per event (sparse para ignorar nulls)
+QuizSchema.index({ eventId: 1 }, { unique: true, sparse: true });
