@@ -138,6 +138,34 @@ export class Question {
 export const QuestionSchema = SchemaFactory.createForClass(Question);
 
 // ─────────────────────────────────────────────
+// QuizConfig
+// ─────────────────────────────────────────────
+
+@Schema({ _id: false })
+export class QuizConfig {
+  /** Duración máxima en minutos. null = sin límite de tiempo. */
+  @Prop({ type: Number, default: null })
+  time: number | null;
+
+  /** Número máximo de intentos permitidos. null = intentos ilimitados. */
+  @Prop({ type: Number, default: null })
+  attempts: number | null;
+
+  /** Nota mínima en % para aprobar el examen. null = sin nota mínima. */
+  @Prop({ type: Number, default: null })
+  nota: number | null;
+
+  /**
+   * Modo de visualización de preguntas:
+   * - "all"        → todas las preguntas en la misma página (default).
+   * - "one-by-one" → una pregunta a la vez, sin posibilidad de retroceder.
+   */
+  @Prop({ type: String, enum: ['all', 'one-by-one'], default: 'all' })
+  questionDisplay: 'all' | 'one-by-one';
+}
+export const QuizConfigSchema = SchemaFactory.createForClass(QuizConfig);
+
+// ─────────────────────────────────────────────
 // UserAnswer (respuesta del usuario a una pregunta)
 // ─────────────────────────────────────────────
 
@@ -199,6 +227,9 @@ export class Quiz {
 
   @Prop({ type: [UserAttemptSchema], default: [] })
   listUserAttempts: UserAttempt[];
+
+  @Prop({ type: QuizConfigSchema, default: () => ({}) })
+  config: QuizConfig;
 }
 
 export const QuizSchema = SchemaFactory.createForClass(Quiz);

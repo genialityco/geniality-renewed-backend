@@ -5,6 +5,9 @@ import {
   IsIn,
   ValidateNested,
   IsObject,
+  IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -167,4 +170,39 @@ export class SubmitQuizAttempDto {
 
   @IsOptional()
   score?: number; // opcional si se calcula en el backend
+}
+
+// ─────────────────────────────────────────────
+// Quiz Config DTO
+// ─────────────────────────────────────────────
+
+export class UpdateQuizConfigDto {
+  /** Duración máxima en minutos. null = sin límite de tiempo. */
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  time?: number | null;
+
+  /** Número máximo de intentos permitidos. null = intentos ilimitados. */
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  attempts?: number | null;
+
+  /** Nota mínima en % para aprobar el examen. null = sin nota mínima. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  nota?: number | null;
+
+  /**
+   * Modo de visualización de preguntas:
+   * - "all"        → todas las preguntas en la misma página (default).
+   * - "one-by-one" → una pregunta a la vez, sin posibilidad de retroceder.
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(['all', 'one-by-one'])
+  questionDisplay?: 'all' | 'one-by-one';
 }

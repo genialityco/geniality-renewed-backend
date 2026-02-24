@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -10,7 +11,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { QuizService } from './quiz.service';
-import { CreateQuizDto, UpdateQuizDto, SubmitQuizAttempDto } from './dto/quiz.dto';
+import { CreateQuizDto, UpdateQuizDto, SubmitQuizAttempDto, UpdateQuizConfigDto } from './dto/quiz.dto';
 
 @Controller('quiz')
 export class QuizController {
@@ -100,5 +101,18 @@ export class QuizController {
     @Param('userId') userId: string,
   ) {
     return this.quizService.getUserAttempt(quizId, userId);
+  }
+
+  /**
+   * PATCH /quiz/:quizId/config
+   * Actualiza (merge) la configuración del quiz.
+   * Solo sobreescribe los campos enviados; los demás conservan su valor.
+   */
+  @Patch(':quizId/config')
+  async updateConfig(
+    @Param('quizId') quizId: string,
+    @Body() dto: UpdateQuizConfigDto,
+  ) {
+    return this.quizService.updateConfig(quizId, dto);
   }
 }
