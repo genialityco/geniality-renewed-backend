@@ -91,14 +91,14 @@ export const MatchingAnswerSchema =
 // Question
 // ─────────────────────────────────────────────
 
-export type QuestionType = 'single' | 'multiple' | 'matching' | 'sorting';
+export type QuestionType = 'single' | 'multiple' | 'matching' | 'sorting' | 'open';
 
 @Schema({ _id: false })
 export class Question {
   @Prop({ required: true })
   id: string;
 
-  @Prop({ required: true, enum: ['single', 'multiple', 'matching', 'sorting'] })
+  @Prop({ required: true, enum: ['single', 'multiple', 'matching', 'sorting', 'open'] })
   type: QuestionType;
 
   /** The question statement — rendered by the Notion-like editor */
@@ -138,6 +138,26 @@ export class Question {
 export const QuestionSchema = SchemaFactory.createForClass(Question);
 
 // ─────────────────────────────────────────────
+// UserAttempt (para tracking de intentos del usuario)
+// ─────────────────────────────────────────────
+
+@Schema({ _id: false })
+export class UserAttempt {
+  @Prop({ required: true })
+  userId: string;
+
+  @Prop({ required: true, default: () => new Date() })
+  attemptedAt: Date;
+
+  @Prop({ required: true, default: 0 })
+  score: number;
+
+  @Prop({ type: Object, default: [] })
+  userAnswers: any[];
+}
+export const UserAttemptSchema = SchemaFactory.createForClass(UserAttempt);
+
+// ─────────────────────────────────────────────
 // QuizConfig
 // ─────────────────────────────────────────────
 
@@ -166,49 +186,6 @@ export class QuizConfig {
 export const QuizConfigSchema = SchemaFactory.createForClass(QuizConfig);
 
 // ─────────────────────────────────────────────
-// UserAnswer (respuesta del usuario a una pregunta)
-// ─────────────────────────────────────────────
-
-@Schema({ _id: false })
-export class UserAnswer {
-  @Prop({ required: true })
-  questionId: string;
-
-  /**
-   * La respuesta del usuario. Pode ser:
-   * - string: para single (id de opción)
-   * - string[]: para multiple (ids de opciones)
-   * - MatchingAnswer: para matching
-   * - string[]: para sorting (orden de ids)
-   */
-  @Prop({ type: Object, default: null })
-  answer: any;
-}
-export const UserAnswerSchema = SchemaFactory.createForClass(UserAnswer);
-
-// ─────────────────────────────────────────────
-// UserAttempt  (stored inside the quiz for quick access)
-// ─────────────────────────────────────────────
-
-@Schema({ _id: false })
-export class UserAttempt {
-  @Prop({ required: true })
-  userId: string;
-
-  @Prop({ required: true })
-  attemptedAt: Date;
-
-  /** Score as a percentage 0–100 */
-  @Prop({ default: 0 })
-  score: number;
-
-  /** Array de respuestas del usuario por pregunta */
-  @Prop({ type: [UserAnswerSchema], default: [] })
-  userAnswers: UserAnswer[];
-}
-export const UserAttemptSchema = SchemaFactory.createForClass(UserAttempt);
-
-// ─────────────────────────────────────────────
 // Quiz (root document)
 // ─────────────────────────────────────────────
 
@@ -225,11 +202,11 @@ export class Quiz {
   @Prop({ type: [QuestionSchema], default: [] })
   questions: Question[];
 
-  @Prop({ type: [UserAttemptSchema], default: [] })
-  listUserAttempts: UserAttempt[];
-
   @Prop({ type: QuizConfigSchema, default: () => ({}) })
   config: QuizConfig;
+
+  @Prop({ type: [UserAttemptSchema], default: [] })
+  listUserAttempts: UserAttempt[];
 }
 
 export const QuizSchema = SchemaFactory.createForClass(Quiz);

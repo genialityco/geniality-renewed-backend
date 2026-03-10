@@ -159,7 +159,7 @@ export class UserAnswerDto {
   answer: any; // puede ser string, string[], o un objeto para matching
 }
 
-export class SubmitQuizAttempDto {
+export class SubmitQuizAttemptDto {
   @IsString()
   userId: string;
 

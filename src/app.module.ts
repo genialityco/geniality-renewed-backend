@@ -19,6 +19,7 @@ import { PaymentRequestsModule } from './payment-requests/payment-requests.modul
 import { WompiModule } from './wompi/wompi.module';
 import { PaymentLogsModule } from './payment-logs/payment-logs.module';
 import { QuizModule } from './quiz/quiz.module';
+import { UserQuizAttemptModule } from './user-quiz-attempt/user-quiz-attempt.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { QuizModule } from './quiz/quiz.module';
     WompiModule,
     PaymentLogsModule,
     QuizModule,
+    UserQuizAttemptModule,
   ],
   // providers: [SessionTokenGuard],
 })

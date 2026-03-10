@@ -6,7 +6,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Quiz, QuizDocument } from './schemas/quiz.schema';
-import { CreateQuizDto, UpdateQuizDto, SubmitQuizAttempDto, UpdateQuizConfigDto } from './dto/quiz.dto';
+import { CreateQuizDto, UpdateQuizDto, UpdateQuizConfigDto, SubmitQuizAttemptDto } from './dto/quiz.dto';
 
 @Injectable()
 export class QuizService {
@@ -112,7 +112,7 @@ export class QuizService {
    */
   async submitAttempt(
     quizId: string,
-    dto: SubmitQuizAttempDto,
+    dto: SubmitQuizAttemptDto,
   ): Promise<QuizDocument> {
     const quiz = await this.quizModel.findById(quizId).exec();
 

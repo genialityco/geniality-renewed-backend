@@ -9,9 +9,11 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
+import { isValidObjectId } from 'mongoose';
 import { QuizService } from './quiz.service';
-import { CreateQuizDto, UpdateQuizDto, SubmitQuizAttempDto, UpdateQuizConfigDto } from './dto/quiz.dto';
+import { CreateQuizDto, UpdateQuizDto, UpdateQuizConfigDto } from './dto/quiz.dto';
 
 @Controller('quiz')
 export class QuizController {
@@ -21,23 +23,21 @@ export class QuizController {
    * GET /quiz/event/:eventId
    * Returns the quiz for the given event, or null if it doesn't exist yet.
    * The frontend uses this to decide between create and edit mode.
+   * NOTA: Este debe ir antes de /:quizId para evitar que "event" sea interpretado como un ID
    */
   @Get('event/:eventId')
   async findByEvent(@Param('eventId') eventId: string) {
-    const quiz = await this.quizService.findByEventId(eventId);
-    return quiz ?? null;
-  }
-
-  /**
-   * GET /quiz/:quizId/score/:userId
-   * Returns the score of a user, or false if the user hasn't taken the quiz.
-   */
-  @Get(':quizId/score/:userId')
-  async getUserScore(
-    @Param('quizId') quizId: string,
-    @Param('userId') userId: string,
-  ) {
-    return this.quizService.getScoreByUserId(quizId, userId);
+    if (!isValidObjectId(eventId)) {
+      throw new BadRequestException(`Invalid eventId format: ${eventId}`);
+    }
+    try {
+      const quiz = await this.quizService.findByEventId(eventId);
+      return quiz ?? null;
+    } catch (error) {
+      throw new BadRequestException(
+        `Error finding quiz for event ${eventId}: ${error.message}`,
+      );
+    }
   }
 
   /**
@@ -75,32 +75,6 @@ export class QuizController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('quizId') quizId: string) {
     return this.quizService.remove(quizId);
-  }
-
-  /**
-   * POST /quiz/:quizId/submit
-   * Almacena el intento del usuario (respuestas + puntuación).
-   * Actualiza si el usuario ya tiene un intento previo.
-   */
-  @Post(':quizId/submit')
-  @HttpCode(HttpStatus.CREATED)
-  async submitAttempt(
-    @Param('quizId') quizId: string,
-    @Body() dto: SubmitQuizAttempDto,
-  ) {
-    return this.quizService.submitAttempt(quizId, dto);
-  }
-
-  /**
-   * GET /quiz/:quizId/attempt/:userId
-   * Obtiene el intento completo del usuario (respuestas + puntuación).
-   */
-  @Get(':quizId/attempt/:userId')
-  async getUserAttempt(
-    @Param('quizId') quizId: string,
-    @Param('userId') userId: string,
-  ) {
-    return this.quizService.getUserAttempt(quizId, userId);
   }
 
   /**
