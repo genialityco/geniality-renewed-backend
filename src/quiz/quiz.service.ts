@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -9,10 +11,35 @@ import { Quiz, QuizDocument } from './schemas/quiz.schema';
 import { CreateQuizDto, UpdateQuizDto, UpdateQuizConfigDto, SubmitQuizAttemptDto } from './dto/quiz.dto';
 
 @Injectable()
-export class QuizService {
+export class QuizService implements OnModuleInit {
+  private readonly logger = new Logger(QuizService.name);
+
   constructor(
     @InjectModel(Quiz.name) private readonly quizModel: Model<QuizDocument>,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    // Limpia índice legado de versiones anteriores para evitar:
+    // E11000 duplicate key error ... index: activity_id_1 dup key: { activity_id: null }
+    try {
+      const indexes = await this.quizModel.collection.indexes();
+      const legacyIndex = indexes.find((idx) => idx.name === 'activity_id_1');
+
+      if (legacyIndex) {
+        await this.quizModel.collection.dropIndex('activity_id_1');
+        this.logger.warn(
+          'Dropped legacy index "activity_id_1" from quizzes collection.',
+        );
+      }
+
+      // Asegura que los índices definidos en el esquema queden sincronizados.
+      await this.quizModel.syncIndexes();
+    } catch (error) {
+      this.logger.warn(
+        `Could not reconcile quiz indexes on startup: ${error?.message ?? error}`,
+      );
+    }
+  }
 
   // ── Create ────────────────────────────────────────────────────────────
 
