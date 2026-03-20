@@ -24,6 +24,9 @@ export class OrganizationUser extends Document {
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'PaymentPlan' })
   payment_plan_id?: string;
+
+  @Prop({ type: Boolean, default: false })
+  memberShipStatus?: boolean;
 }
 
 export const OrganizationUserSchema =
