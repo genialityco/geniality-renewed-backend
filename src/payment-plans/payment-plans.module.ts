@@ -9,12 +9,17 @@ import {
   OrganizationUser,
   OrganizationUserSchema,
 } from 'src/organization-users/schemas/organization-user.schema';
+import {
+  PaymentRequest,
+  PaymentRequestSchema,
+} from 'src/payment-requests/schemas/payment-request.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: PaymentPlan.name, schema: PaymentPlanSchema },
       { name: OrganizationUser.name, schema: OrganizationUserSchema },
+      { name: PaymentRequest.name, schema: PaymentRequestSchema },
     ]),
     OrganizationUsersModule,
     EmailModule,

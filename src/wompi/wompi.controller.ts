@@ -11,6 +11,7 @@ import { createHash } from 'crypto';
 import { WompiService } from './wompi.service';
 import { PaymentRequestsService } from '../payment-requests/payment-requests.service';
 import { PaymentLogsService } from 'src/payment-logs/payment-logs.service';
+import { PaymentPlansService } from 'src/payment-plans/payment-plans.service';
 
 @Controller('wompi')
 export class WompiController {
@@ -19,7 +20,8 @@ export class WompiController {
   constructor(
     private wompi: WompiService,
     private prService: PaymentRequestsService,
-    private paymentLogs: PaymentLogsService, // ← inyecta logs
+    private paymentLogs: PaymentLogsService,
+    private paymentPlansService: PaymentPlansService,
   ) {}
 
   @Get('integrity-signature')
@@ -221,5 +223,166 @@ export class WompiController {
     }
 
     return res.doc;
+  }
+
+  /**
+   * Reporte de reconciliación: obtiene todos los pagos Wompi en el rango
+   * indicado y los cruza con PaymentPlans / OrganizationUsers de la org.
+   *
+   * Query params:
+   *   from_date      ISO-8601  (requerido)  ej: 2024-01-01T00:00:00Z
+   *   until_date     ISO-8601  (requerido)  ej: 2025-12-31T23:59:59Z
+   *   organizationId ObjectId  (requerido)
+   *   status         string    (opcional, default APPROVED)
+   */
+  /**
+   * Reporte de reconciliación: obtiene todos los pagos Wompi en el rango
+   * indicado y los cruza con PaymentPlans / OrganizationUsers de la org.
+   *
+   * Query params:
+   *   from_date      ISO-8601  (requerido)  ej: 2024-01-01T00:00:00Z
+   *   until_date     ISO-8601  (requerido)  ej: 2025-12-31T23:59:59Z
+   *   organizationId ObjectId  (requerido)
+   *   status         string    (opcional, default APPROVED)
+   *   amountCOP      number    (opcional, default 50000) — filtra txs por monto exacto en COP
+   */
+  @Get('reconcile-report')
+  async reconcileReport(
+    @Query('from_date') fromDate: string,
+    @Query('until_date') untilDate: string,
+    @Query('organizationId') organizationId: string,
+    @Query('status') status = 'APPROVED',
+    @Query('amountCOP') amountCOPRaw = '50000',
+  ) {
+    if (!fromDate || !untilDate || !organizationId) {
+      throw new BadRequestException(
+        'from_date, until_date y organizationId son requeridos',
+      );
+    }
+
+    const amountCents = Math.round(parseFloat(amountCOPRaw) * 100);
+
+    // Traer TODAS las transacciones Wompi del rango (paginación automática)
+    const allTransactions: any[] = [];
+    const PAGE_SIZE = 50;
+    let page = 1;
+
+    while (true) {
+      const body = await this.wompi.getTransactions({
+        from_date: fromDate,
+        until_date: untilDate,
+        page,
+        page_size: PAGE_SIZE,
+        status,
+      });
+
+      const items: any[] = Array.isArray(body?.data) ? body.data : [];
+      allTransactions.push(...items);
+
+      if (!items.length) break;
+
+      const total = Number(body?.meta?.total_results ?? 0);
+      const maxPage = Math.ceil(total / PAGE_SIZE) || page;
+      if (page >= maxPage) break;
+      page++;
+    }
+
+    // Filtrar solo las transacciones con el monto indicado
+    const filtered = allTransactions.filter(
+      (tx) => tx.amount_in_cents === amountCents,
+    );
+
+    await this.paymentLogs.write({
+      level: 'info',
+      message: 'reconcile-report: transacciones obtenidas y filtradas de Wompi',
+      source: 'service',
+      organizationId,
+      meta: {
+        totalFromWompi: allTransactions.length,
+        afterAmountFilter: filtered.length,
+        amountCOP: amountCOPRaw,
+        from_date: fromDate,
+        until_date: untilDate,
+        status,
+      },
+    });
+
+    return this.paymentPlansService.reconcileWompiTransactions(
+      filtered,
+      organizationId,
+    );
+  }
+
+  /**
+   * Clasificación completa de suscripciones cruzada con Wompi.
+   * Descarga TODAS las transacciones Wompi desde from_date hasta hoy
+   * y las usa como fuente de verdad para clasificar cada usuario.
+   *
+   * Query params:
+   *   organizationId  ObjectId  (requerido)
+   *   from_date       ISO-8601  (opcional, default 2023-09-27T00:00:00Z)
+   *   amountCOP       number    (opcional, default 50000)
+   */
+  @Get('full-classification')
+  async fullClassification(
+    @Query('organizationId') organizationId: string,
+    @Query('from_date') fromDate = '2023-01-01T00:00:00Z',
+    @Query('amountCOP') amountCOPRaw = '50000',
+  ) {
+    if (!organizationId) {
+      throw new BadRequestException('organizationId es requerido');
+    }
+
+    const untilDate = new Date().toISOString();
+    const amountCents = Math.round(parseFloat(amountCOPRaw) * 100);
+
+    // Fetch de TODAS las transacciones APPROVED en el rango histórico
+    const allTransactions: any[] = [];
+    const PAGE_SIZE = 50;
+    let page = 1;
+
+    while (true) {
+      const body = await this.wompi.getTransactions({
+        from_date: fromDate,
+        until_date: untilDate,
+        page,
+        page_size: PAGE_SIZE,
+        status: 'APPROVED',
+      });
+
+      const items: any[] = Array.isArray(body?.data) ? body.data : [];
+      allTransactions.push(...items);
+
+      if (!items.length) break;
+
+      const total = Number(body?.meta?.total_results ?? 0);
+      const maxPage = Math.ceil(total / PAGE_SIZE) || page;
+      if (page >= maxPage) break;
+      page++;
+    }
+
+    // Filtrar por monto (membresía)
+    const filtered = allTransactions.filter(
+      (tx) => tx.amount_in_cents === amountCents,
+    );
+
+    await this.paymentLogs.write({
+      level: 'info',
+      message: 'full-classification: transacciones Wompi obtenidas',
+      source: 'service',
+      organizationId,
+      meta: {
+        totalFromWompi: allTransactions.length,
+        afterAmountFilter: filtered.length,
+        amountCOP: amountCOPRaw,
+        from_date: fromDate,
+        until_date: untilDate,
+      },
+    });
+
+    return this.paymentPlansService.getFullSubscriptionClassification(
+      filtered,
+      organizationId,
+    );
   }
 }
