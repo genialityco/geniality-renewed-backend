@@ -14,8 +14,8 @@ export class Event extends Document {
   @Prop() venue?: string;
   @Prop() location?: string;
 
-  @Prop({ required: true, enum: ['PUBLIC', 'PRIVATE'] })
-  visibility: 'PUBLIC' | 'PRIVATE';
+  @Prop({ required: true, enum: ['PUBLIC', 'PRIVATE', 'EXCLUSIVE_FOR_MEMBERS'] })
+  visibility: 'PUBLIC' | 'PRIVATE' | 'EXCLUSIVE_FOR_MEMBERS';
 
   @Prop() description?: string;
   @Prop({ default: false }) allow_register: boolean;

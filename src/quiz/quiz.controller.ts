@@ -1,45 +1,92 @@
-// quiz.controller.ts
 import {
   Controller,
   Get,
   Post,
+  Put,
+  Patch,
+  Delete,
   Body,
   Param,
-  NotFoundException,
-  Delete,
+  HttpCode,
+  HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
+import { isValidObjectId } from 'mongoose';
 import { QuizService } from './quiz.service';
-import { Quiz } from './schemas/quiz.schema';
+import { CreateQuizDto, UpdateQuizDto, UpdateQuizConfigDto } from './dto/quiz.dto';
 
 @Controller('quiz')
 export class QuizController {
   constructor(private readonly quizService: QuizService) {}
 
   /**
-   * Crea o actualiza el quiz para una actividad
+   * GET /quiz/event/:eventId
+   * Returns the quiz for the given event, or null if it doesn't exist yet.
+   * The frontend uses this to decide between create and edit mode.
+   * NOTA: Este debe ir antes de /:quizId para evitar que "event" sea interpretado como un ID
+   */
+  @Get('event/:eventId')
+  async findByEvent(@Param('eventId') eventId: string) {
+    if (!isValidObjectId(eventId)) {
+      throw new BadRequestException(`Invalid eventId format: ${eventId}`);
+    }
+    try {
+      const quiz = await this.quizService.findByEventId(eventId);
+      return quiz ?? null;
+    } catch (error) {
+      throw new BadRequestException(
+        `Error finding quiz for event ${eventId}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * GET /quiz/:quizId
+   * Returns a quiz by its own id.
+   */
+  @Get(':quizId')
+  async findOne(@Param('quizId') quizId: string) {
+    return this.quizService.findById(quizId);
+  }
+
+  /**
+   * POST /quiz
+   * Creates a new quiz. Fails if the event already has one.
    */
   @Post()
-  async createOrUpdate(@Body() body: any): Promise<Quiz> {
-    const { activity_id, quiz_json } = body;
-    if (!activity_id || !quiz_json) {
-      throw new NotFoundException('Faltan datos: activity_id, quiz_json');
-    }
-    return this.quizService.createOrUpdateQuiz(activity_id, quiz_json);
+  @HttpCode(HttpStatus.CREATED)
+  async create(@Body() dto: CreateQuizDto) {
+    return this.quizService.create(dto);
   }
 
   /**
-   * Obtiene el quiz de una actividad
+   * PUT /quiz/:quizId
+   * Replaces all questions in an existing quiz.
    */
-  @Get(':activityId')
-  async findOne(@Param('activityId') activityId: string): Promise<Quiz> {
-    return this.quizService.findByActivityId(activityId);
+  @Put(':quizId')
+  async update(@Param('quizId') quizId: string, @Body() dto: UpdateQuizDto) {
+    return this.quizService.update(quizId, dto);
   }
 
   /**
-   * Elimina el quiz asociado a una actividad (opcional)
+   * DELETE /quiz/:quizId
    */
-  @Delete(':activityId')
-  async remove(@Param('activityId') activityId: string): Promise<Quiz> {
-    return this.quizService.removeQuizByActivity(activityId);
+  @Delete(':quizId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(@Param('quizId') quizId: string) {
+    return this.quizService.remove(quizId);
+  }
+
+  /**
+   * PATCH /quiz/:quizId/config
+   * Actualiza (merge) la configuración del quiz.
+   * Solo sobreescribe los campos enviados; los demás conservan su valor.
+   */
+  @Patch(':quizId/config')
+  async updateConfig(
+    @Param('quizId') quizId: string,
+    @Body() dto: UpdateQuizConfigDto,
+  ) {
+    return this.quizService.updateConfig(quizId, dto);
   }
 }

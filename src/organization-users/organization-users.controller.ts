@@ -18,9 +18,10 @@ export class OrganizationUsersController {
       user_id: string;
       position_id: string;
       payment_plan_id?: string;
+      memberShipStatus?: boolean;
     },
   ): Promise<OrganizationUser> {
-    const { properties, rol_id, organization_id, user_id, payment_plan_id } =
+    const { properties, rol_id, organization_id, user_id, payment_plan_id, memberShipStatus } =
       body;
     return this.organizationUsersService.createOrUpdateUser(
       properties,
@@ -28,6 +29,7 @@ export class OrganizationUsersController {
       organization_id,
       user_id,
       payment_plan_id,
+      memberShipStatus,
     );
   }
 

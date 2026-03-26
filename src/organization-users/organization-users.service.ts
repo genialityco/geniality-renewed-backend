@@ -34,6 +34,7 @@ export class OrganizationUsersService {
     organization_id: string,
     user_id: string,
     payment_plan_id?: string,
+    memberShipStatus?: boolean,
   ): Promise<OrganizationUser> {
     const existingUser = await this.organizationUserModel
       .findOne({ user_id })
@@ -44,6 +45,9 @@ export class OrganizationUsersService {
       existingUser.organization_id = organization_id;
       if (payment_plan_id) {
         existingUser.payment_plan_id = payment_plan_id;
+      }
+      if (memberShipStatus !== undefined) {
+        existingUser.memberShipStatus = memberShipStatus;
       }
       const saved = await existingUser.save();
       // Email destino (prioriza el que llega en properties)
@@ -66,6 +70,7 @@ export class OrganizationUsersService {
       organization_id,
       user_id,
       payment_plan_id,
+      memberShipStatus: memberShipStatus || false,
     });
     const saved = await newUser.save();
     const toEmail = properties?.email || saved?.properties?.email || null;
