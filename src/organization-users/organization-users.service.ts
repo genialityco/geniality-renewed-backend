@@ -73,8 +73,10 @@ export class OrganizationUsersService {
       memberShipStatus: memberShipStatus || false,
     });
     const saved = await newUser.save();
+    // Organizaciones que no deben recibir email de bienvenida
+    const NO_WELCOME_EMAIL_ORGS = ['69b8b6a29eb40b31cec35d88'];
     const toEmail = properties?.email || saved?.properties?.email || null;
-    if (toEmail) {
+    if (toEmail && !NO_WELCOME_EMAIL_ORGS.includes(organization_id)) {
       const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue creada`;
       const contentHtml = renderWelcomeContent(saved?.properties?.nombres);
       const organizationUserId = String(saved._id);
