@@ -35,7 +35,12 @@ export interface WompiTransactionRow {
     source: string;
   } | null;
   /** Cómo se encontró la coincidencia en BD */
-  matchedBy: 'reference' | 'transaction_id_on_pr' | 'transaction_id_on_plan' | 'email' | null;
+  matchedBy:
+    | 'reference'
+    | 'transaction_id_on_pr'
+    | 'transaction_id_on_plan'
+    | 'email'
+    | null;
   /** fully_linked = tiene plan | has_user_no_plan = usuario existe pero sin plan | no_db_match = no encontrado */
   dbStatus: 'fully_linked' | 'has_user_no_plan' | 'no_db_match';
 }
@@ -118,14 +123,15 @@ export interface ClassificationItem {
   classification: SubscriptionClassification;
 }
 
-export interface FullClassificationSummary extends Record<SubscriptionClassification, number> {
+export interface FullClassificationSummary
+  extends Record<SubscriptionClassification, number> {
   total: number;
   generatedAt: Date;
 
   // ── Totales por estado de plan ──────────────────────────────────────────
-  totalWithPlan: number;          // total - sin_plan
-  totalActive: number;            // planes activos (cualquier clasificación)
-  totalExpired: number;           // planes vencidos
+  totalWithPlan: number; // total - sin_plan
+  totalActive: number; // planes activos (cualquier clasificación)
+  totalExpired: number; // planes vencidos
 
   // ── Renovación sobre TODOS los que tienen plan (activos + vencidos) ─────
   totalRenewed: number;
@@ -153,19 +159,19 @@ export interface FullClassificationSummary extends Record<SubscriptionClassifica
   // ── Fuente de pago — histórico total (activos + vencidos) ────────────────
   // Basado en wompiPayments.length > 0 (fuente de verdad: Wompi)
   // Este total es comparable con el "matchedPlans" de reconciliación Wompi
-  totalConWompi: number;          // usuarios con ≥1 pago Wompi (cualquier estado)
-  totalSinWompi: number;          // usuarios con plan pero sin ningún pago Wompi
+  totalConWompi: number; // usuarios con ≥1 pago Wompi (cualquier estado)
+  totalSinWompi: number; // usuarios con plan pero sin ningún pago Wompi
 
   // ── De los activos: fuente de pago (Wompi como fuente de verdad) ────────
   // activePagaron = activos con wompiPayments.length > 0
   // Incluye cortesia_renovada_pagando (pagaron renovación aunque original fue gratis)
   activePagaron: number;
-  activeCortesia: number;         // activos sin ningún pago Wompi
+  activeCortesia: number; // activos sin ningún pago Wompi
 
   // ── De los activos que tienen pago Wompi — desglose por clasificación ───
-  activePagaron_sinRenovar: number;           // pagado_sin_renovar activo
-  activePagaron_renovaronPagando: number;     // pagado_renovado_pagando activo
-  activePagaron_renovaronCortesia: number;    // pagado_renovado_cortesia activo
+  activePagaron_sinRenovar: number; // pagado_sin_renovar activo
+  activePagaron_renovaronPagando: number; // pagado_renovado_pagando activo
+  activePagaron_renovaronCortesia: number; // pagado_renovado_cortesia activo
   activePagaron_cortesiaRenovoPagando: number; // cortesia_renovada_pagando activo (original gratis, renovó pagando)
 
   // ── De los activos sin pago Wompi ────────────────────────────────────────
@@ -192,7 +198,7 @@ export interface FullClassificationResult {
 }
 
 type PlanMeta = {
-  source?: 'gateway' | 'manual' | 'admin' |'cron_approved';
+  source?: 'gateway' | 'manual' | 'admin' | 'cron_approved';
   status_history?: any[];
   reference?: string;
   transactionId?: string;
@@ -225,9 +231,7 @@ export class PaymentPlansService {
       .exec();
     if (
       orgUser?.organization_id &&
-      this.NO_SUBSCRIPTION_EMAIL_ORGS.includes(
-        String(orgUser.organization_id),
-      )
+      this.NO_SUBSCRIPTION_EMAIL_ORGS.includes(String(orgUser.organization_id))
     ) {
       return null;
     }
@@ -488,18 +492,9 @@ export class PaymentPlansService {
             { $count: 'n' },
           ],
           // Por origen del pago
-          sourceGateway: [
-            { $match: { source: 'gateway' } },
-            { $count: 'n' },
-          ],
-          sourceAdmin: [
-            { $match: { source: 'admin' } },
-            { $count: 'n' },
-          ],
-          sourceManual: [
-            { $match: { source: 'manual' } },
-            { $count: 'n' },
-          ],
+          sourceGateway: [{ $match: { source: 'gateway' } }, { $count: 'n' }],
+          sourceAdmin: [{ $match: { source: 'admin' } }, { $count: 'n' }],
+          sourceManual: [{ $match: { source: 'manual' } }, { $count: 'n' }],
           // Pagos de la plataforma actual (tienen payment_request_id)
           withPaymentRequest: [
             {
@@ -601,10 +596,7 @@ export class PaymentPlansService {
             { $match: { approvedCount: { $gte: 1 } } },
             { $count: 'n' },
           ],
-          migrated: [
-            { $match: { approvedCount: 0 } },
-            { $count: 'n' },
-          ],
+          migrated: [{ $match: { approvedCount: 0 } }, { $count: 'n' }],
         },
       },
     ]);
@@ -754,7 +746,9 @@ export class PaymentPlansService {
         paymentPlan = planByTransactionId.get(txId);
         matchedBy = matchedBy ?? 'transaction_id_on_plan';
         if (!orgUser)
-          orgUser = orgUserByUserId.get(String(paymentPlan.orgUser?.user_id ?? ''));
+          orgUser = orgUserByUserId.get(
+            String(paymentPlan.orgUser?.user_id ?? ''),
+          );
       }
 
       // Nivel 4: customer_email → OrganizationUser.properties.email
@@ -814,7 +808,8 @@ export class PaymentPlansService {
         paymentPlan: paymentPlan
           ? {
               _id: String(paymentPlan._id),
-              status: new Date(paymentPlan.date_until) >= now ? 'active' : 'expired',
+              status:
+                new Date(paymentPlan.date_until) >= now ? 'active' : 'expired',
               date_until: paymentPlan.date_until,
               price: paymentPlan.price,
               source: paymentPlan.source,
@@ -847,7 +842,8 @@ export class PaymentPlansService {
             ou?.properties?.firstName ??
             ou?.properties?.name ??
             null,
-          lastName: ou?.properties?.apellidos ?? ou?.properties?.lastName ?? null,
+          lastName:
+            ou?.properties?.apellidos ?? ou?.properties?.lastName ?? null,
           source: plan.source,
           status: new Date(plan.date_until) >= now ? 'active' : 'expired',
           date_until: plan.date_until,
@@ -863,8 +859,11 @@ export class PaymentPlansService {
     return {
       summary: {
         wompiTotal: wompiTransactions.length,
-        fullyLinked: wompiRows.filter((r) => r.dbStatus === 'fully_linked').length,
-        hasUserNoPlan: wompiRows.filter((r) => r.dbStatus === 'has_user_no_plan').length,
+        fullyLinked: wompiRows.filter((r) => r.dbStatus === 'fully_linked')
+          .length,
+        hasUserNoPlan: wompiRows.filter(
+          (r) => r.dbStatus === 'has_user_no_plan',
+        ).length,
         noDbMatch: wompiRows.filter((r) => r.dbStatus === 'no_db_match').length,
         matchedPlans: matchedPlanIds.size,
         plansWithoutWompi: plansWithoutWompi.length,
@@ -996,7 +995,13 @@ export class PaymentPlansService {
       if (!list.some((t) => t.id === tx.id)) list.push(tx);
     };
 
-    const unmatchedWompiTransactions: { transactionId: string; customerEmail: string | null; reference: string | null; amount: number; createdAt: string | null }[] = [];
+    const unmatchedWompiTransactions: {
+      transactionId: string;
+      customerEmail: string | null;
+      reference: string | null;
+      amount: number;
+      createdAt: string | null;
+    }[] = [];
 
     for (const tx of wompiTransactions) {
       const email = (tx.customer_email ?? '').toLowerCase().trim();
@@ -1010,10 +1015,14 @@ export class PaymentPlansService {
 
       // Nivel 2: reference → PaymentRequest → userId → OrganizationUser
       if (!matched && tx.reference) {
-        const pr = prByReference.get(tx.reference) ?? prByTransactionId.get(tx.id);
+        const pr =
+          prByReference.get(tx.reference) ?? prByTransactionId.get(tx.id);
         if (pr) {
           const ou = orgUserByUserId.get(pr.userId);
-          if (ou) { addTx(String(ou._id), tx); matched = true; }
+          if (ou) {
+            addTx(String(ou._id), tx);
+            matched = true;
+          }
         }
       }
 
@@ -1097,13 +1106,21 @@ export class PaymentPlansService {
         email: ou.properties?.email ?? null,
         identification,
         firstName:
-          ou.properties?.nombres ?? ou.properties?.firstName ?? ou.properties?.name ?? null,
+          ou.properties?.nombres ??
+          ou.properties?.firstName ??
+          ou.properties?.name ??
+          null,
         lastName: ou.properties?.apellidos ?? ou.properties?.lastName ?? null,
       };
 
       if (!plan) {
         summary.sin_plan++;
-        return { ...base, paymentPlan: null, wompiPayments: [], classification: 'sin_plan' };
+        return {
+          ...base,
+          paymentPlan: null,
+          wompiPayments: [],
+          classification: 'sin_plan',
+        };
       }
 
       const createdAt = new Date(plan.created_at);
@@ -1117,13 +1134,17 @@ export class PaymentPlansService {
       const userTxs = txsByOrgUserId.get(String(ou._id)) ?? [];
 
       const wompiPayments: ClassificationWompiPayment[] = userTxs.map((tx) => {
-        const paymentDate: Date | null = tx.created_at ? new Date(tx.created_at) : null;
+        const paymentDate: Date | null = tx.created_at
+          ? new Date(tx.created_at)
+          : null;
         return {
           transactionId: tx.id ?? null,
           reference: tx.reference ?? null,
           amount: tx.amount_in_cents ? tx.amount_in_cents / 100 : 0,
           paymentDate,
-          isOriginalPeriod: paymentDate ? paymentDate <= originalPeriodEnd : false,
+          isOriginalPeriod: paymentDate
+            ? paymentDate <= originalPeriodEnd
+            : false,
         };
       });
 
@@ -1133,7 +1154,9 @@ export class PaymentPlansService {
 
       let classification: SubscriptionClassification;
       if (!isRenewed) {
-        classification = hasAnyPayment ? 'pagado_sin_renovar' : 'cortesia_sin_renovar';
+        classification = hasAnyPayment
+          ? 'pagado_sin_renovar'
+          : 'cortesia_sin_renovar';
       } else if (hasOriginalPayment && hasRenewalPayment) {
         classification = 'pagado_renovado_pagando';
       } else if (hasOriginalPayment) {
@@ -1211,19 +1234,23 @@ export class PaymentPlansService {
         else summary.totalSinWompi++;
 
         if (isActive) {
-
           // "Pagaron con Wompi" = tiene al menos 1 pago Wompi (cualquier período)
           if (hasWompi) {
             summary.activePagaron++;
             if (c === 'pagado_sin_renovar') summary.activePagaron_sinRenovar++;
-            else if (c === 'pagado_renovado_pagando') summary.activePagaron_renovaronPagando++;
-            else if (c === 'pagado_renovado_cortesia') summary.activePagaron_renovaronCortesia++;
-            else if (c === 'cortesia_renovada_pagando') summary.activePagaron_cortesiaRenovoPagando++;
+            else if (c === 'pagado_renovado_pagando')
+              summary.activePagaron_renovaronPagando++;
+            else if (c === 'pagado_renovado_cortesia')
+              summary.activePagaron_renovaronCortesia++;
+            else if (c === 'cortesia_renovada_pagando')
+              summary.activePagaron_cortesiaRenovoPagando++;
           } else {
             // Sin ningún pago Wompi
             summary.activeCortesia++;
-            if (c === 'cortesia_sin_renovar') summary.activeCortesia_sinRenovar++;
-            else if (c === 'cortesia_renovada_cortesia') summary.activeCortesia_renovaronCortesia++;
+            if (c === 'cortesia_sin_renovar')
+              summary.activeCortesia_sinRenovar++;
+            else if (c === 'cortesia_renovada_cortesia')
+              summary.activeCortesia_renovaronCortesia++;
           }
         }
 
