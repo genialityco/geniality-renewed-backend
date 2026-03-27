@@ -21,8 +21,24 @@ export class ActivitiesService {
         data.event_id = new Types.ObjectId(data.event_id as unknown as string) as any;
       } catch (_) {}
     }
+
+    if (data.organization_id) {
+      try {
+        if (typeof data.organization_id === 'string') {
+          data.organization_id = new Types.ObjectId(data.organization_id) as any;
+        } else {
+          const rawOrgId = (data.organization_id as any)?._id;
+          if (typeof rawOrgId === 'string') {
+            data.organization_id = new Types.ObjectId(rawOrgId) as any;
+          }
+        }
+      } catch (_) {}
+    }
+
     const newActivity = new this.activityModel(data);
-    return newActivity.save();
+    const saved = await newActivity.save();
+    await saved.populate('organization_id');
+    return saved;
   }
 
   // Obtener todas las actividades
