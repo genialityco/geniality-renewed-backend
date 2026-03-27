@@ -213,6 +213,9 @@ export class PaymentPlansService {
     private readonly emailService: EmailService,
   ) {}
 
+  // Organizaciones que no deben recibir emails de suscripción
+  private readonly NO_SUBSCRIPTION_EMAIL_ORGS = ['69b8b6a29eb40b31cec35d88'];
+
   // Método para obtener el email a partir del organizationUserId
   private async getEmailByOrganizationUserId(
     organizationUserId: string,
@@ -220,6 +223,14 @@ export class PaymentPlansService {
     const orgUser = await this.organizationUserModel
       .findById(organizationUserId)
       .exec();
+    if (
+      orgUser?.organization_id &&
+      this.NO_SUBSCRIPTION_EMAIL_ORGS.includes(
+        String(orgUser.organization_id),
+      )
+    ) {
+      return null;
+    }
     return orgUser?.properties?.email || null;
   }
 
