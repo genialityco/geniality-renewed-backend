@@ -37,7 +37,7 @@ export class OrganizationUsersService {
     memberShipStatus?: boolean,
   ): Promise<OrganizationUser> {
     const existingUser = await this.organizationUserModel
-      .findOne({ user_id })
+      .findOne({ user_id, organization_id })
       .exec();
     if (existingUser) {
       existingUser.properties = properties;
