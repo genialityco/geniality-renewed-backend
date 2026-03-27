@@ -10,6 +10,14 @@ export class PaymentPlansController {
     private readonly organizationUsersService: OrganizationUsersService,
   ) {}
 
+  // Reporte de suscripciones por organización (agregado)
+  @Get('report/:organizationId')
+  async getSubscriptionReport(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return this.paymentPlansService.getSubscriptionReport(organizationId);
+  }
+
   // Endpoint existente para validar acceso...
   @Get('validate/:organizationUserId')
   async validateAccess(
