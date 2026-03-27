@@ -104,6 +104,7 @@ export class ActivitiesService {
     const [results, total] = await Promise.all([
       this.activityModel
         .find(filter)
+        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .populate('organization_id')
