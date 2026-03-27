@@ -15,7 +15,13 @@ export class ActivitiesService {
 
   // Crear una nueva actividad
   async create(activityData: Partial<Activity>): Promise<Activity> {
-    const newActivity = new this.activityModel(activityData);
+    const data = { ...activityData };
+    if (data.event_id && typeof data.event_id === 'string') {
+      try {
+        data.event_id = new Types.ObjectId(data.event_id as unknown as string) as any;
+      } catch (_) {}
+    }
+    const newActivity = new this.activityModel(data);
     return newActivity.save();
   }
 
@@ -60,9 +66,13 @@ export class ActivitiesService {
     return deletedActivity;
   }
 
-  // Obtener actividades de un evento
+  // Obtener actividades de un evento (soporta event_id guardado como string o como ObjectId)
   async findByEventId(event_id: string): Promise<Activity[]> {
-    return this.activityModel.find({ event_id }).exec();
+    const conditions: any[] = [{ event_id }];
+    try {
+      conditions.push({ event_id: new Types.ObjectId(event_id) });
+    } catch (_) {}
+    return this.activityModel.find({ $or: conditions }).exec();
   }
 
   // Actualizar el progreso de video (campo video_progress)
@@ -84,7 +94,7 @@ export class ActivitiesService {
     return activity;
   }
 
-  // Filtrar por organización (si la actividad guarda la referencia organization_id)
+  // Filtrar por organización: por organization_id directo O por evento cuyo organizer_id coincida
   async findByOrganization(
     organizationId?: string,
     page = 1,
@@ -95,25 +105,77 @@ export class ActivitiesService {
     page: number;
     limit: number;
   }> {
-    const filter = organizationId
-      ? { organization_id: new Types.ObjectId(organizationId) }
-      : { organization_id: null };
+    if (!organizationId) {
+      const skip = (page - 1) * limit;
+      const [results, total] = await Promise.all([
+        this.activityModel
+          .find({ organization_id: null })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .populate('event_id')
+          .exec(),
+        this.activityModel.countDocuments({ organization_id: null }),
+      ]);
+      return { results, total, page, limit };
+    }
 
+    const orgObjectId = new Types.ObjectId(organizationId);
     const skip = (page - 1) * limit;
 
-    const [results, total] = await Promise.all([
+    // Busca actividades cuyo organization_id coincida directamente,
+    // O cuyo event_id pertenezca a un evento con organizer_id === organizationId
+    const matchStage = {
+      $match: {
+        $or: [
+          { organization_id: orgObjectId },
+          { event_id: { $exists: true, $ne: null } },
+        ],
+      },
+    };
+
+    const lookupStage = {
+      $lookup: {
+        from: 'events',
+        localField: 'event_id',
+        foreignField: '_id',
+        as: '_event',
+      },
+    };
+
+    const filterStage = {
+      $match: {
+        $or: [
+          { organization_id: orgObjectId },
+          { '_event.organizer_id': orgObjectId },
+        ],
+      },
+    };
+
+    const [countResult, results] = await Promise.all([
       this.activityModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('organization_id')
-        .populate('event_id')
+        .aggregate([matchStage, lookupStage, filterStage, { $count: 'total' }])
         .exec(),
-      this.activityModel.countDocuments(filter),
+      this.activityModel
+        .aggregate([
+          matchStage,
+          lookupStage,
+          filterStage,
+          { $sort: { createdAt: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+        ])
+        .exec(),
     ]);
 
-    return { results, total, page, limit };
+    const total = countResult[0]?.total ?? 0;
+
+    // Populate event_id manualmente tras el aggregate
+    const populated = await this.activityModel.populate(results, {
+      path: 'event_id',
+    });
+
+    return { results: populated as any, total, page, limit };
   }
 
   // Actualizar disponibilidad de transcripción
