@@ -1105,6 +1105,13 @@ export class PaymentPlansService {
         organizationUserId: String(ou._id),
         email: ou.properties?.email ?? null,
         identification,
+        names: ou.properties?.names ?? null,
+        phone: ou.properties?.phone ?? null,
+        indicativodepais: ou.properties?.indicativodepais ?? null,
+        pais: ou.properties?.pais ?? null,
+        perfilProfesional: ou.properties?.perfilProfesional ?? null,
+        especialidad: ou.properties?.especialidad ?? null,
+        especialidadsubespecialidad: ou.properties?.especialidadsubespecialidad ?? null,
         firstName:
           ou.properties?.nombres ??
           ou.properties?.firstName ??

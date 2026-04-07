@@ -139,7 +139,9 @@ export class OrganizationUsersService {
     const skip = (page - 1) * limit;
 
     const filter: any = {
-      organization_id: new Types.ObjectId(organization_id),
+      organization_id: {
+        $in: [organization_id, new Types.ObjectId(organization_id)],
+      },
     };
 
     if (search?.trim()) {
@@ -159,7 +161,7 @@ export class OrganizationUsersService {
       this.organizationUserModel
         .find(filter)
         .skip(skip)
-        .sort({ created_at: -1 })
+        .sort({ created_at: -1, _id: -1 })
         .limit(limit)
         .populate('payment_plan_id')
         .exec(),
@@ -181,7 +183,11 @@ export class OrganizationUsersService {
     search?: string,
   ): Promise<OrganizationUser[]> {
     // Armar el filtro
-    const filter: any = { organization_id };
+    const filter: any = {
+      organization_id: {
+        $in: [organization_id, new Types.ObjectId(organization_id)],
+      },
+    };
     if (search && search.trim() !== '') {
       filter.$or = [
         { 'properties.email': { $regex: search, $options: 'i' } },
