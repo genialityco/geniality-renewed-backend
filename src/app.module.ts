@@ -21,6 +21,7 @@ import { PaymentLogsModule } from './payment-logs/payment-logs.module';
 import { QuizModule } from './quiz/quiz.module';
 import { UserQuizAttemptModule } from './user-quiz-attempt/user-quiz-attempt.module';
 import { CompletionMessagesModule } from './completion-messages/completion-messages.module';
+import { UserActivityModule } from './user-activity/user-activity.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { CompletionMessagesModule } from './completion-messages/completion-messa
     QuizModule,
     UserQuizAttemptModule,
     CompletionMessagesModule,
+    UserActivityModule,
   ],
   // providers: [SessionTokenGuard],
 })
