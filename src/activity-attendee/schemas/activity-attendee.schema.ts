@@ -9,6 +9,9 @@ export class ActivityAttendee extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Activity', required: true })
   activity_id: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'Event', required: true })
+  event_id: Types.ObjectId;
+
   @Prop({ default: 0 })
   progress: number;
 }
