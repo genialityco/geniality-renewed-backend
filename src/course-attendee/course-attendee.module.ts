@@ -7,12 +7,16 @@ import {
   CourseAttendee,
   CourseAttendeeSchema,
 } from './schemas/course-attendee.schema';
+import { Activity, ActivitySchema } from '../activities/schemas/activity.schema';
+import { ActivityAttendeeModule } from '../activity-attendee/activity-attendee.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: CourseAttendee.name, schema: CourseAttendeeSchema },
+      { name: Activity.name, schema: ActivitySchema },
     ]),
+    ActivityAttendeeModule,
   ],
   controllers: [CourseAttendeeController],
   providers: [CourseAttendeeService],

@@ -198,4 +198,14 @@ export class ActivitiesService {
   async updateTranscriptAvailable(activityId: string, available: boolean) {
     return this.update(activityId, { transcript_available: available });
   }
+
+  // Buscar actividades con jobs de transcripción pendientes (no marcadas como disponibles)
+  async findActivitiesWithPendingJobs(): Promise<Activity[]> {
+    return this.activityModel
+      .find({
+        transcription_job_id: { $exists: true, $ne: null },
+        transcript_available: { $ne: true },
+      })
+      .exec();
+  }
 }

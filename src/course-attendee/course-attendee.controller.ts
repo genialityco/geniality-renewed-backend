@@ -22,8 +22,8 @@ export class CourseAttendeeController {
 
   @Post('create-or-update')
   async createOrUpdate(@Body() body: any): Promise<CourseAttendee> {
-    const { user_id, event_id, status } = body;
-    return this.service.createOrUpdate(user_id, event_id, status);
+    const { user_id, event_id, progress = 0 } = body;
+    return this.service.createOrUpdate(user_id, event_id, progress);
   }
 
   @Get()

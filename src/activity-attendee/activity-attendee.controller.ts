@@ -30,6 +30,14 @@ export class ActivityAttendeeController {
     return this.service.findAll();
   }
 
+  @Get('user/:userId/event/:eventId')
+  async findByUserIdAndEventId(
+    @Param('userId') userId: string,
+    @Param('eventId') eventId: string,
+  ): Promise<ActivityAttendee[]> {
+    return this.service.findByUserIdAndEventId(userId, eventId);
+  }
+
   @Get(':id')
   async findById(@Param('id') id: string): Promise<ActivityAttendee> {
     return this.service.findById(id);

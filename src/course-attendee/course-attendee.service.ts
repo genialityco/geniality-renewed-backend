@@ -3,12 +3,17 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { CourseAttendee } from './schemas/course-attendee.schema';
+import { Activity } from '../activities/schemas/activity.schema';
+import { ActivityAttendeeService } from '../activity-attendee/activity-attendee.service';
 
 @Injectable()
 export class CourseAttendeeService {
   constructor(
     @InjectModel(CourseAttendee.name)
     private readonly courseAttendeeModel: Model<CourseAttendee>,
+    @InjectModel(Activity.name)
+    private readonly activityModel: Model<Activity>,
+    private readonly activityAttendeeService: ActivityAttendeeService,
   ) {}
 
   async create(createDto: any): Promise<CourseAttendee> {
@@ -90,5 +95,39 @@ export class CourseAttendeeService {
       throw new NotFoundException(`CourseAttendee con id ${id} no encontrado`);
     }
     return deleted;
+  }
+
+  /**
+   * Calcula el progreso general de un curso para un usuario específico
+   * @param userId ID del usuario
+   * @param eventId ID del evento/curso
+   * @returns Porcentaje de progreso (0-100)
+   */
+  async calculateProgressForCourse(
+    userId: string,
+    eventId: string,
+  ): Promise<number> {
+    // 1. Obtener todas las actividades del evento
+    const activities = await this.activityModel
+      .find({ event_id: eventId })
+      .exec();
+
+    if (activities.length === 0) {
+      return 0;
+    }
+
+    // 2. Obtener el progreso del usuario para este evento
+    const attendees = await this.activityAttendeeService.findByUserIdAndEventId(
+      userId,
+      eventId,
+    );
+
+    // 3. Contar cuántas actividades están completadas (progreso === 100)
+    const completedCount = attendees.filter(
+      (att) => att.progress === 100,
+    ).length;
+
+    // 4. Calcular porcentaje
+    return Math.round((completedCount / activities.length) * 100);
   }
 }

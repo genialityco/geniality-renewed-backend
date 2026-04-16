@@ -18,7 +18,9 @@ export class Organization extends Document {
   @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
   user_properties: any[];
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
-  styles?: { banner_image_email?: string; FooterImage?: string };
+  styles?: { banner_image_email?: string; FooterImage?: string; banner_image?: string; event_image?: string; logo_image?: string };
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  tab_titles?: { courses?: string; activities?: string; exclusive?: string };
 }
 
 export const OrganizationSchema = SchemaFactory.createForClass(Organization);

@@ -5,6 +5,8 @@ import { Activity, ActivitySchema } from './schemas/activity.schema';
 import { MongooseModule } from '@nestjs/mongoose';
 import { HttpModule } from '@nestjs/axios';
 import { TranscriptSegmentsModule } from 'src/transcript-segments/transcript-segments.module';
+import { TranscriptionPollingService } from './transcription-polling.service';
+import { VimeoResolverService } from './vimeo-resolver.service';
 
 @Module({
   imports: [
@@ -14,7 +16,7 @@ import { TranscriptSegmentsModule } from 'src/transcript-segments/transcript-seg
     HttpModule,
     TranscriptSegmentsModule,
   ],
-  providers: [ActivitiesService],
+  providers: [ActivitiesService, TranscriptionPollingService, VimeoResolverService],
   controllers: [ActivitiesController],
 })
 export class ActivitiesModule {}
