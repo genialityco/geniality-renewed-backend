@@ -64,7 +64,9 @@ export class TranscriptionPollingService {
     activityId: string,
   ): Promise<void> {
     try {
-      const resultUrl = `http://64.23.188.99/transcribe/${jobId}/result`;
+      const baseUrl =
+        process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
+      const resultUrl = `${baseUrl}/transcribe/${jobId}/result`;
       this.logger.debug(`🔍 Polling: GET ${resultUrl}`);
       
       const response$ = this.httpService.get(resultUrl);

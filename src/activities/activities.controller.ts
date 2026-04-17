@@ -99,7 +99,11 @@ export class ActivitiesController {
 
   // Generar transcripción - enqueua en el servicio externo y comienza polling asincrónico
   @Post('generate-transcript/:activity_id')
-  async generateTranscript(@Param('activity_id') activity_id: string) {
+  async generateTranscript(
+    @Param('activity_id') activity_id: string,
+    @Body('use_gpu') use_gpu: boolean = false,
+    @Body('generate_embeddings') generate_embeddings: boolean = true,
+  ) {
     const activity = await this.activitiesService.findOne(activity_id);
     if (!activity) {
       throw new NotFoundException('Activity not found');
@@ -109,7 +113,9 @@ export class ActivitiesController {
       throw new BadRequestException('This activity has no video URL');
     }
 
-    const pythonUrl = 'http://64.23.188.99/transcribe';
+    const baseUrl =
+      process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
+    const pythonUrl = `${baseUrl}/transcribe`;
 
     // Resolver URL de Vimeo a URL de streaming directo si es necesario
     console.log(`🔍 Resolviendo URL de video: ${activity.video}`);
@@ -122,13 +128,10 @@ export class ActivitiesController {
     const payload: any = {
       video_url: resolvedVideoUrl,
       activity_id,
+      name_activity: activity.name,
+      use_gpu: use_gpu ?? false,
+      generate_embeddings: generate_embeddings ?? true,
     };
-
-    // Opcional: Si tienes credenciales de Vimeo en variables de entorno, agregarlas
-    const vimeoToken = process.env.VIMEO_ACCESS_TOKEN;
-    if (vimeoToken && activity.video.includes('vimeo')) {
-      payload.vimeo_token = vimeoToken;
-    }
 
     // Log sin mostrar propiedades undefined
     console.log('📤 Enviando solicitud de transcripción (payload limpio):', {
@@ -191,8 +194,10 @@ export class ActivitiesController {
 
   @Get('transcription-status/:job_id')
   async getJobStatus(@Param('job_id') job_id: string) {
+    const baseUrl =
+      process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
     const response$ = this.httpService.get(
-      `http://64.23.188.99/transcribe/${job_id}/status`,
+      `${baseUrl}/transcribe/${job_id}/status`,
     );
     const response = await lastValueFrom(response$);
     return response.data;
@@ -204,8 +209,11 @@ export class ActivitiesController {
     console.log('🔍 Iniciando validación de transcripts pendientes...');
 
     // Buscar actividades con job_id pero sin transcript_available = true
-    const activitiesWithJobs = await this.activitiesService.findActivitiesWithPendingJobs();
-    console.log(`📊 Se encontraron ${activitiesWithJobs.length} actividades con jobs pendientes`);
+    const activitiesWithJobs =
+      await this.activitiesService.findActivitiesWithPendingJobs();
+    console.log(
+      `📊 Se encontraron ${activitiesWithJobs.length} actividades con jobs pendientes`,
+    );
 
     const results = {
       checked: 0,
@@ -220,15 +228,19 @@ export class ActivitiesController {
 
       try {
         console.log(`✓ Verificando job ${jobId} para activity ${activity._id}`);
-        
+
         // Consultar estado del job
-        const resultUrl = `http://64.23.188.99/transcribe/${jobId}/result`;
+        const baseUrl =
+          process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
+        const resultUrl = `${baseUrl}/transcribe/${jobId}/result`;
         const response$ = this.httpService.get(resultUrl);
         const response = await lastValueFrom(response$);
         const data = response.data;
 
         if (data.status === 'done' && data.segments) {
-          console.log(`✅ Job ${jobId} está completo con ${data.segments.length} segmentos`);
+          console.log(
+            `✅ Job ${jobId} está completo con ${data.segments.length} segmentos`,
+          );
 
           // Guardar segmentos
           await this.transcriptSegmentsService.createSegments(
@@ -325,9 +337,11 @@ export class ActivitiesController {
 
     try {
       // Consultar estado del job
-      const resultUrl = `http://64.23.188.99/transcribe/${jobId}/result`;
+      const baseUrl =
+        process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
+      const resultUrl = `${baseUrl}/transcribe/${jobId}/result`;
       console.log(`📥 Consultando: ${resultUrl}`);
-      
+
       const response$ = this.httpService.get(resultUrl);
       const response = await lastValueFrom(response$);
       const data = response.data;
@@ -351,9 +365,8 @@ export class ActivitiesController {
           true,
         );
 
-        const updatedActivity = await this.activitiesService.findOne(
-          activity_id,
-        );
+        const updatedActivity =
+          await this.activitiesService.findOne(activity_id);
 
         console.log(
           `✏️ Activity ${activity_id} marcada como transcript_available`,
@@ -374,9 +387,7 @@ export class ActivitiesController {
         };
       } else if (data.status === 'error') {
         console.error(`❌ Job ${jobId} tiene error: ${data.error}`);
-        throw new BadRequestException(
-          `Transcription job error: ${data.error}`,
-        );
+        throw new BadRequestException(`Transcription job error: ${data.error}`);
       } else {
         return {
           message: `Unknown status: ${data.status}`,
