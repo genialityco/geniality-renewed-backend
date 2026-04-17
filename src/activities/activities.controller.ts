@@ -101,7 +101,7 @@ export class ActivitiesController {
   @Post('generate-transcript/:activity_id')
   async generateTranscript(
     @Param('activity_id') activity_id: string,
-    @Body('use_gpu') use_gpu: boolean = false,
+    @Body('use_gpu') use_gpu: boolean = true,
     @Body('generate_embeddings') generate_embeddings: boolean = true,
   ) {
     const activity = await this.activitiesService.findOne(activity_id);
