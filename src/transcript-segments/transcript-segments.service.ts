@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { HttpService } from '@nestjs/axios';
+import { lastValueFrom } from 'rxjs';
 import { Model, Types } from 'mongoose';
 import {
   TranscriptSegment,
@@ -11,6 +13,7 @@ export class TranscriptSegmentsService {
   constructor(
     @InjectModel(TranscriptSegment.name)
     private readonly segmentModel: Model<TranscriptSegmentDocument>, // <--- Usamos TranscriptSegmentDocument
+    private readonly httpService: HttpService,
   ) {}
 
   /**
@@ -74,6 +77,56 @@ export class TranscriptSegmentsService {
     for (let i = 0; i < segments.length; i++) {
       segments[i].embedding = embeddings[i];
       await segments[i].save();
+    }
+  }
+
+  /**
+   * Genera y almacena un embedding para un segmento individual
+   */
+  async generateEmbeddingForSegment(segmentId: string): Promise<TranscriptSegmentDocument> {
+    const segment = await this.segmentModel.findById(segmentId);
+    if (!segment) {
+      throw new NotFoundException(`Transcript segment with ID ${segmentId} not found`);
+    }
+
+    if (!segment.text) {
+      throw new BadRequestException('Segment does not have text to generate embedding');
+    }
+
+    const baseUrl = process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
+    const embedUrl = `${baseUrl}/embed`;
+
+    try {
+      const payload = {
+        id: segmentId,
+        text: segment.text,
+      };
+
+      const response$ = this.httpService.post(embedUrl, payload);
+      const response = await lastValueFrom(response$);
+      const data = response.data;
+
+      // Asumiendo que el embedding viene en data.embedding
+      if (!data.embedding || !Array.isArray(data.embedding)) {
+        throw new Error('Invalid embedding format received from transcription service');
+      }
+
+      segment.embedding = data.embedding;
+      await segment.save();
+
+      return segment;
+    } catch (error: any) {
+      console.error('❌ Error generating embedding for segment:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+
+      throw new BadRequestException(
+        `Failed to generate embedding: ${
+          error.response?.data?.error || error.message || 'Unknown error'
+        }`,
+      );
     }
   }
 

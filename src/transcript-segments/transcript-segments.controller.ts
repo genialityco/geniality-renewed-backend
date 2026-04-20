@@ -41,6 +41,12 @@ export class TranscriptSegmentsController {
   async getSegments(@Param('activityId') activityId: string) {
     return this.segmentsService.getSegmentsByActivity(activityId);
   }
+
+  @Post(':id/generate-embedding')
+  async generateEmbedding(@Param('id') segmentId: string) {
+    return this.segmentsService.generateEmbeddingForSegment(segmentId);
+  }
+
   @Post(':id')
   async createSegmentsUnified(
     @Param('id') activityId: string,

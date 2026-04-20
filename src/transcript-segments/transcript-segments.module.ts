@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { HttpModule } from '@nestjs/axios';
 import {
   TranscriptSegment,
   TranscriptSegmentSchema,
@@ -18,6 +19,7 @@ import {
       { name: TranscriptSegment.name, schema: TranscriptSegmentSchema },
       { name: Activity.name, schema: ActivitySchema }, // importar el modelo Activity
     ]),
+    HttpModule,
   ],
   providers: [TranscriptSegmentsService, ActivitiesService],
   controllers: [TranscriptSegmentsController],
