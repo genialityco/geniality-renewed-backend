@@ -7,6 +7,7 @@ import { HttpModule } from '@nestjs/axios';
 import { TranscriptSegmentsModule } from 'src/transcript-segments/transcript-segments.module';
 import { TranscriptionPollingService } from './transcription-polling.service';
 import { VimeoResolverService } from './vimeo-resolver.service';
+import { DocumentsModule } from '../documents/documents.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { VimeoResolverService } from './vimeo-resolver.service';
     ]),
     HttpModule,
     TranscriptSegmentsModule,
+    DocumentsModule,
   ],
   providers: [ActivitiesService, TranscriptionPollingService, VimeoResolverService],
   controllers: [ActivitiesController],

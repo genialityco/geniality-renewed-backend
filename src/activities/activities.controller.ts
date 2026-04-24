@@ -18,6 +18,7 @@ import { TranscriptionPollingService } from './transcription-polling.service';
 import { VimeoResolverService } from './vimeo-resolver.service';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
+import { DocumentsService } from '../documents/documents.service';
 
 @Controller('activities')
 export class ActivitiesController {
@@ -27,6 +28,7 @@ export class ActivitiesController {
     private readonly httpService: HttpService,
     private readonly transcriptionPollingService: TranscriptionPollingService,
     private readonly vimeoResolverService: VimeoResolverService,
+    private readonly documentsService: DocumentsService,
   ) {}
 
   // Crear una actividad
@@ -417,5 +419,20 @@ export class ActivitiesController {
     }
     // Si no es una URL válida, retorna la original (o podrías lanzar error)
     return url;
+  }
+
+  // Obtener documentos asociados a una actividad
+  @Get(':activityId/documents')
+  async getActivityDocuments(@Param('activityId') activityId: string) {
+    const activity = await this.activitiesService.findOne(activityId);
+    if (!activity) {
+      throw new NotFoundException('Activity not found');
+    }
+    return this.documentsService.getDocumentsByOrganization(
+      activity.organization_id.toString(),
+      {
+        activityId,
+      },
+    );
   }
 }

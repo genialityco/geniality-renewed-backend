@@ -9,10 +9,14 @@ import {
 } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { Event } from './schemas/event.schema';
+import { DocumentsService } from '../documents/documents.service';
 
 @Controller('events')
 export class EventsController {
-  constructor(private readonly eventsService: EventsService) {}
+  constructor(
+    private readonly eventsService: EventsService,
+    private readonly documentsService: DocumentsService,
+  ) {}
 
   @Get()
   async getAllEvents(): Promise<Event[]> {
@@ -55,5 +59,17 @@ export class EventsController {
   @Delete(':id')
   async deleteEvent(@Param('id') id: string): Promise<Event> {
     return this.eventsService.deleteEvent(id);
+  }
+
+  // Obtener documentos asociados a un evento
+  @Get(':eventId/documents')
+  async getEventDocuments(@Param('eventId') eventId: string) {
+    const event = await this.eventsService.findById(eventId);
+    if (!event) {
+      throw new Error('Event not found');
+    }
+    return this.documentsService.getDocumentsByOrganization(event.organizer_id.toString(), {
+      eventId,
+    });
   }
 }
