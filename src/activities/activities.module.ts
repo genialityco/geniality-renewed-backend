@@ -8,6 +8,7 @@ import { TranscriptSegmentsModule } from 'src/transcript-segments/transcript-seg
 import { TranscriptionPollingService } from './transcription-polling.service';
 import { VimeoResolverService } from './vimeo-resolver.service';
 import { DocumentsModule } from '../documents/documents.module';
+import { MigrationTextTranscriptionService } from './migration-text-transcription.service';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { DocumentsModule } from '../documents/documents.module';
     TranscriptSegmentsModule,
     DocumentsModule,
   ],
-  providers: [ActivitiesService, TranscriptionPollingService, VimeoResolverService],
+  providers: [ActivitiesService, TranscriptionPollingService, VimeoResolverService, MigrationTextTranscriptionService],
   controllers: [ActivitiesController],
 })
 export class ActivitiesModule {}

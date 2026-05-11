@@ -1,4 +1,3 @@
-/// <reference types="multer" />
 import {
   Controller,
   Post,
@@ -19,6 +18,13 @@ import { DocumentsService } from './documents.service';
 import { UploadDocumentDto, AssociateDocumentDto } from './dto/upload-document.dto';
 import { SessionTokenGuard } from '../auth/session-token.guard';
 
+type UploadedDocumentFile = {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+};
+
 @Controller('documents')
 @UseGuards(SessionTokenGuard)
 export class DocumentsController {
@@ -27,7 +33,7 @@ export class DocumentsController {
   @Post('upload')
   @UseInterceptors(FileInterceptor('file'))
   async uploadDocument(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: UploadedDocumentFile,
     @Body() uploadDto: UploadDocumentDto,
     @Req() req: any,
   ) {

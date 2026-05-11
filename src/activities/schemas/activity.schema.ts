@@ -60,6 +60,9 @@ export class Activity extends Document {
 
   @Prop({ default: null })
   transcription_job_id: string;
+
+  @Prop({ default: null })
+  textTranscription: string;
 }
 
 export const ActivitySchema = SchemaFactory.createForClass(Activity);

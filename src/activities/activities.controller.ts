@@ -16,6 +16,7 @@ import { Activity } from './schemas/activity.schema';
 import { TranscriptSegmentsService } from 'src/transcript-segments/transcript-segments.service';
 import { TranscriptionPollingService } from './transcription-polling.service';
 import { VimeoResolverService } from './vimeo-resolver.service';
+import { MigrationTextTranscriptionService, MigrationResult } from './migration-text-transcription.service';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { DocumentsService } from '../documents/documents.service';
@@ -29,6 +30,7 @@ export class ActivitiesController {
     private readonly transcriptionPollingService: TranscriptionPollingService,
     private readonly vimeoResolverService: VimeoResolverService,
     private readonly documentsService: DocumentsService,
+    private readonly migrationService: MigrationTextTranscriptionService,
   ) {}
 
   // Crear una actividad
@@ -434,5 +436,39 @@ export class ActivitiesController {
         activityId,
       },
     );
+  }
+
+  // ============================================
+  // ENDPOINTS DE MIGRACIÓN DE textTranscription
+  // ============================================
+
+  /**
+   * Ejecuta la migración completa
+   * POST /activities/migration/run
+   */
+  @Post('migration/run')
+  async runMigration(): Promise<MigrationResult> {
+    console.log('🚀 Usuario ejecutando migración de textTranscription');
+    return this.migrationService.migrateAllTextTranscriptions();
+  }
+
+  /**
+   * Obtiene estadísticas de la migración sin ejecutarla
+   * GET /activities/migration/statistics
+   */
+  @Get('migration/statistics')
+  async getMigrationStatistics() {
+    console.log('📊 Usuario solicitando estadísticas de migración');
+    return this.migrationService.getStatistics();
+  }
+
+  /**
+   * Migra una actividad específica
+   * POST /activities/migration/:activityId
+   */
+  @Post('migration/:activityId')
+  async migrateSpecificActivity(@Param('activityId') activityId: string) {
+    console.log(`🔄 Usuario migrando actividad específica: ${activityId}`);
+    return this.migrationService.migrateActivityById(activityId);
   }
 }

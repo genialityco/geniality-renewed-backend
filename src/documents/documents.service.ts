@@ -1,4 +1,3 @@
-/// <reference types="multer" />
 import {
   Injectable,
   Logger,
@@ -16,6 +15,13 @@ import { ExtractorFactory } from './extractors/extractor.factory';
 import { UsersService } from '../users/users.service';
 import { v4 as uuidv4 } from 'uuid';
 
+type UploadedDocumentFile = {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+};
+
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
@@ -28,7 +34,7 @@ export class DocumentsService {
   ) {}
 
   async uploadDocument(
-    file: Express.Multer.File,
+    file: UploadedDocumentFile,
     uploadDto: UploadDocumentDto,
     userId: string,
   ): Promise<DocumentEntity> {

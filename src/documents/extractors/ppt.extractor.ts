@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { IContentExtractor, TextCleaner } from './content-extractor.interface';
-import * as JSZip from 'jszip';
+const JSZip = require('jszip');
 
 @Injectable()
 export class PptExtractor implements IContentExtractor {
@@ -32,9 +32,11 @@ export class PptExtractor implements IContentExtractor {
       }
       
       return TextCleaner.clean(textContent.join('\n\n'));
-    } catch (error) {
-      this.logger.error(`Error extracting PPT content: ${error.message}`);
-      throw new Error(`Failed to extract PPT content: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error extracting PPT content: ${errorMessage}`);
+      throw new Error(`Failed to extract PPT content: ${errorMessage}`);
     }
   }
 

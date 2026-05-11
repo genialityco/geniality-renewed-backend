@@ -168,6 +168,20 @@ export class ActivitiesService {
       },
     };
 
+    // Agregar campo event_id poblado desde el resultado del lookup
+    // Si no encuentra el evento en el lookup, mantiene el event_id original (string)
+    const addFieldsStage = {
+      $addFields: {
+        event_id: {
+          $cond: [
+            { $gt: [{ $size: '$_event' }, 0] }, // Si _event tiene elementos
+            { $arrayElemAt: ['$_event', 0] },    // Usar el evento poblado
+            '$event_id'                           // Si no, mantener el event_id original
+          ]
+        },
+      },
+    };
+
     const [countResult, results] = await Promise.all([
       this.activityModel
         .aggregate([matchStage, lookupStage, filterStage, { $count: 'total' }])
@@ -177,6 +191,8 @@ export class ActivitiesService {
           matchStage,
           lookupStage,
           filterStage,
+          addFieldsStage,
+          { $project: { _event: 0 } }, // Remover el campo temporal
           { $sort: { createdAt: -1 } },
           { $skip: skip },
           { $limit: limit },
@@ -186,10 +202,18 @@ export class ActivitiesService {
 
     const total = countResult[0]?.total ?? 0;
 
-    // Populate event_id manualmente tras el aggregate
-    const populated = await this.activityModel.populate(results, {
-      path: 'event_id',
-    });
+    // Después del agregado, hacer populate en resultados que tengan event_id como string
+    const populated = await Promise.all(
+      results.map(async (result: any) => {
+        if (typeof result.event_id === 'string') {
+          // Si event_id es un string, poblarlo
+          const doc = this.activityModel.hydrate(result);
+          await doc.populate('event_id');
+          return doc.toObject();
+        }
+        return result;
+      })
+    );
 
     return { results: populated as any, total, page, limit };
   }
