@@ -94,8 +94,9 @@ export class EmailService {
     if (!this.isValidEmail(cleanFrom)) {
       throw new BadRequestException(`FROM inválido: ${fromEmail}`);
     }
-    // SES acepta "Name <email>"
-    return `${fromName || this.fromName} <${cleanFrom}>`;
+    // SES recomienda "Nombre" <email>
+    const name = fromName || this.fromName;
+    return `"${name}" <${cleanFrom}>`;
   }
   // ------------------------------------------------------------------
 
@@ -187,6 +188,7 @@ export class EmailService {
     };
 
     try {
+      this.logger.debug(`[Universal] Sending email with source: ${source}`);
       const result = await this.ses.sendEmail(params).promise();
       this.logger.log(
         `[Universal] Email enviado a ${[

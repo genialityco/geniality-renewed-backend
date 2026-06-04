@@ -41,9 +41,13 @@ export class EmailController {
       fromEmail?: string;
       cc?: string | string[];
       bcc?: string | string[];
+      emailName?: string;
     },
   ) {
     try {
+      if (body.emailName) {
+        body.fromName = body.emailName;
+      }
       const result = await this.emailService.sendUniversalEmail(body);
       return {
         success: true,
