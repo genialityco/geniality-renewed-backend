@@ -23,6 +23,8 @@ import { UserQuizAttemptModule } from './user-quiz-attempt/user-quiz-attempt.mod
 import { CompletionMessagesModule } from './completion-messages/completion-messages.module';
 import { UserActivityModule } from './user-activity/user-activity.module';
 import { DocumentsModule } from './documents/documents.module';
+import { CertificateTemplatesModule } from './certificate-templates/certificate-templates.module';
+import { CertificatesModule } from './certificates/certificates.module';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { DocumentsModule } from './documents/documents.module';
     CompletionMessagesModule,
     UserActivityModule,
     DocumentsModule,
+    CertificateTemplatesModule,
+    CertificatesModule,
   ],
   // providers: [SessionTokenGuard],
 })

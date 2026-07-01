@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs wc -l)",
+      "Bash(npm install *)",
+      "Bash(ls -la .env*)",
+      "Bash(grep -o \"^[A-Z_]*=\" .env)"
+    ]
+  }
+}
