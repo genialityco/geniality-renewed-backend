@@ -40,6 +40,23 @@ export class PaymentPlansController {
     return plan;
   }
 
+  // Versión sin ambigüedad: resuelve el plan de pago del usuario para
+  // una organización específica (un usuario puede estar en varias).
+  @Get('by-user/:userId/organization/:organizationId')
+  async getPlanByUserAndOrg(
+    @Param('userId') userId: string,
+    @Param('organizationId') organizationId: string,
+  ): Promise<PaymentPlan | null> {
+    const organizationUser = await this.organizationUsersService.findByUserAndOrg(
+      userId,
+      organizationId,
+    );
+    if (!organizationUser) return null;
+    return this.paymentPlansService.getPaymentPlanByOrganizationUserIdOrNull(
+      organizationUser._id.toString(),
+    );
+  }
+
   // Nuevo endpoint para crear un PaymentPlan sin usar DTO
   @Post()
   async createPaymentPlan(@Body() body: any): Promise<PaymentPlan> {

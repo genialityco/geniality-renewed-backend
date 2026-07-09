@@ -116,6 +116,19 @@ export class OrganizationUsersService {
     return user;
   }
 
+  // Búsqueda sin ambigüedad: un usuario puede pertenecer a varias
+  // organizaciones, así que la membresía siempre debe resolverse junto
+  // con el organization_id, nunca solo por user_id. Devuelve null (no
+  // lanza) porque "no ser miembro de esta org" es un estado válido.
+  async findByUserAndOrg(
+    user_id: string,
+    organization_id: string,
+  ): Promise<OrganizationUser | null> {
+    return this.organizationUserModel
+      .findOne({ user_id, organization_id })
+      .exec();
+  }
+
   // Nuevo método para actualizar el payment_plan_id del OrganizationUser
   async updatePaymentPlanId(
     user_id: string,

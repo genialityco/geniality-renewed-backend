@@ -46,6 +46,19 @@ export class OrganizationUsersController {
     return this.organizationUsersService.findByUserId(user_id);
   }
 
+  // Versión sin ambigüedad para usuarios en varias organizaciones:
+  // resuelve la membresía exacta de (user_id, organization_id).
+  @Get('by-user/:user_id/organization/:organization_id')
+  async getUserByUserAndOrg(
+    @Param('user_id') user_id: string,
+    @Param('organization_id') organization_id: string,
+  ): Promise<OrganizationUser | null> {
+    return this.organizationUsersService.findByUserAndOrg(
+      user_id,
+      organization_id,
+    );
+  }
+
   @Get('by-organization/:organization_id')
   async getUsersByOrganizationId(
     @Param('organization_id') organization_id: string,

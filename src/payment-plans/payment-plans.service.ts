@@ -251,6 +251,16 @@ export class PaymentPlansService {
     return plan;
   }
 
+  // Variante que no lanza: "sin plan de pago" es un estado válido
+  // (organización gratuita, o membresía recién creada sin plan).
+  async getPaymentPlanByOrganizationUserIdOrNull(
+    organizationUserId: string,
+  ): Promise<PaymentPlan | null> {
+    return this.paymentPlanModel
+      .findOne({ organization_user_id: organizationUserId })
+      .exec();
+  }
+
   // Método para validar el acceso de un usuario/organización según su plan de pago
   async isUserAccessValid(organizationUserId: string): Promise<boolean> {
     const plan = await this.paymentPlanModel
