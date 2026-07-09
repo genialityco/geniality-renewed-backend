@@ -24,3 +24,8 @@ export class CourseAttendee extends Document {
 
 export const CourseAttendeeSchema =
   SchemaFactory.createForClass(CourseAttendee);
+
+// Un usuario no debería tener más de una inscripción al mismo curso.
+// Requiere que no existan documentos duplicados (user_id, event_id) antes
+// de poder construirse — ver script de limpieza si el índice no aplica.
+CourseAttendeeSchema.index({ user_id: 1, event_id: 1 }, { unique: true });

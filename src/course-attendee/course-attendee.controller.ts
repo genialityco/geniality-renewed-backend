@@ -43,6 +43,16 @@ export class CourseAttendeeController {
     return this.service.findByUserId(userId);
   }
 
+  // Versión scoped a una organización: "Mis Cursos" en el perfil no debe
+  // mezclar cursos de otras organizaciones a las que también pertenece el usuario.
+  @Get('user/:userId/organization/:organizationId')
+  async findByUserIdAndOrganization(
+    @Param('userId') userId: string,
+    @Param('organizationId') organizationId: string,
+  ): Promise<CourseAttendee[]> {
+    return this.service.findByUserIdAndOrganization(userId, organizationId);
+  }
+
   @Put(':id')
   async update(
     @Param('id') id: string,

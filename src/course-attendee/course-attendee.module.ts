@@ -8,6 +8,7 @@ import {
   CourseAttendeeSchema,
 } from './schemas/course-attendee.schema';
 import { Activity, ActivitySchema } from '../activities/schemas/activity.schema';
+import { Event, EventSchema } from '../events/schemas/event.schema';
 import { ActivityAttendeeModule } from '../activity-attendee/activity-attendee.module';
 
 @Module({
@@ -15,6 +16,7 @@ import { ActivityAttendeeModule } from '../activity-attendee/activity-attendee.m
     MongooseModule.forFeature([
       { name: CourseAttendee.name, schema: CourseAttendeeSchema },
       { name: Activity.name, schema: ActivitySchema },
+      { name: Event.name, schema: EventSchema },
     ]),
     ActivityAttendeeModule,
   ],
