@@ -7,9 +7,12 @@ import {
   Param,
   Put,
   Delete,
+  UseGuards,
 } from '@nestjs/common';
 import { CourseAttendeeService } from './course-attendee.service';
 import { CourseAttendee } from './schemas/course-attendee.schema';
+import { SessionTokenGuard } from 'src/auth/session-token.guard';
+import { OrgMembershipGuard } from 'src/auth/org-membership.guard';
 
 @Controller('course-attendees')
 export class CourseAttendeeController {
@@ -45,6 +48,9 @@ export class CourseAttendeeController {
 
   // Versión scoped a una organización: "Mis Cursos" en el perfil no debe
   // mezclar cursos de otras organizaciones a las que también pertenece el usuario.
+  // Aislamiento por organización: exige sesión válida y que el usuario
+  // autenticado sea miembro de :organizationId (no solo estar logueado).
+  @UseGuards(SessionTokenGuard, OrgMembershipGuard)
   @Get('user/:userId/organization/:organizationId')
   async findByUserIdAndOrganization(
     @Param('userId') userId: string,
