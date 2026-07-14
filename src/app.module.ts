@@ -25,6 +25,7 @@ import { UserActivityModule } from './user-activity/user-activity.module';
 import { DocumentsModule } from './documents/documents.module';
 import { CertificateTemplatesModule } from './certificate-templates/certificate-templates.module';
 import { CertificatesModule } from './certificates/certificates.module';
+import { RemindersModule } from './reminders/reminders.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { CertificatesModule } from './certificates/certificates.module';
     DocumentsModule,
     CertificateTemplatesModule,
     CertificatesModule,
+    RemindersModule,
   ],
   // providers: [SessionTokenGuard],
 })

@@ -345,4 +345,23 @@ export class UserActivityService implements OnModuleInit {
       .sort({ createdAt: -1 })
       .limit(limit);
   }
+
+  /**
+   * Obtiene los registros cuya última actividad cayó dentro de la ventana
+   * [ahora - (daysAgo + windowDays), ahora - daysAgo). Sirve para detectar
+   * usuarios que cruzaron el umbral de inactividad sin reenviarles el
+   * recordatorio en cada corrida del cron mientras sigan inactivos.
+   */
+  async findInactiveWindow(
+    daysAgo: number,
+    windowDays: number = 1,
+  ): Promise<UserActivity[]> {
+    const to = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+    const from = new Date(
+      Date.now() - (daysAgo + windowDays) * 24 * 60 * 60 * 1000,
+    );
+    return this.userActivityModel.find({
+      last_updated: { $gte: from, $lt: to },
+    });
+  }
 }
