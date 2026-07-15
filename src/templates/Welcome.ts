@@ -63,6 +63,75 @@ export function renderWelcomeContent(displayName: string) {
   </table>
 
   <!-- Botón -->
-  
+
+  `;
+}
+
+/** Escapa HTML para evitar inyección desde texto configurado por la organización */
+function escapeHtml(input: string): string {
+  return String(input ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Reemplaza la variable {{nombres}} por el nombre del usuario */
+export function fillWelcomeTemplate(text: string, displayName: string): string {
+  const safeName = displayName || 'Usuario';
+  return String(text ?? '').replace(/\{\{\s*nombres\s*\}\}/gi, safeName);
+}
+
+/**
+ * Contenido de bienvenida configurable por organización.
+ * `title` y `body` provienen de la configuración de la organización y
+ * admiten la variable {{nombres}}. El `body` se escapa y sus saltos de
+ * línea se convierten en <br> (párrafos con doble salto).
+ */
+export function renderOrgWelcomeContent(
+  displayName: string,
+  cfg?: { title?: string; body?: string },
+) {
+  const safeName = displayName || 'Usuario';
+  const title = fillWelcomeTemplate(cfg?.title || '', safeName).trim();
+  const rawBody = fillWelcomeTemplate(cfg?.body || '', safeName).trim();
+
+  const bodyHtml = rawBody
+    .split(/\n{2,}/)
+    .map((para) => escapeHtml(para).replace(/\n/g, '<br>'))
+    .filter((p) => p.length > 0)
+    .map(
+      (p) =>
+        `<p style="margin:0 0 14px 0;">${p}</p>`,
+    )
+    .join('');
+
+  return `
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="padding:18px 20px 8px 20px;">
+    <tr>
+      <td align="center" style="padding:10px 16px;border:2px solid #d6e0ea;border-radius:12px;color:#0b3d91;font-weight:700;font-size:16px;">
+        ${escapeHtml(title) || `${escapeHtml(safeName)} ¡Bienvenido(a)!`}
+      </td>
+    </tr>
+  </table>
+
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+      <td align="center" style="padding:22px 24px 6px 24px;">
+        <div style="font-weight:800;color:#F05A28;font-size:18px;margin:0 0 12px 0;text-align:center;">
+          Estimado(a) ${escapeHtml(safeName)},
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+    <tr>
+      <td style="padding:0 24px 16px 24px;color:#111827;font-size:14px;line-height:1.7;text-align:justify;">
+        ${bodyHtml}
+      </td>
+    </tr>
+  </table>
   `;
 }

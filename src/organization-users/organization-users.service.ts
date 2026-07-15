@@ -9,8 +9,13 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { OrganizationUser } from './schemas/organization-user.schema';
+import { Organization } from 'src/organizations/schemas/organization.schema';
 import { EmailService } from 'src/email/email.service';
-import { renderWelcomeContent } from '../templates/Welcome';
+import {
+  renderWelcomeContent,
+  renderOrgWelcomeContent,
+  fillWelcomeTemplate,
+} from '../templates/Welcome';
 import { PaymentPlansService } from 'src/payment-plans/payment-plans.service';
 import { UsersService } from 'src/users/users.service';
 import * as admin from 'firebase-admin';
@@ -22,6 +27,8 @@ export class OrganizationUsersService {
   constructor(
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
+    @InjectModel(Organization.name)
+    private organizationModel: Model<Organization>,
     @Inject(forwardRef(() => PaymentPlansService))
     private readonly paymentPlansService: PaymentPlansService,
     private readonly emailService: EmailService,
@@ -73,21 +80,80 @@ export class OrganizationUsersService {
       memberShipStatus: memberShipStatus || false,
     });
     const saved = await newUser.save();
-    // Organizaciones que no deben recibir email de bienvenida
-    const NO_WELCOME_EMAIL_ORGS = ['69b8b6a29eb40b31cec35d88'];
-    const toEmail = properties?.email || saved?.properties?.email || null;
-    if (toEmail && !NO_WELCOME_EMAIL_ORGS.includes(organization_id)) {
-      const subject = `${saved?.properties?.nombres}, tu cuenta en EndoCampus fue creada`;
-      const contentHtml = renderWelcomeContent(saved?.properties?.nombres);
+    // Enviar el correo de bienvenida configurado en la organización.
+    await this.sendWelcomeEmail(saved, properties);
+    return saved;
+  }
+
+  /**
+   * Envía el correo de bienvenida al registrarse en una organización.
+   * El asunto y el contenido se toman de la configuración de la
+   * organización (welcome_email). Si la organización no tiene un correo
+   * configurado, se usa la plantilla por defecto. Nunca lanza: si el
+   * envío falla no debe bloquear el registro.
+   */
+  private async sendWelcomeEmail(
+    saved: OrganizationUser,
+    properties: any,
+  ): Promise<void> {
+    try {
+      const toEmail = properties?.email || saved?.properties?.email || null;
+      if (!toEmail) return;
+
+      const nombres = saved?.properties?.nombres || properties?.nombres || '';
+
+      const org = await this.organizationModel
+        .findById(saved.organization_id)
+        .select({ welcome_email: 1, name: 1 })
+        .lean<{
+          name?: string;
+          welcome_email?: {
+            enabled?: boolean;
+            subject?: string;
+            title?: string;
+            body?: string;
+          };
+        }>()
+        .exec();
+
+      const cfg = org?.welcome_email;
+
+      // Permite desactivar el correo de bienvenida por organización.
+      if (cfg && cfg.enabled === false) return;
+
       const organizationUserId = String(saved._id);
+
+      let subject: string;
+      let contentHtml: string;
+
+      if (cfg && (cfg.body || cfg.subject || cfg.title)) {
+        // Correo configurado por la organización.
+        subject = cfg.subject
+          ? fillWelcomeTemplate(cfg.subject, nombres)
+          : `${nombres}, te damos la bienvenida a ${org?.name ?? ''}`.trim();
+        contentHtml = renderOrgWelcomeContent(nombres, {
+          title: cfg.title,
+          body: cfg.body,
+        });
+      } else {
+        // Plantilla por defecto (comportamiento previo).
+        subject = `${nombres}, tu cuenta en EndoCampus fue creada`;
+        contentHtml = renderWelcomeContent(nombres);
+      }
+
       await this.emailService.sendLayoutEmail(
         toEmail,
         subject,
         contentHtml,
         organizationUserId,
       );
+    } catch (error: any) {
+      // No bloquear el registro si el correo falla.
+      console.error(
+        'Error enviando correo de bienvenida:',
+        error?.message || error,
+      );
     }
-    return saved;
   }
 
   async deleteOrganizationUser(user_id: string): Promise<void> {
