@@ -77,55 +77,81 @@ function escapeHtml(input: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** Reemplaza la variable {{nombres}} por el nombre del usuario */
+/**
+ * Reemplaza variables tipo {{clave}} por su valor.
+ * Insensible a mayúsculas y a espacios internos: {{ Nombres }} == {{nombres}}.
+ */
+export function fillTemplate(
+  text: string,
+  vars: Record<string, string | undefined>,
+): string {
+  return String(text ?? '').replace(
+    /\{\{\s*([\w-]+)\s*\}\}/gi,
+    (match, key: string) => {
+      const found = Object.keys(vars).find(
+        (k) => k.toLowerCase() === String(key).toLowerCase(),
+      );
+      return found ? (vars[found] ?? '') : match;
+    },
+  );
+}
+
+/** Compatibilidad: reemplaza únicamente la variable {{nombres}}. */
 export function fillWelcomeTemplate(text: string, displayName: string): string {
-  const safeName = displayName || 'Usuario';
-  return String(text ?? '').replace(/\{\{\s*nombres\s*\}\}/gi, safeName);
+  return fillTemplate(text, { nombres: displayName || 'Usuario' });
 }
 
 /**
- * Contenido de bienvenida configurable por organización.
+ * Contenido de correo configurable por organización.
  * `title` y `body` provienen de la configuración de la organización y
- * admiten la variable {{nombres}}. El `body` se escapa y sus saltos de
- * línea se convierten en <br> (párrafos con doble salto).
+ * admiten variables tipo {{clave}} (por ejemplo {{nombres}}, {{fecha}}).
+ * El `body` se escapa y sus saltos de línea se convierten en <br>
+ * (párrafos separados por una línea en blanco).
+ *
+ * `vars.nombres` se usa además para el saludo "Estimado(a) ...,".
  */
-export function renderOrgWelcomeContent(
-  displayName: string,
-  cfg?: { title?: string; body?: string },
-) {
-  const safeName = displayName || 'Usuario';
-  const title = fillWelcomeTemplate(cfg?.title || '', safeName).trim();
-  const rawBody = fillWelcomeTemplate(cfg?.body || '', safeName).trim();
+export function renderOrgEmailContent(
+  cfg: { title?: string; body?: string } | undefined,
+  vars: Record<string, string | undefined>,
+  opts?: { fallbackTitle?: string; greeting?: boolean },
+): string {
+  const title = fillTemplate(cfg?.title || '', vars).trim();
+  const rawBody = fillTemplate(cfg?.body || '', vars).trim();
+  const name = (vars.nombres || '').trim();
+  const showGreeting = opts?.greeting !== false && !!name;
 
   const bodyHtml = rawBody
     .split(/\n{2,}/)
     .map((para) => escapeHtml(para).replace(/\n/g, '<br>'))
     .filter((p) => p.length > 0)
-    .map(
-      (p) =>
-        `<p style="margin:0 0 14px 0;">${p}</p>`,
-    )
+    .map((p) => `<p style="margin:0 0 14px 0;">${p}</p>`)
     .join('');
 
-  return `
+  const titleBox = `
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="padding:18px 20px 8px 20px;">
     <tr>
       <td align="center" style="padding:10px 16px;border:2px solid #d6e0ea;border-radius:12px;color:#0b3d91;font-weight:700;font-size:16px;">
-        ${escapeHtml(title) || `${escapeHtml(safeName)} ¡Bienvenido(a)!`}
+        ${escapeHtml(title) || escapeHtml(opts?.fallbackTitle || '¡Hola!')}
       </td>
     </tr>
-  </table>
+  </table>`;
 
+  const greetingBox = showGreeting
+    ? `
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
     <tr>
       <td align="center" style="padding:22px 24px 6px 24px;">
         <div style="font-weight:800;color:#F05A28;font-size:18px;margin:0 0 12px 0;text-align:center;">
-          Estimado(a) ${escapeHtml(safeName)},
+          Estimado(a) ${escapeHtml(name)},
         </div>
       </td>
     </tr>
-  </table>
+  </table>`
+    : '';
 
+  return `
+  ${titleBox}
+  ${greetingBox}
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
     <tr>
       <td style="padding:0 24px 16px 24px;color:#111827;font-size:14px;line-height:1.7;text-align:justify;">
@@ -134,4 +160,18 @@ export function renderOrgWelcomeContent(
     </tr>
   </table>
   `;
+}
+
+/**
+ * Compatibilidad: contenido de bienvenida configurable por organización.
+ * Delega en {@link renderOrgEmailContent}.
+ */
+export function renderOrgWelcomeContent(
+  displayName: string,
+  cfg?: { title?: string; body?: string },
+) {
+  const safeName = displayName || 'Usuario';
+  return renderOrgEmailContent(cfg, { nombres: safeName }, {
+    fallbackTitle: `${safeName} ¡Bienvenido(a)!`,
+  });
 }

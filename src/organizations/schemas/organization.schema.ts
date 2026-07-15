@@ -28,6 +28,20 @@ export class Organization extends Document {
     title?: string;
     body?: string;
   };
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  subscription_created_email?: {
+    enabled?: boolean;
+    subject?: string;
+    title?: string;
+    body?: string;
+  };
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  subscription_updated_email?: {
+    enabled?: boolean;
+    subject?: string;
+    title?: string;
+    body?: string;
+  };
 }
 
 export const OrganizationSchema = SchemaFactory.createForClass(Organization);
