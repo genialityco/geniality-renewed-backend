@@ -13,6 +13,10 @@ import {
   PaymentRequest,
   PaymentRequestSchema,
 } from 'src/payment-requests/schemas/payment-request.schema';
+import {
+  Organization,
+  OrganizationSchema,
+} from 'src/organizations/schemas/organization.schema';
 
 @Module({
   imports: [
@@ -20,6 +24,7 @@ import {
       { name: PaymentPlan.name, schema: PaymentPlanSchema },
       { name: OrganizationUser.name, schema: OrganizationUserSchema },
       { name: PaymentRequest.name, schema: PaymentRequestSchema },
+      { name: Organization.name, schema: OrganizationSchema },
     ]),
     OrganizationUsersModule,
     EmailModule,

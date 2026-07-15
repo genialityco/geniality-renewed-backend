@@ -21,6 +21,30 @@ export class Organization extends Document {
   styles?: { banner_image_email?: string; FooterImage?: string; banner_image?: string; event_image?: string; logo_image?: string };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   tab_titles?: { courses?: string; activities?: string; exclusive?: string };
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  welcome_email?: {
+    enabled?: boolean;
+    subject?: string;
+    title?: string;
+    body?: string;
+    body_html?: string;
+  };
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  subscription_created_email?: {
+    enabled?: boolean;
+    subject?: string;
+    title?: string;
+    body?: string;
+    body_html?: string;
+  };
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  subscription_updated_email?: {
+    enabled?: boolean;
+    subject?: string;
+    title?: string;
+    body?: string;
+    body_html?: string;
+  };
 }
 
 export const OrganizationSchema = SchemaFactory.createForClass(Organization);

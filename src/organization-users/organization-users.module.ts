@@ -9,11 +9,16 @@ import { OrganizationUsersController } from './organization-users.controller';
 import { EmailModule } from 'src/email/email.module';
 import { UsersModule } from 'src/users/users.module';
 import { PaymentPlansModule } from 'src/payment-plans/payment-plans.module';
+import {
+  Organization,
+  OrganizationSchema,
+} from 'src/organizations/schemas/organization.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: OrganizationUser.name, schema: OrganizationUserSchema },
+      { name: Organization.name, schema: OrganizationSchema },
     ]),
     EmailModule,
     UsersModule,

@@ -4,9 +4,23 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { PaymentPlan } from './schemas/payment-plan.schema';
 import { OrganizationUser } from '../organization-users/schemas/organization-user.schema'; // Ajusta la ruta según tu estructura
+import { Organization } from '../organizations/schemas/organization.schema';
 import { EmailService } from '../email/email.service'; // Ajusta la ruta
 import { renderSubscriptionContent } from '../templates/PaySuscription';
+import { renderOrgEmailContent, fillTemplate } from '../templates/Welcome';
 import { PaymentRequest } from '../payment-requests/schemas/payment-request.schema';
+
+/** Formato de fecha email-safe en español (ej: 12/09/2025) */
+function formatDateEs(value?: Date | string): string {
+  if (!value) return '';
+  const d = typeof value === 'string' ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('es-CO', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
 
 // ── Tipos para el reporte de reconciliación Wompi ─────────────────────────
 
@@ -216,11 +230,10 @@ export class PaymentPlansService {
     private organizationUserModel: Model<OrganizationUser>,
     @InjectModel(PaymentRequest.name)
     private paymentRequestModel: Model<PaymentRequest>,
+    @InjectModel(Organization.name)
+    private organizationModel: Model<Organization>,
     private readonly emailService: EmailService,
   ) {}
-
-  // Organizaciones que no deben recibir emails de suscripción
-  private readonly NO_SUBSCRIPTION_EMAIL_ORGS = ['69b8b6a29eb40b31cec35d88'];
 
   // Método para obtener el email a partir del organizationUserId
   private async getEmailByOrganizationUserId(
@@ -229,13 +242,108 @@ export class PaymentPlansService {
     const orgUser = await this.organizationUserModel
       .findById(organizationUserId)
       .exec();
-    if (
-      orgUser?.organization_id &&
-      this.NO_SUBSCRIPTION_EMAIL_ORGS.includes(String(orgUser.organization_id))
-    ) {
-      return null;
-    }
     return orgUser?.properties?.email || null;
+  }
+
+  /**
+   * Envía el correo de suscripción (creada/actualizada) usando la
+   * plantilla configurada en la organización. Si la organización no tiene
+   * plantilla configurada, usa la plantilla por defecto (EndoCampus).
+   * Nunca lanza: un fallo de correo no debe romper el flujo de pago.
+   */
+  private async sendSubscriptionEmail(
+    organizationUserId: string,
+    variant: 'created' | 'updated',
+    dateUntil: Date,
+    nameUser?: string,
+  ): Promise<void> {
+    try {
+      const email = await this.getEmailByOrganizationUserId(organizationUserId);
+      if (!email) return;
+
+      const orgUser = await this.organizationUserModel
+        .findById(organizationUserId)
+        .select({ organization_id: 1 })
+        .lean<{ organization_id?: any }>()
+        .exec();
+
+      const nombres =
+        nameUser || (orgUser as any)?.properties?.nombres || 'Usuario';
+      const fecha = formatDateEs(dateUntil);
+
+      const org = orgUser?.organization_id
+        ? await this.organizationModel
+            .findById(orgUser.organization_id)
+            .select({
+              subscription_created_email: 1,
+              subscription_updated_email: 1,
+              name: 1,
+            })
+            .lean<{
+              name?: string;
+              subscription_created_email?: {
+                enabled?: boolean;
+                subject?: string;
+                title?: string;
+                body?: string;
+                body_html?: string;
+              };
+              subscription_updated_email?: {
+                enabled?: boolean;
+                subject?: string;
+                title?: string;
+                body?: string;
+                body_html?: string;
+              };
+            }>()
+            .exec()
+        : null;
+
+      const cfg =
+        variant === 'created'
+          ? org?.subscription_created_email
+          : org?.subscription_updated_email;
+
+      // Permite desactivar el correo por organización.
+      if (cfg && cfg.enabled === false) return;
+
+      const vars = { nombres, fecha };
+
+      let subject: string;
+      let html: string;
+
+      if (cfg && (cfg.body || cfg.body_html || cfg.subject || cfg.title)) {
+        subject = cfg.subject
+          ? fillTemplate(cfg.subject, vars)
+          : variant === 'created'
+            ? `${nombres}, gracias por tu suscripción`
+            : `${nombres}, tu suscripción fue actualizada`;
+        html = renderOrgEmailContent(cfg, vars);
+      } else {
+        // Plantilla por defecto (comportamiento previo).
+        subject =
+          variant === 'created'
+            ? '¡Gracias por tu suscripción a EndoCampus!'
+            : '¡Tu suscripción fue actualizada!';
+        html = renderSubscriptionContent({
+          dateUntil,
+          variant,
+          nameUser,
+        });
+      }
+
+      await this.emailService.sendLayoutEmail(
+        email,
+        subject,
+        html,
+        organizationUserId,
+      );
+    } catch (error: any) {
+      console.error(
+        'Error enviando correo de suscripción:',
+        error?.message || error,
+      );
+    }
   }
 
   // Método para obtener el plan de pago de una organización (o usuario) por su ID
@@ -301,21 +409,12 @@ export class PaymentPlansService {
 
     const plan = await newPlan.save();
 
-    const email = await this.getEmailByOrganizationUserId(organizationUserId);
-    if (email) {
-      const html = renderSubscriptionContent({
-        dateUntil: date_until,
-        variant: 'created',
-        nameUser: UserName,
-      });
-      const Subject = '¡Gracias por tu suscripción a EndoCampus!';
-      await this.emailService.sendLayoutEmail(
-        email,
-        Subject,
-        html,
-        organizationUserId,
-      );
-    }
+    await this.sendSubscriptionEmail(
+      organizationUserId,
+      'created',
+      date_until,
+      UserName,
+    );
     return plan;
   }
 
@@ -354,23 +453,12 @@ export class PaymentPlansService {
     if (!plan) {
       throw new NotFoundException('PaymentPlan no encontrado');
     }
-    const email = await this.getEmailByOrganizationUserId(
+    await this.sendSubscriptionEmail(
       plan.organization_user_id as unknown as string,
+      'updated',
+      date_until,
+      nameUser,
     );
-    if (email) {
-      const html = renderSubscriptionContent({
-        dateUntil: date_until,
-        variant: 'updated',
-        nameUser: nameUser,
-      });
-      const Subject = '¡Tu suscripción fue actualizada!';
-      await this.emailService.sendLayoutEmail(
-        email,
-        Subject,
-        html,
-        plan.organization_user_id as unknown as string,
-      );
-    }
     return plan;
   }
   // Nuevo método para eliminar un PaymentPlan
