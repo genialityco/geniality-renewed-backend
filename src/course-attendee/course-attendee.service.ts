@@ -19,6 +19,21 @@ export class CourseAttendeeService {
     private readonly activityAttendeeService: ActivityAttendeeService,
   ) {}
 
+  /**
+   * Devuelve las dos representaciones posibles de un id (string y ObjectId).
+   * La data histórica es heterogénea: `user_id`/`event_id` pueden estar
+   * guardados como string o como ObjectId. Consultar con ambas formas evita
+   * que el casteo de Mongoose deje registros por fuera.
+   */
+  private idVariants(id: string | Types.ObjectId): any[] {
+    const raw = String(id);
+    const out: any[] = [raw];
+    if (Types.ObjectId.isValid(raw) && String(new Types.ObjectId(raw)) === raw) {
+      out.push(new Types.ObjectId(raw));
+    }
+    return out;
+  }
+
   async create(createDto: any): Promise<CourseAttendee> {
     // createDto debería contener { user_id, course_id, status? }
     const record = new this.courseAttendeeModel(createDto);
@@ -30,21 +45,33 @@ export class CourseAttendeeService {
     eventId: string,
     progress: number,
   ): Promise<CourseAttendee> {
-    // findOne + save (leer, decidir, guardar) no es atómico: dos llamadas
-    // concurrentes (p.ej. "inscribirse" al abrir el curso y "sincronizar
-    // progreso" al ver un video) pueden ambas ver "no existe" y crear dos
-    // documentos duplicados. findOneAndUpdate con upsert es atómico a nivel
-    // de Mongo, y $max solo sube el progreso, nunca lo baja.
-    return this.courseAttendeeModel
-      .findOneAndUpdate(
-        { user_id: userId, event_id: eventId },
-        {
-          $setOnInsert: { user_id: userId, event_id: eventId },
-          $max: { progress: progress || 0 },
+    const userVals = this.idVariants(userId);
+    const eventVals = this.idVariants(eventId);
+
+    // Upsert atómico y type-agnostic (driver nativo, sin casteo). El match por
+    // $in encuentra el registro existente sin importar cómo se guardaron los
+    // ids; solo inserta si no existe, evitando duplicados por diferencia de
+    // tipo (string vs ObjectId). $max nunca baja el progreso.
+    await this.courseAttendeeModel.collection.updateOne(
+      { user_id: { $in: userVals }, event_id: { $in: eventVals } },
+      {
+        $max: { progress: Math.round(progress || 0) },
+        $currentDate: { updatedAt: true },
+        $setOnInsert: {
+          user_id: String(userId),
+          event_id: eventVals.length > 1 ? eventVals[1] : String(eventId),
+          status: 'ACTIVE',
+          createdAt: new Date(),
         },
-        { upsert: true, new: true },
-      )
-      .exec();
+      },
+      { upsert: true },
+    );
+
+    const doc = await this.courseAttendeeModel.collection.findOne({
+      user_id: { $in: userVals },
+      event_id: { $in: eventVals },
+    });
+    return doc as unknown as CourseAttendee;
   }
 
   async findAll(): Promise<CourseAttendee[]> {
@@ -69,8 +96,14 @@ export class CourseAttendeeService {
   }
 
   async findByUserId(userId: string): Promise<CourseAttendee[]> {
+    // Match type-agnostic por _id (driver nativo) y luego populate con Mongoose.
+    const raw = await this.courseAttendeeModel.collection
+      .find({ user_id: { $in: this.idVariants(userId) } }, { projection: { _id: 1 } })
+      .toArray();
+    const ids = raw.map((r) => r._id);
+    if (!ids.length) return [];
     return this.courseAttendeeModel
-      .find({ user_id: userId })
+      .find({ _id: { $in: ids } })
       .populate('user_id')
       .populate('event_id')
       .exec();
@@ -84,23 +117,34 @@ export class CourseAttendeeService {
     userId: string,
     organizationId: string,
   ): Promise<CourseAttendee[]> {
-    // organizer_id (y event_id en course-attendees) puede estar guardado
-    // como string u ObjectId según cómo se haya insertado el registro
-    // (datos heredados no siempre castean al tipo declarado en el schema),
-    // así que se contemplan ambas formas en cada cruce.
-    const orgEvents = await this.eventModel
-      .find({
-        organizer_id: {
-          $in: [organizationId, new Types.ObjectId(organizationId)],
+    // organizer_id (y event_id/user_id en course-attendees) puede estar
+    // guardado como string u ObjectId según cómo se insertó el registro
+    // (datos heredados no siempre castean al tipo declarado en el schema).
+    // Se usa el driver nativo para no castear y contemplar ambas formas; luego
+    // se cargan con Mongoose por _id para conservar el populate.
+    const orgEvents = await this.eventModel.collection
+      .find(
+        { organizer_id: { $in: this.idVariants(organizationId) } },
+        { projection: { _id: 1 } },
+      )
+      .toArray();
+    const eventVals = orgEvents.flatMap((e: any) => this.idVariants(e._id));
+    if (!eventVals.length) return [];
+
+    const raw = await this.courseAttendeeModel.collection
+      .find(
+        {
+          user_id: { $in: this.idVariants(userId) },
+          event_id: { $in: eventVals },
         },
-      })
-      .select('_id')
-      .lean()
-      .exec();
-    const eventIds = orgEvents.flatMap((e) => [e._id, e._id.toString()]);
+        { projection: { _id: 1 } },
+      )
+      .toArray();
+    const ids = raw.map((r) => r._id);
+    if (!ids.length) return [];
 
     return this.courseAttendeeModel
-      .find({ user_id: userId, event_id: { $in: eventIds } })
+      .find({ _id: { $in: ids } })
       .populate('user_id')
       .populate('event_id')
       .exec();

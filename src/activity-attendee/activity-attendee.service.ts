@@ -29,47 +29,46 @@ export class ActivityAttendeeService {
 
     const eventId = activity.event_id;
 
-    const activities = await this.activityModel
-      .find({ event_id: eventId })
-      .select('_id')
-      .lean()
-      .exec();
+    const userVals = this.idVariants(userId);
+    const eventVals = this.idVariants(eventId);
+
+    // Driver nativo para no castear: la data mezcla string/ObjectId.
+    const activities = await this.activityModel.collection
+      .find({ event_id: { $in: eventVals } }, { projection: { _id: 1 } })
+      .toArray();
 
     const totalActivities = activities.length;
     if (totalActivities === 0) return;
 
-    const activityIds = activities.map((a: any) => a._id);
+    const activityVals = activities.flatMap((a: any) => this.idVariants(a._id));
 
-    const completedCount = await this.activityAttendeeModel.countDocuments({
-      user_id: userId,
-      activity_id: { $in: activityIds },
-      progress: 100,
-    });
+    const completedCount = await this.activityAttendeeModel.collection.countDocuments(
+      {
+        user_id: { $in: userVals },
+        activity_id: { $in: activityVals },
+        progress: 100,
+      },
+    );
 
     const courseProgress = Math.round((completedCount / totalActivities) * 100);
 
-    await this.courseAttendeeModel
-      .findOneAndUpdate(
-        {
-          user_id: userId,
+    // Upsert type-agnostic: matchea el registro existente sin importar cómo se
+    // guardaron los ids; solo inserta si de verdad no existe (evita duplicados
+    // por diferencia de tipo user_id string vs ObjectId).
+    await this.courseAttendeeModel.collection.updateOne(
+      { user_id: { $in: userVals }, event_id: { $in: eventVals } },
+      {
+        $set: { progress: courseProgress },
+        $currentDate: { updatedAt: true },
+        $setOnInsert: {
+          user_id: String(userId),
           event_id: eventId,
+          status: 'ACTIVE',
+          createdAt: new Date(),
         },
-        {
-          $setOnInsert: {
-            user_id: userId,
-            event_id: eventId,
-            status: 'ACTIVE',
-          },
-          $set: {
-            progress: courseProgress,
-          },
-        },
-        {
-          upsert: true,
-          new: true,
-        },
-      )
-      .exec();
+      },
+      { upsert: true },
+    );
   }
 
   async create(createDto: any): Promise<ActivityAttendee> {
@@ -170,19 +169,54 @@ export class ActivityAttendeeService {
   }
 
   /**
-   * Obtiene todos los activityAttendees de un usuario para un evento específico
-   * Utilizando directamente el event_id guardado en activityAttendee
+   * Devuelve las dos representaciones posibles de un id (string y ObjectId).
+   * La data histórica es inconsistente: `user_id` se guarda como string,
+   * mientras `event_id`/`activity_id` pueden ser string u ObjectId. Consultar
+   * con ambas formas evita que el casteo de Mongoose deje registros por fuera.
+   */
+  private idVariants(id: string | Types.ObjectId): any[] {
+    const raw = String(id);
+    const out: any[] = [raw];
+    if (Types.ObjectId.isValid(raw) && String(new Types.ObjectId(raw)) === raw) {
+      out.push(new Types.ObjectId(raw));
+    }
+    return out;
+  }
+
+  /**
+   * Obtiene todos los activityAttendees de un usuario para un evento.
+   *
+   * Se consulta con el driver nativo (sin casteo de Mongoose) porque la data es
+   * heterogénea:
+   *  - `user_id` está guardado como string en todos los registros.
+   *  - `event_id` puede ser ObjectId, string o faltar por completo en registros
+   *    antiguos (creados antes de que existiera ese campo).
+   *
+   * Para no perder actividades ya vistas, además de filtrar por `event_id` se
+   * recuperan los registros sin `event_id` haciendo match por `activity_id`
+   * contra las actividades que pertenecen al evento.
    */
   async findByUserIdAndEventId(
     userId: string,
     eventId: string,
   ): Promise<ActivityAttendee[]> {
-    return this.activityAttendeeModel
-      .find({
-        user_id: userId,
-        event_id: eventId,
-      })
-      .populate('activity_id')
-      .exec();
+    const userVals = this.idVariants(userId);
+    const eventVals = this.idVariants(eventId);
+
+    // Actividades del evento (ambas representaciones de _id) para recuperar
+    // registros antiguos que no tienen event_id.
+    const activities = await this.activityModel.collection
+      .find({ event_id: { $in: eventVals } }, { projection: { _id: 1 } })
+      .toArray();
+    const activityVals = activities.flatMap((a: any) => this.idVariants(a._id));
+
+    const or: any[] = [{ event_id: { $in: eventVals } }];
+    if (activityVals.length) or.push({ activity_id: { $in: activityVals } });
+
+    const docs = await this.activityAttendeeModel.collection
+      .find({ user_id: { $in: userVals }, $or: or })
+      .toArray();
+
+    return docs as unknown as ActivityAttendee[];
   }
 }
