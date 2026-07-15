@@ -27,6 +27,7 @@ export class Organization extends Document {
     subject?: string;
     title?: string;
     body?: string;
+    body_html?: string;
   };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   subscription_created_email?: {
@@ -34,6 +35,7 @@ export class Organization extends Document {
     subject?: string;
     title?: string;
     body?: string;
+    body_html?: string;
   };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   subscription_updated_email?: {
@@ -41,6 +43,7 @@ export class Organization extends Document {
     subject?: string;
     title?: string;
     body?: string;
+    body_html?: string;
   };
 }
 

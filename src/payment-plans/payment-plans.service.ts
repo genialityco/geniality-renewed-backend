@@ -286,12 +286,14 @@ export class PaymentPlansService {
                 subject?: string;
                 title?: string;
                 body?: string;
+                body_html?: string;
               };
               subscription_updated_email?: {
                 enabled?: boolean;
                 subject?: string;
                 title?: string;
                 body?: string;
+                body_html?: string;
               };
             }>()
             .exec()
@@ -310,7 +312,7 @@ export class PaymentPlansService {
       let subject: string;
       let html: string;
 
-      if (cfg && (cfg.body || cfg.subject || cfg.title)) {
+      if (cfg && (cfg.body || cfg.body_html || cfg.subject || cfg.title)) {
         subject = cfg.subject
           ? fillTemplate(cfg.subject, vars)
           : variant === 'created'

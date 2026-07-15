@@ -102,30 +102,55 @@ export function fillWelcomeTemplate(text: string, displayName: string): string {
 }
 
 /**
+ * Sanitizado ligero para HTML configurado por la organización.
+ * Elimina <script>/<style>, manejadores on* y URLs javascript:.
+ * Pensado para contenido de administradores (semi-confiable) en correos.
+ */
+export function sanitizeEmailHtml(html: string): string {
+  return String(html ?? '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, '')
+    .replace(/javascript:/gi, '');
+}
+
+/**
  * Contenido de correo configurable por organización.
- * `title` y `body` provienen de la configuración de la organización y
+ * `title` y el cuerpo provienen de la configuración de la organización y
  * admiten variables tipo {{clave}} (por ejemplo {{nombres}}, {{fecha}}).
- * El `body` se escapa y sus saltos de línea se convierten en <br>
- * (párrafos separados por una línea en blanco).
+ *
+ * El cuerpo puede venir en dos formatos:
+ *  - `body_html`: HTML del editor visual, se sanitiza y se inserta tal cual.
+ *  - `body` (heredado): texto plano; se escapa y sus saltos de línea se
+ *    convierten en <br> (párrafos separados por una línea en blanco).
  *
  * `vars.nombres` se usa además para el saludo "Estimado(a) ...,".
  */
 export function renderOrgEmailContent(
-  cfg: { title?: string; body?: string } | undefined,
+  cfg: { title?: string; body?: string; body_html?: string } | undefined,
   vars: Record<string, string | undefined>,
   opts?: { fallbackTitle?: string; greeting?: boolean },
 ): string {
   const title = fillTemplate(cfg?.title || '', vars).trim();
-  const rawBody = fillTemplate(cfg?.body || '', vars).trim();
   const name = (vars.nombres || '').trim();
   const showGreeting = opts?.greeting !== false && !!name;
 
-  const bodyHtml = rawBody
-    .split(/\n{2,}/)
-    .map((para) => escapeHtml(para).replace(/\n/g, '<br>'))
-    .filter((p) => p.length > 0)
-    .map((p) => `<p style="margin:0 0 14px 0;">${p}</p>`)
-    .join('');
+  let bodyHtml: string;
+  if (cfg?.body_html && cfg.body_html.trim()) {
+    // Cuerpo HTML del editor visual.
+    bodyHtml = sanitizeEmailHtml(fillTemplate(cfg.body_html, vars).trim());
+  } else {
+    // Cuerpo heredado en texto plano.
+    const rawBody = fillTemplate(cfg?.body || '', vars).trim();
+    bodyHtml = rawBody
+      .split(/\n{2,}/)
+      .map((para) => escapeHtml(para).replace(/\n/g, '<br>'))
+      .filter((p) => p.length > 0)
+      .map((p) => `<p style="margin:0 0 14px 0;">${p}</p>`)
+      .join('');
+  }
 
   const titleBox = `
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="padding:18px 20px 8px 20px;">
@@ -168,7 +193,7 @@ export function renderOrgEmailContent(
  */
 export function renderOrgWelcomeContent(
   displayName: string,
-  cfg?: { title?: string; body?: string },
+  cfg?: { title?: string; body?: string; body_html?: string },
 ) {
   const safeName = displayName || 'Usuario';
   return renderOrgEmailContent(cfg, { nombres: safeName }, {

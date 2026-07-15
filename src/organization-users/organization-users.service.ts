@@ -112,6 +112,7 @@ export class OrganizationUsersService {
             subject?: string;
             title?: string;
             body?: string;
+            body_html?: string;
           };
         }>()
         .exec();
@@ -126,7 +127,7 @@ export class OrganizationUsersService {
       let subject: string;
       let contentHtml: string;
 
-      if (cfg && (cfg.body || cfg.subject || cfg.title)) {
+      if (cfg && (cfg.body || cfg.body_html || cfg.subject || cfg.title)) {
         // Correo configurado por la organización.
         subject = cfg.subject
           ? fillWelcomeTemplate(cfg.subject, nombres)
@@ -134,6 +135,7 @@ export class OrganizationUsersService {
         contentHtml = renderOrgWelcomeContent(nombres, {
           title: cfg.title,
           body: cfg.body,
+          body_html: cfg.body_html,
         });
       } else {
         // Plantilla por defecto (comportamiento previo).
