@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { RemindersService } from './reminders.service';
+import { WeeklyReportService } from './weekly-report.service';
 
 @Injectable()
 export class RemindersCron {
   private readonly logger = new Logger(RemindersCron.name);
 
-  constructor(private readonly remindersService: RemindersService) {}
+  constructor(
+    private readonly remindersService: RemindersService,
+    private readonly weeklyReportService: WeeklyReportService,
+  ) {}
 
   @Cron(CronExpression.EVERY_DAY_AT_9AM)
   async run() {
@@ -18,6 +22,17 @@ export class RemindersCron {
         'Fallo el job de recordatorios de inactividad',
         error as any,
       );
+    }
+  }
+
+  // Lunes 10am, una hora después del job de inactividad para no solaparse
+  @Cron('0 10 * * 1')
+  async runWeeklyReport() {
+    this.logger.log('Iniciando job de reporte semanal de progreso');
+    try {
+      await this.weeklyReportService.sendWeeklyReports();
+    } catch (error) {
+      this.logger.error('Fallo el job de reporte semanal', error as any);
     }
   }
 }
