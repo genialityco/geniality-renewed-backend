@@ -19,6 +19,7 @@ type OrgStylesLean = {
     footerImage?: string;
   };
   domains?: string[];
+  name?: string;
 };
 
 @Injectable()
@@ -42,7 +43,7 @@ export class EmailService {
     });
     this.from = this.configService.get<string>('AWS_SES_EMAIL_FROM');
     this.fromName =
-      this.configService.get<string>('AWS_SES_EMAIL_FROM_NAME') || 'EndoCampus';
+      this.configService.get<string>('AWS_SES_EMAIL_FROM_NAME') || 'GEN CAMPUS';
   }
 
   // ----------------- Helpers: limpieza y validación -----------------
@@ -103,8 +104,13 @@ export class EmailService {
   // ======================
   // Envío básico (SendEmail)
   // ======================
-  async sendEmail(to: string | string[], subject: string, html: string) {
-    const source = this.buildSource(this.from, this.fromName);
+  async sendEmail(
+    to: string | string[],
+    subject: string,
+    html: string,
+    fromName?: string,
+  ) {
+    const source = this.buildSource(this.from, fromName || this.fromName);
     const toList = this.prepareAddressList(to, 'to');
 
     const params: AWS.SES.SendEmailRequest = {
@@ -218,12 +224,12 @@ export class EmailService {
    */
   private async resolveStrictForOrg(dataId?: string) {
     if (!dataId) {
-      return { domain: '', heroUrl: '', logosUrl: '' };
+      return { domain: '', heroUrl: '', logosUrl: '', orgName: '' };
     }
     // 1) ¿Es un Organization?
     const orgDirect = await this.orgModel
       .findById(dataId)
-      .select({ style: 1, styles: 1, domains: 1 })
+      .select({ style: 1, styles: 1, domains: 1, name: 1 })
       .lean<OrgStylesLean>()
       .exec();
 
@@ -236,6 +242,7 @@ export class EmailService {
         domain: domainStr.trim(),
         heroUrl: (st?.banner_image_email ?? '').trim(),
         logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
+        orgName: (orgDirect.name ?? '').trim(),
         organization_id: dataId,
       };
     }
@@ -252,13 +259,13 @@ export class EmailService {
       : undefined;
 
     if (!organizationId) {
-      return { heroUrl: '', logosUrl: '' };
+      return { heroUrl: '', logosUrl: '', orgName: '' };
     }
 
     // 3) Con organizationId, ahora sí leo Organization
     const org = await this.orgModel
       .findById(organizationId)
-      .select({ style: 1, styles: 1, domains: 1 })
+      .select({ style: 1, styles: 1, domains: 1, name: 1 })
       .lean<OrgStylesLean>()
       .exec();
 
@@ -270,6 +277,7 @@ export class EmailService {
       domain: domainStr.trim(),
       heroUrl: (st?.banner_image_email ?? '').trim(),
       logosUrl: (st?.FooterImage ?? st?.footerImage ?? '').trim(),
+      orgName: (org?.name ?? '').trim(),
       organization_id: organizationId,
     };
   }
@@ -289,12 +297,14 @@ export class EmailService {
       blueBar?: boolean;
       heroUrl?: string; // override explícito (opcional)
       logosUrl?: string; // override explícito (opcional)
+      fromName?: string; // override del remitente (opcional)
     },
   ) {
     const {
       domain: orgDomain,
       heroUrl: orgHero,
       logosUrl: orgLogos,
+      orgName,
       organization_id,
     } = await this.resolveStrictForOrg(dataId);
 
@@ -302,6 +312,8 @@ export class EmailService {
     const domain = (opts?.domain ?? orgDomain) || '';
     const heroUrl = (opts?.heroUrl ?? orgHero) || '';
     const logosUrl = (opts?.logosUrl ?? orgLogos) || '';
+    // El remitente muestra el nombre de la organización (si existe).
+    const fromName = (opts?.fromName ?? orgName) || undefined;
     const URL = `https://app.geniality.com.co/organization/${organization_id}`;
     const fullHtml = renderEmailLayout({
       contentHtml,
@@ -313,6 +325,6 @@ export class EmailService {
       domain: domain, // dominio o ''
     });
 
-    return this.sendEmail(to, subject, fullHtml);
+    return this.sendEmail(to, subject, fullHtml, fromName);
   }
 }

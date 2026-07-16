@@ -188,6 +188,23 @@ export function renderOrgEmailContent(
 }
 
 /**
+ * Correo diseñado con el constructor visual (tipo Canva).
+ *
+ * A diferencia de {@link renderOrgEmailContent}, este HTML es el correo
+ * COMPLETO (header, cuerpo, botón, footer... lo que la organización haya
+ * armado). NO se envuelve en {@link renderEmailLayout} ni se le agrega el
+ * saludo "Estimado(a) ...". Solo se reemplazan variables `{{clave}}` y se
+ * sanitiza. El resultado se envía directamente con `sendEmail` (no
+ * `sendLayoutEmail`).
+ */
+export function renderOrgFullEmail(
+  htmlTemplate: string,
+  vars: Record<string, string | undefined>,
+): string {
+  return sanitizeEmailHtml(fillTemplate(htmlTemplate, vars).trim());
+}
+
+/**
  * Compatibilidad: contenido de bienvenida configurable por organización.
  * Delega en {@link renderOrgEmailContent}.
  */

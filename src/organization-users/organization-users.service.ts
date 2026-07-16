@@ -14,7 +14,9 @@ import { EmailService } from 'src/email/email.service';
 import {
   renderWelcomeContent,
   renderOrgWelcomeContent,
+  renderOrgFullEmail,
   fillWelcomeTemplate,
+  fillTemplate,
 } from '../templates/Welcome';
 import { PaymentPlansService } from 'src/payment-plans/payment-plans.service';
 import { UsersService } from 'src/users/users.service';
@@ -100,7 +102,8 @@ export class OrganizationUsersService {
       const toEmail = properties?.email || saved?.properties?.email || null;
       if (!toEmail) return;
 
-      const nombres = saved?.properties?.nombres || properties?.nombres || '';
+      const props = saved?.properties || properties || {};
+      const nombres = props?.nombres || properties?.nombres || '';
 
       const org = await this.organizationModel
         .findById(saved.organization_id)
@@ -113,6 +116,8 @@ export class OrganizationUsersService {
             title?: string;
             body?: string;
             body_html?: string;
+            html?: string;
+            design_json?: any;
           };
         }>()
         .exec();
@@ -123,6 +128,33 @@ export class OrganizationUsersService {
       if (cfg && cfg.enabled === false) return;
 
       const organizationUserId = String(saved._id);
+
+      // Variables disponibles para la plantilla (usuario + organización).
+      const vars: Record<string, string | undefined> = {
+        nombres,
+        apellidos: props?.apellidos || '',
+        email: toEmail,
+        telefono: props?.telefono || props?.phone || '',
+        organizacion: org?.name || '',
+        enlace_acceso: `https://app.geniality.com.co/organization/${String(
+          saved.organization_id,
+        )}`,
+      };
+
+      // Correo diseñado con el constructor visual: se envía tal cual.
+      if (cfg?.html && cfg.html.trim()) {
+        const subject = cfg.subject
+          ? fillTemplate(cfg.subject, vars)
+          : `${nombres}, te damos la bienvenida a ${org?.name ?? ''}`.trim();
+        const fullHtml = renderOrgFullEmail(cfg.html, vars);
+        await this.emailService.sendEmail(
+          toEmail,
+          subject,
+          fullHtml,
+          org?.name || undefined,
+        );
+        return;
+      }
 
       let subject: string;
       let contentHtml: string;

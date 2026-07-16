@@ -7,7 +7,11 @@ import { OrganizationUser } from '../organization-users/schemas/organization-use
 import { Organization } from '../organizations/schemas/organization.schema';
 import { EmailService } from '../email/email.service'; // Ajusta la ruta
 import { renderSubscriptionContent } from '../templates/PaySuscription';
-import { renderOrgEmailContent, fillTemplate } from '../templates/Welcome';
+import {
+  renderOrgEmailContent,
+  renderOrgFullEmail,
+  fillTemplate,
+} from '../templates/Welcome';
 import { PaymentRequest } from '../payment-requests/schemas/payment-request.schema';
 
 /** Formato de fecha email-safe en español (ej: 12/09/2025) */
@@ -256,6 +260,7 @@ export class PaymentPlansService {
     variant: 'created' | 'updated',
     dateUntil: Date,
     nameUser?: string,
+    extra?: { price?: number; days?: number; currency?: string },
   ): Promise<void> {
     try {
       const email = await this.getEmailByOrganizationUserId(organizationUserId);
@@ -263,13 +268,27 @@ export class PaymentPlansService {
 
       const orgUser = await this.organizationUserModel
         .findById(organizationUserId)
-        .select({ organization_id: 1 })
-        .lean<{ organization_id?: any }>()
+        .select({ organization_id: 1, properties: 1 })
+        .lean<{ organization_id?: any; properties?: any }>()
         .exec();
 
-      const nombres =
-        nameUser || (orgUser as any)?.properties?.nombres || 'Usuario';
+      const props = (orgUser as any)?.properties || {};
+      const nombres = nameUser || props?.nombres || 'Usuario';
       const fecha = formatDateEs(dateUntil);
+
+      // Días restantes hasta el vencimiento (nunca negativo).
+      const diasRestantes = (() => {
+        const ms = new Date(dateUntil).getTime() - Date.now();
+        if (Number.isNaN(ms)) return '';
+        return String(Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24))));
+      })();
+
+      const currency = extra?.currency || 'COP';
+      const valor =
+        typeof extra?.price === 'number'
+          ? `${extra.price.toLocaleString('es-CO')} ${currency}`
+          : '';
+      const plan = typeof extra?.days === 'number' ? `${extra.days} días` : '';
 
       const org = orgUser?.organization_id
         ? await this.organizationModel
@@ -287,6 +306,8 @@ export class PaymentPlansService {
                 title?: string;
                 body?: string;
                 body_html?: string;
+                html?: string;
+                design_json?: any;
               };
               subscription_updated_email?: {
                 enabled?: boolean;
@@ -294,6 +315,8 @@ export class PaymentPlansService {
                 title?: string;
                 body?: string;
                 body_html?: string;
+                html?: string;
+                design_json?: any;
               };
             }>()
             .exec()
@@ -307,7 +330,37 @@ export class PaymentPlansService {
       // Permite desactivar el correo por organización.
       if (cfg && cfg.enabled === false) return;
 
-      const vars = { nombres, fecha };
+      const vars: Record<string, string | undefined> = {
+        nombres,
+        fecha,
+        apellidos: props?.apellidos || '',
+        email,
+        telefono: props?.telefono || props?.phone || '',
+        organizacion: org?.name || '',
+        enlace_acceso: `https://app.geniality.com.co/organization/${String(
+          orgUser?.organization_id ?? '',
+        )}`,
+        plan,
+        valor,
+        dias_restantes: diasRestantes,
+      };
+
+      // Correo diseñado con el constructor visual: se envía tal cual.
+      if (cfg?.html && cfg.html.trim()) {
+        const fullSubject = cfg.subject
+          ? fillTemplate(cfg.subject, vars)
+          : variant === 'created'
+            ? `${nombres}, gracias por tu suscripción`
+            : `${nombres}, tu suscripción fue actualizada`;
+        const fullHtml = renderOrgFullEmail(cfg.html, vars);
+        await this.emailService.sendEmail(
+          email,
+          fullSubject,
+          fullHtml,
+          org?.name || undefined,
+        );
+        return;
+      }
 
       let subject: string;
       let html: string;
@@ -414,6 +467,7 @@ export class PaymentPlansService {
       'created',
       date_until,
       UserName,
+      { price, days, currency: meta?.currency },
     );
     return plan;
   }
@@ -458,6 +512,10 @@ export class PaymentPlansService {
       'updated',
       date_until,
       nameUser,
+      {
+        price: additionalFields?.price,
+        currency: additionalFields?.currency,
+      },
     );
     return plan;
   }
