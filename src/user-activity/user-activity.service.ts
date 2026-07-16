@@ -1,7 +1,7 @@
-import { Injectable, NotFoundException, OnModuleInit, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { UserActivity, CourseTime, ActivityTime } from './schemas/user-activity.schema';
+import { UserActivity } from './schemas/user-activity.schema';
 
 @Injectable()
 export class UserActivityService implements OnModuleInit {
@@ -34,7 +34,9 @@ export class UserActivityService implements OnModuleInit {
   ): Promise<UserActivity> {
     const now = new Date();
 
-    console.log(`🚀 startSession called for userId: ${userId}, org: ${organizationId}`);
+    console.log(
+      `🚀 startSession called for userId: ${userId}, org: ${organizationId}`,
+    );
 
     // Primero, verificar cuántos registros ya existen
     const existingCount = await this.userActivityModel.countDocuments({
@@ -83,13 +85,18 @@ export class UserActivityService implements OnModuleInit {
     console.log(`📊 Total records after upsert: ${finalCount}`);
 
     if (finalCount > 1) {
-      console.warn(`⚠️ WARNING: Found ${finalCount} records for user ${userId}, org ${organizationId}`);
+      console.warn(
+        `⚠️ WARNING: Found ${finalCount} records for user ${userId}, org ${organizationId}`,
+      );
       // Listar IDs
       const all = await this.userActivityModel.find({
         user_id: userId,
         organization_id: organizationId,
       });
-      console.log('  Record IDs:', all.map(r => r._id));
+      console.log(
+        '  Record IDs:',
+        all.map((r) => r._id),
+      );
     }
 
     return activity;
@@ -98,7 +105,10 @@ export class UserActivityService implements OnModuleInit {
   /**
    * Finaliza la sesión del usuario
    */
-  async endSession(userId: string, organizationId: string): Promise<UserActivity> {
+  async endSession(
+    userId: string,
+    organizationId: string,
+  ): Promise<UserActivity> {
     const activity = await this.userActivityModel.findOne({
       user_id: userId,
       organization_id: organizationId,
@@ -112,7 +122,8 @@ export class UserActivityService implements OnModuleInit {
 
     const now = new Date();
     activity.session_end = now;
-    activity.session_duration_ms = now.getTime() - activity.session_start.getTime();
+    activity.session_duration_ms =
+      now.getTime() - activity.session_start.getTime();
     activity.is_active = false;
     activity.last_updated = now;
 
@@ -130,7 +141,7 @@ export class UserActivityService implements OnModuleInit {
     timeDeltaMs: number,
     courseName?: string,
   ): Promise<UserActivity> {
-    let activity = await this.userActivityModel.findOne({
+    const activity = await this.userActivityModel.findOne({
       user_id: userId,
       organization_id: organizationId,
       is_active: true,
@@ -189,7 +200,7 @@ export class UserActivityService implements OnModuleInit {
     timeDeltaMs: number,
     activityName?: string,
   ): Promise<UserActivity> {
-    let activity = await this.userActivityModel.findOne({
+    const activity = await this.userActivityModel.findOne({
       user_id: userId,
       organization_id: organizationId,
       is_active: true,
@@ -284,10 +295,9 @@ export class UserActivityService implements OnModuleInit {
       (sum, c) => sum + c.time_spent_ms,
       0,
     );
-    consolidated.total_activities_time_ms = Array.from(allActivities.values()).reduce(
-      (sum, a) => sum + a.time_spent_ms,
-      0,
-    );
+    consolidated.total_activities_time_ms = Array.from(
+      allActivities.values(),
+    ).reduce((sum, a) => sum + a.time_spent_ms, 0);
 
     return consolidated;
   }
@@ -323,10 +333,12 @@ export class UserActivityService implements OnModuleInit {
     userId: string,
     organizationId: string,
   ): Promise<UserActivity | null> {
-    return this.userActivityModel.findOne({
-      user_id: userId,
-      organization_id: organizationId,
-    }).sort({ createdAt: -1 });
+    return this.userActivityModel
+      .findOne({
+        user_id: userId,
+        organization_id: organizationId,
+      })
+      .sort({ createdAt: -1 });
   }
 
   /**
@@ -362,6 +374,17 @@ export class UserActivityService implements OnModuleInit {
     );
     return this.userActivityModel.find({
       last_updated: { $gte: from, $lt: to },
+    });
+  }
+
+  /**
+   * Obtiene los registros con actividad en los últimos N días.
+   * Lo usa el reporte semanal para considerar solo usuarios activos.
+   */
+  async findActiveSince(days: number): Promise<UserActivity[]> {
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    return this.userActivityModel.find({
+      last_updated: { $gte: from },
     });
   }
 }

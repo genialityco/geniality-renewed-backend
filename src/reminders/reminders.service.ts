@@ -1,13 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { HttpService } from '@nestjs/axios';
-import { lastValueFrom } from 'rxjs';
 import { UserActivityService } from 'src/user-activity/user-activity.service';
 import { UsersService } from 'src/users/users.service';
 import { OrganizationsService } from 'src/organizations/organizations.service';
 import { OrganizationUsersService } from 'src/organization-users/organization-users.service';
-import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema';
 import { UserActivity } from 'src/user-activity/schemas/user-activity.schema';
+import { WhatsappGatewayClient } from './whatsapp-gateway.client';
+import { resolveEmail, resolveName, resolvePhone } from './contact.util';
 
 interface ReminderItem {
   name: string;
@@ -18,10 +17,6 @@ interface ReminderItem {
 export class RemindersService {
   private readonly logger = new Logger(RemindersService.name);
 
-  private readonly gatewayUrl: string;
-  private readonly accountId: string;
-  private readonly phoneNumberId: string;
-  private readonly accessToken: string;
   private readonly baseUrl: string;
 
   constructor(
@@ -29,19 +24,9 @@ export class RemindersService {
     private readonly usersService: UsersService,
     private readonly organizationsService: OrganizationsService,
     private readonly organizationUsersService: OrganizationUsersService,
-    private readonly httpService: HttpService,
+    private readonly whatsappGateway: WhatsappGatewayClient,
     private readonly configService: ConfigService,
   ) {
-    this.gatewayUrl = this.configService.get<string>('WHATSAPP_GATEWAY_URL');
-    this.accountId =
-      this.configService.get<string>('WHATSAPP_GATEWAY_ACCOUNT_ID') ||
-      'gencampus';
-    this.phoneNumberId = this.configService.get<string>(
-      'WHATSAPP_GATEWAY_PHONE_NUMBER_ID',
-    );
-    this.accessToken = this.configService.get<string>(
-      'WHATSAPP_GATEWAY_ACCESS_TOKEN',
-    );
     this.baseUrl =
       this.configService.get<string>('WHATSAPP_REMINDER_BASE_URL') ||
       'https://app.geniality.com.co';
@@ -61,7 +46,7 @@ export class RemindersService {
     skipped: number;
     failed: number;
   }> {
-    if (!this.gatewayUrl) {
+    if (!this.whatsappGateway.isConfigured) {
       this.logger.warn(
         'WHATSAPP_GATEWAY_URL no configurado, se omite el envío de recordatorios',
       );
@@ -86,7 +71,7 @@ export class RemindersService {
     );
 
     if (staleActivities.length > 0) {
-      await this.registerGatewayAccount();
+      await this.whatsappGateway.registerAccount();
     }
 
     let sent = 0;
@@ -116,35 +101,9 @@ export class RemindersService {
     return { sent, fallbackEmail, skipped, failed };
   }
 
-  private async registerGatewayAccount(): Promise<void> {
-    if (!this.phoneNumberId || !this.accessToken) {
-      this.logger.warn(
-        'WHATSAPP_GATEWAY_PHONE_NUMBER_ID/ACCESS_TOKEN no configurados, se omite el registro de cuenta',
-      );
-      return;
-    }
-    try {
-      await lastValueFrom(
-        this.httpService.post(`${this.gatewayUrl}/api/account/register`, {
-          accountId: this.accountId,
-          phoneNumberId: this.phoneNumberId,
-          accessToken: this.accessToken,
-        }),
-      );
-    } catch (error) {
-      this.logger.error(
-        `No se pudo registrar la cuenta '${this.accountId}' en el gateway de WhatsApp: ${
-          (error as any)?.message || error
-        }`,
-      );
-    }
-  }
-
   private async sendReminderFor(
     activity: UserActivity,
   ): Promise<'sent' | 'fallback_email' | 'skipped'> {
-    // Los datos de contacto viven en la membresía (organizationusers.properties);
-    // el documento de users casi nunca tiene phone y queda solo como fallback.
     const [user, orgUser] = await Promise.all([
       this.usersService.findById(activity.user_id).catch(() => null),
       this.organizationUsersService
@@ -152,7 +111,7 @@ export class RemindersService {
         .catch(() => null),
     ]);
 
-    const phone = this.resolvePhone(orgUser, user);
+    const phone = resolvePhone(orgUser, user);
     if (!phone) return 'skipped';
 
     const organization = await this.organizationsService
@@ -164,11 +123,9 @@ export class RemindersService {
     if (!lastItem) return 'skipped';
 
     const itemUrl = `${this.baseUrl}/organization/${activity.organization_id}/${lastItem.path}`;
-    const userName = this.resolveName(orgUser, user);
-    const email = orgUser?.properties?.email || user?.email || null;
+    const userName = resolveName(orgUser, user);
+    const email = resolveEmail(orgUser, user);
 
-    // Si WhatsApp falla, el gateway envía este email como respaldo
-    // (requiere fallbackEmail + fallbackSubject + fallbackHtml)
     const fallbackFields = email
       ? {
           fallbackEmail: email,
@@ -182,67 +139,20 @@ export class RemindersService {
         }
       : {};
 
-    try {
-      await lastValueFrom(
-        this.httpService.post(`${this.gatewayUrl}/api/send-template`, {
-          accountId: this.accountId,
-          to: phone,
-          templateName: 'recordatorio_inactividad_3dias',
-          parameters: [userName, lastItem.name, itemUrl],
-          languageCode: 'es',
-          ...fallbackFields,
-        }),
+    const result = await this.whatsappGateway.sendTemplate({
+      to: phone,
+      templateName: 'recordatorio_inactividad_3dias',
+      parameters: [userName, lastItem.name, itemUrl],
+      languageCode: 'es',
+      ...fallbackFields,
+    });
+
+    if (result === 'fallback_email') {
+      this.logger.warn(
+        `WhatsApp falló para user_id=${activity.user_id}; se envió email de respaldo a ${email}`,
       );
-      return 'sent';
-    } catch (error) {
-      // El gateway responde 500 cuando WhatsApp falla, pero indica si
-      // alcanzó a enviar el email de respaldo
-      if ((error as any)?.response?.data?.fallbackEmailSent === true) {
-        this.logger.warn(
-          `WhatsApp falló para user_id=${activity.user_id}; se envió email de respaldo a ${email}`,
-        );
-        return 'fallback_email';
-      }
-      throw error;
     }
-  }
-
-  /**
-   * El teléfono de la membresía viene sin indicativo (ej. "3132735116" +
-   * indicativodepais "+57"); Meta espera solo dígitos con el país adelante.
-   * Solo se antepone el indicativo si el número no lo trae ya.
-   */
-  private resolvePhone(
-    orgUser: OrganizationUser | null,
-    user: any,
-  ): string | null {
-    const rawPhone = String(orgUser?.properties?.phone ?? '').replace(
-      /\D/g,
-      '',
-    );
-    const prefix = String(orgUser?.properties?.indicativodepais ?? '').replace(
-      /\D/g,
-      '',
-    );
-
-    if (rawPhone) {
-      const alreadyPrefixed =
-        prefix && rawPhone.startsWith(prefix) && rawPhone.length > 10;
-      if (prefix && !alreadyPrefixed) return `${prefix}${rawPhone}`;
-      return rawPhone;
-    }
-
-    const userPhone = String(user?.phone ?? '').replace(/\D/g, '');
-    return userPhone || null;
-  }
-
-  private resolveName(orgUser: OrganizationUser | null, user: any): string {
-    const props = orgUser?.properties ?? {};
-    const fullName = [props.nombres, props.apellidos]
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-    return fullName || props.names || user?.names || 'estudiante';
+    return result;
   }
 
   private renderFallbackEmailHtml(
