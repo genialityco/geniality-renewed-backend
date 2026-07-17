@@ -28,6 +28,10 @@ export class Organization extends Document {
     title?: string;
     body?: string;
     body_html?: string;
+    /** HTML completo exportado por el constructor visual (tipo Canva). */
+    html?: string;
+    /** Diseño serializado del constructor, para reeditar. */
+    design_json?: any;
   };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   subscription_created_email?: {
@@ -36,6 +40,10 @@ export class Organization extends Document {
     title?: string;
     body?: string;
     body_html?: string;
+    /** HTML completo exportado por el constructor visual (tipo Canva). */
+    html?: string;
+    /** Diseño serializado del constructor, para reeditar. */
+    design_json?: any;
   };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   subscription_updated_email?: {
@@ -44,6 +52,10 @@ export class Organization extends Document {
     title?: string;
     body?: string;
     body_html?: string;
+    /** HTML completo exportado por el constructor visual (tipo Canva). */
+    html?: string;
+    /** Diseño serializado del constructor, para reeditar. */
+    design_json?: any;
   };
 }
 
