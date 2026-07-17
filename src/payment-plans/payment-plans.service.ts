@@ -347,11 +347,17 @@ export class PaymentPlansService {
   }
 
   // Método para obtener el plan de pago de una organización (o usuario) por su ID
+  // Aunque el schema declara organization_user_id como unique, ese índice no
+  // existe en la BD y hay usuarios con múltiples planes (renovaciones creadas
+  // como plan nuevo en vez de extender el existente). Sin sort, findOne
+  // devuelve el más viejo — que puede estar vencido aunque haya uno activo —
+  // así que siempre se resuelve el de vigencia más lejana.
   async getPaymentPlanByOrganizationUserId(
     organizationUserId: string,
   ): Promise<PaymentPlan> {
     const plan = await this.paymentPlanModel
       .findOne({ organization_user_id: organizationUserId })
+      .sort({ date_until: -1 })
       .exec();
     if (!plan) {
       throw new NotFoundException('Plan de pago no encontrado para el usuario');
@@ -366,6 +372,7 @@ export class PaymentPlansService {
   ): Promise<PaymentPlan | null> {
     return this.paymentPlanModel
       .findOne({ organization_user_id: organizationUserId })
+      .sort({ date_until: -1 })
       .exec();
   }
 
@@ -373,6 +380,7 @@ export class PaymentPlansService {
   async isUserAccessValid(organizationUserId: string): Promise<boolean> {
     const plan = await this.paymentPlanModel
       .findOne({ organization_user_id: organizationUserId })
+      .sort({ date_until: -1 })
       .exec();
     if (!plan) {
       // Si no se encontró un plan, se niega el acceso
