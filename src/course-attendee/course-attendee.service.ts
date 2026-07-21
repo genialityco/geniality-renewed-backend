@@ -150,6 +150,17 @@ export class CourseAttendeeService {
       .exec();
   }
 
+  /**
+   * Devuelve todos los inscritos de un curso (para comparar el avance del
+   * grupo). Type-agnostic por el mismo motivo que el resto del servicio:
+   * event_id puede estar guardado como string u ObjectId.
+   */
+  async findByEventId(eventId: string): Promise<CourseAttendee[]> {
+    return this.courseAttendeeModel
+      .find({ event_id: { $in: this.idVariants(eventId) } })
+      .exec();
+  }
+
   async update(id: string, updateDto: any): Promise<CourseAttendee> {
     // updateDto podría ser { status: 'COMPLETED' } o similar
     const updated = await this.courseAttendeeModel

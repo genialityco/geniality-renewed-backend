@@ -5,6 +5,7 @@ import { RemindersService } from './reminders.service';
 import { RemindersCron } from './reminders.cron';
 import { RemindersController } from './reminders.controller';
 import { WeeklyReportService } from './weekly-report.service';
+import { CourseRankingService } from './course-ranking.service';
 import { WhatsappGatewayClient } from './whatsapp-gateway.client';
 import {
   UserActivitySnapshot,
@@ -14,6 +15,7 @@ import { UserActivityModule } from 'src/user-activity/user-activity.module';
 import { UsersModule } from 'src/users/users.module';
 import { OrganizationsModule } from 'src/organizations/organizations.module';
 import { OrganizationUsersModule } from 'src/organization-users/organization-users.module';
+import { CourseAttendeeModule } from 'src/course-attendee/course-attendee.module';
 
 @Module({
   imports: [
@@ -25,10 +27,12 @@ import { OrganizationUsersModule } from 'src/organization-users/organization-use
     UsersModule,
     OrganizationsModule,
     OrganizationUsersModule,
+    CourseAttendeeModule,
   ],
   providers: [
     RemindersService,
     WeeklyReportService,
+    CourseRankingService,
     WhatsappGatewayClient,
     RemindersCron,
   ],
