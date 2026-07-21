@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+// Cron y CronExpression se reimportan de '@nestjs/schedule' al reactivar los jobs de abajo
 import { RemindersService } from './reminders.service';
 import { WeeklyReportService } from './weekly-report.service';
 
@@ -12,7 +12,8 @@ export class RemindersCron {
     private readonly weeklyReportService: WeeklyReportService,
   ) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  // Desactivado temporalmente: recordatorios de inactividad pausados
+  // @Cron(CronExpression.EVERY_DAY_AT_9AM)
   async run() {
     this.logger.log('Iniciando job de recordatorios de inactividad (3 días)');
     try {
@@ -25,8 +26,9 @@ export class RemindersCron {
     }
   }
 
+  // Desactivado temporalmente: reporte semanal pausado
   // Lunes 10am, una hora después del job de inactividad para no solaparse
-  @Cron('0 10 * * 1')
+  // @Cron('0 10 * * 1')
   async runWeeklyReport() {
     this.logger.log('Iniciando job de reporte semanal de progreso');
     try {
