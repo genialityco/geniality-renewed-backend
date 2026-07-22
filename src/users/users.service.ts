@@ -9,6 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from './schemas/user.schema';
 import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema';
+import { Organization } from 'src/organizations/schemas/organization.schema';
 import admin from 'src/firebase-admin';
 
 type TokenEntry = { token: string; createdAt: Date };
@@ -35,13 +36,24 @@ export class UsersService {
     @InjectModel(User.name) private userModel: Model<User>,
     @InjectModel(OrganizationUser.name)
     private organizationUserModel: Model<OrganizationUser>,
+    @InjectModel(Organization.name)
+    private organizationModel: Model<Organization>,
   ) {}
 
-  /** ¿Tiene `userMongoId` un rol administrativo en alguna organización? */
+  /**
+   * ¿Tiene `userMongoId` acceso administrativo en alguna organización?
+   * Misma regla que orgAccess.ts en el frontend: rol_id administrativo en la
+   * membresía, O ser el autor/dueño de la organización (en la práctica la
+   * mayoría de admins reales lo son por autoría, no por rol_id literal).
+   */
   private async isAdminUser(userMongoId: unknown): Promise<boolean> {
-    const memberships = await this.organizationUserModel
-      .find({ user_id: userMongoId }, { rol_id: 1, _id: 0 })
-      .lean();
+    const [memberships, authoredOrg] = await Promise.all([
+      this.organizationUserModel
+        .find({ user_id: userMongoId }, { rol_id: 1, _id: 0 })
+        .lean(),
+      this.organizationModel.exists({ author: userMongoId }),
+    ]);
+    if (authoredOrg) return true;
     return memberships.some((m) =>
       ADMIN_ROLES.includes(String((m as any).rol_id || '').toLowerCase()),
     );
