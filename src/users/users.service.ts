@@ -8,9 +8,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from './schemas/user.schema';
+import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema';
 import admin from 'src/firebase-admin';
 
 type TokenEntry = { token: string; createdAt: Date };
+
+// Mismos valores que ADMIN_ROLES en gencampus-frontend/src/utils/orgAccess.ts:
+// cuentas con alguno de estos roles en cualquier organización no tienen
+// límite de sesiones concurrentes.
+const ADMIN_ROLES = ['admin', 'owner', 'super_admin'];
 
 function normalizeTokens(arr: any[]): TokenEntry[] {
   if (!Array.isArray(arr)) return [];
@@ -25,7 +31,21 @@ function normalizeTokens(arr: any[]): TokenEntry[] {
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private userModel: Model<User>) {}
+  constructor(
+    @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(OrganizationUser.name)
+    private organizationUserModel: Model<OrganizationUser>,
+  ) {}
+
+  /** ¿Tiene `userMongoId` un rol administrativo en alguna organización? */
+  private async isAdminUser(userMongoId: unknown): Promise<boolean> {
+    const memberships = await this.organizationUserModel
+      .find({ user_id: userMongoId }, { rol_id: 1, _id: 0 })
+      .lean();
+    return memberships.some((m) =>
+      ADMIN_ROLES.includes(String((m as any).rol_id || '').toLowerCase()),
+    );
+  }
 
   // ========= Helper para obtener uid desde userId =========
   private async resolveUidByUserIdOrThrow(userId: string): Promise<string> {
@@ -312,6 +332,8 @@ export class UsersService {
 
   /**
    * Genera un token, lo agrega a la lista y recorta a los 2 más recientes.
+   * Las cuentas con rol administrativo (ADMIN_ROLES) no tienen límite: pueden
+   * mantener tantas sesiones concurrentes como quieran sin revocar ninguna.
    * Devuelve el token generado, además del documento de usuario.
    */
   async updateSessionToken(
@@ -324,12 +346,14 @@ export class UsersService {
       .lean();
     if (!doc) throw new NotFoundException('Usuario no encontrado');
 
+    const isAdmin = await this.isAdminUser((doc as any)._id);
+
     const current = normalizeTokens((doc as any).sessionTokens);
     const next = [...current, { token: newToken, createdAt: new Date() }].sort(
       (a, b) => +a.createdAt - +b.createdAt,
     );
 
-    const kept: TokenEntry[] = next.slice(-2);
+    const kept: TokenEntry[] = isAdmin ? next : next.slice(-2);
     const keptSet = new Set(kept.map((e) => e.token));
 
     const revokedTokens = next
