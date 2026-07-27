@@ -7,6 +7,7 @@ import { HttpModule } from '@nestjs/axios';
 import { TranscriptSegmentsModule } from 'src/transcript-segments/transcript-segments.module';
 import { TranscriptionPollingService } from './transcription-polling.service';
 import { VimeoResolverService } from './vimeo-resolver.service';
+import { VimeoTranscriptService } from './vimeo-transcript.service';
 import { DocumentsModule } from '../documents/documents.module';
 import { MigrationTextTranscriptionService } from './migration-text-transcription.service';
 
@@ -19,7 +20,7 @@ import { MigrationTextTranscriptionService } from './migration-text-transcriptio
     TranscriptSegmentsModule,
     DocumentsModule,
   ],
-  providers: [ActivitiesService, TranscriptionPollingService, VimeoResolverService, MigrationTextTranscriptionService],
+  providers: [ActivitiesService, TranscriptionPollingService, VimeoResolverService, VimeoTranscriptService, MigrationTextTranscriptionService],
   controllers: [ActivitiesController],
 })
 export class ActivitiesModule {}

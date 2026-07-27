@@ -16,6 +16,7 @@ import { Activity } from './schemas/activity.schema';
 import { TranscriptSegmentsService } from 'src/transcript-segments/transcript-segments.service';
 import { TranscriptionPollingService } from './transcription-polling.service';
 import { VimeoResolverService } from './vimeo-resolver.service';
+import { VimeoTranscriptService } from './vimeo-transcript.service';
 import { MigrationTextTranscriptionService, MigrationResult } from './migration-text-transcription.service';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
@@ -29,6 +30,7 @@ export class ActivitiesController {
     private readonly httpService: HttpService,
     private readonly transcriptionPollingService: TranscriptionPollingService,
     private readonly vimeoResolverService: VimeoResolverService,
+    private readonly vimeoTranscriptService: VimeoTranscriptService,
     private readonly documentsService: DocumentsService,
     private readonly migrationService: MigrationTextTranscriptionService,
   ) {}
@@ -194,6 +196,73 @@ export class ActivitiesController {
         }`,
       );
     }
+  }
+
+  // Importar la transcripción (.vtt) que Vimeo ya tiene para el video de la actividad
+  @Post('import-vimeo-transcript/:activity_id')
+  async importVimeoTranscript(@Param('activity_id') activity_id: string) {
+    const activity = await this.activitiesService.findOne(activity_id);
+    if (!activity) {
+      throw new NotFoundException('Activity not found');
+    }
+
+    if (!activity.video) {
+      throw new BadRequestException('This activity has no video URL');
+    }
+
+    if (!this.vimeoTranscriptService.isVimeoUrl(activity.video)) {
+      throw new BadRequestException('The activity video is not a Vimeo URL');
+    }
+
+    let result;
+    try {
+      result = await this.vimeoTranscriptService.fetchTranscript(
+        activity.video,
+      );
+    } catch (error: any) {
+      console.error('❌ Error importando transcripción de Vimeo:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+      throw new BadRequestException(
+        `Failed to import Vimeo transcript: ${
+          error.response?.data?.error || error.message || 'Unknown error'
+        }`,
+      );
+    }
+
+    // Vimeo no tiene transcripción para este video
+    if (!result) {
+      return {
+        message: 'Vimeo no tiene transcripción disponible para este video',
+        status: 'no_transcript',
+      };
+    }
+
+    // Guardar segmentos con tiempos
+    await this.transcriptSegmentsService.createSegments(
+      activity_id,
+      result.segments,
+    );
+
+    // Marcar transcript disponible y guardar el texto completo
+    await this.activitiesService.updateTranscriptAvailable(activity_id, true);
+    await this.activitiesService.update(activity_id, {
+      textTranscription: result.fullText,
+    });
+
+    console.log(
+      `✅ Transcripción de Vimeo importada para activity ${activity_id} (${result.segments.length} segmentos, idioma: ${result.language})`,
+    );
+
+    return {
+      message: 'Transcripción importada desde Vimeo correctamente',
+      status: 'done',
+      segmentCount: result.segments.length,
+      language: result.language,
+      label: result.label,
+    };
   }
 
   @Get('transcription-status/:job_id')
