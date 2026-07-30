@@ -32,6 +32,16 @@ export class Event extends Document {
   @Prop({ default: 'es' }) language?: string;
   @Prop({ default: 0 }) progress: number;
 
+  // ===== Reglas de avance del curso =====
+  // Curso lineal: obliga a completar la actividad anterior antes de avanzar.
+  @Prop({ default: false }) is_linear: boolean;
+  // El examen requiere un porcentaje mínimo de avance del curso.
+  @Prop({ default: false }) exam_gating_enabled: boolean;
+  // Porcentaje mínimo de avance (0-100) para desbloquear el examen.
+  @Prop({ default: 100, min: 0, max: 100 }) exam_min_progress: number;
+  // Mensaje que ve el alumno cuando el examen está bloqueado.
+  @Prop({ default: '' }) exam_locked_message: string;
+
   @Prop({ type: Map, of: MongooseSchema.Types.Mixed, default: {} })
   styles?: Record<string, any>;
 }
