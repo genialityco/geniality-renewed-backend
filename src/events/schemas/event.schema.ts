@@ -42,6 +42,14 @@ export class Event extends Document {
   // Mensaje que ve el alumno cuando el examen está bloqueado.
   @Prop({ default: '' }) exam_locked_message: string;
 
+  // ===== Compuerta de exámenes de módulo =====
+  // Bloquea el examen de cada módulo hasta cierto avance de sus actividades.
+  @Prop({ default: false }) module_exam_gating_enabled: boolean;
+  // Porcentaje de actividades del módulo que deben completarse (0-100).
+  @Prop({ default: 100, min: 0, max: 100 }) module_exam_min_progress: number;
+  // Mensaje que ve el alumno cuando el examen del módulo está bloqueado.
+  @Prop({ default: '' }) module_exam_locked_message: string;
+
   // ===== Reglas de desbloqueo del certificado =====
   // Por defecto no hay reglas: el certificado se rige por el comportamiento actual.
   @Prop({ default: false }) certificate_gating_enabled: boolean;
