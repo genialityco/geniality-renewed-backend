@@ -133,6 +133,11 @@ export class CreateQuizDto {
   @IsString()
   eventId: string;
 
+  /** Módulo al que pertenece el examen. Ausente/null = examen general del curso. */
+  @IsOptional()
+  @IsString()
+  moduleId?: string | null;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => QuestionDto)
@@ -140,6 +145,11 @@ export class CreateQuizDto {
 }
 
 export class UpdateQuizDto {
+  /** Permite reasignar el examen a otro módulo (o dejarlo general con null). */
+  @IsOptional()
+  @IsString()
+  moduleId?: string | null;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => QuestionDto)

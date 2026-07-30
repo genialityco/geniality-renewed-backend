@@ -42,6 +42,18 @@ export class Event extends Document {
   // Mensaje que ve el alumno cuando el examen está bloqueado.
   @Prop({ default: '' }) exam_locked_message: string;
 
+  // ===== Reglas de desbloqueo del certificado =====
+  // Por defecto no hay reglas: el certificado se rige por el comportamiento actual.
+  @Prop({ default: false }) certificate_gating_enabled: boolean;
+  // Nº mínimo de actividades completadas requeridas. null = sin requisito.
+  @Prop({ type: Number, default: null })
+  certificate_required_activities: number | null;
+  // Nº mínimo de exámenes aprobados requeridos. null = sin requisito.
+  @Prop({ type: Number, default: null })
+  certificate_required_exams: number | null;
+  // Mensaje que ve el alumno cuando el certificado está bloqueado.
+  @Prop({ default: '' }) certificate_locked_message: string;
+
   @Prop({ type: Map, of: MongooseSchema.Types.Mixed, default: {} })
   styles?: Record<string, any>;
 }
