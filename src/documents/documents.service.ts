@@ -14,6 +14,13 @@ import {
 import { ExtractorFactory } from './extractors/extractor.factory';
 import { UsersService } from '../users/users.service';
 import { v4 as uuidv4 } from 'uuid';
+import admin from '../firebase-admin';
+
+/**
+ * URL firmada con vencimiento lejano para que el material de apoyo siga
+ * accesible sin re-firmar, igual que las plantillas/certificados.
+ */
+const SIGNED_URL_FAR_FUTURE = '01-01-2500';
 
 type UploadedDocumentFile = {
   buffer: Buffer;
@@ -67,6 +74,24 @@ export class DocumentsService {
 
       const storageKey = `documents/${uploadDto.organizationId}/${uuidv4()}-${file.originalname}`;
 
+      // Subir el archivo real a Firebase Storage y generar una URL firmada que
+      // fuerce la descarga (Content-Disposition: attachment). Antes solo se
+      // guardaba el storageKey sin subir el archivo, por eso "Descargar" abría
+      // una ventana vacía y nunca bajaba el documento.
+      const bucket = admin.storage().bucket();
+      const storageFile = bucket.file(storageKey);
+      await storageFile.save(file.buffer, {
+        contentType: file.mimetype,
+        metadata: { cacheControl: 'public, max-age=31536000' },
+      });
+      const [downloadUrl] = await storageFile.getSignedUrl({
+        action: 'read',
+        expires: SIGNED_URL_FAR_FUTURE,
+        responseDisposition: `attachment; filename="${encodeURIComponent(
+          file.originalname,
+        )}"`,
+      });
+
       const document = new this.documentModel({
         name: file.originalname,
         originalName: file.originalname,
@@ -86,7 +111,7 @@ export class DocumentsService {
         uploadedAt: new Date(),
         content,
         extractedAt: new Date(),
-        url: storageKey,
+        url: downloadUrl,
         tags: uploadDto.tags || [],
       });
 
