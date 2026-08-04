@@ -22,6 +22,8 @@ export class Organization extends Document {
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   tab_titles?: { courses?: string; activities?: string; exclusive?: string };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  tab_visibility?: { courses?: boolean; activities?: boolean; exclusive?: boolean };
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   welcome_email?: {
     enabled?: boolean;
     subject?: string;
