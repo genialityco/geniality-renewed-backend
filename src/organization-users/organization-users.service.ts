@@ -21,6 +21,9 @@ import {
 import { PaymentPlansService } from 'src/payment-plans/payment-plans.service';
 import { UsersService } from 'src/users/users.service';
 import * as admin from 'firebase-admin';
+import { CourseAttendee } from 'src/course-attendee/schemas/course-attendee.schema';
+import { ActivityAttendee } from 'src/activity-attendee/schemas/activity-attendee.schema';
+import { UserActivity } from 'src/user-activity/schemas/user-activity.schema';
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -35,7 +38,30 @@ export class OrganizationUsersService {
     private readonly paymentPlansService: PaymentPlansService,
     private readonly emailService: EmailService,
     private readonly usersService: UsersService,
+    @InjectModel(CourseAttendee.name)
+    private readonly courseAttendeeModel: Model<CourseAttendee>,
+    @InjectModel(ActivityAttendee.name)
+    private readonly activityAttendeeModel: Model<ActivityAttendee>,
+    @InjectModel(UserActivity.name)
+    private readonly userActivityModel: Model<UserActivity>,
   ) {}
+
+  /**
+   * Devuelve las dos representaciones posibles de un id (string y ObjectId).
+   * user_id puede estar guardado como string u ObjectId según cómo se
+   * insertó el registro (ver mismo patrón en EventMetricsService).
+   */
+  private idVariants(id: string | Types.ObjectId): any[] {
+    const raw = String(id);
+    const out: any[] = [raw];
+    if (
+      Types.ObjectId.isValid(raw) &&
+      String(new Types.ObjectId(raw)) === raw
+    ) {
+      out.push(new Types.ObjectId(raw));
+    }
+    return out;
+  }
 
   async createOrUpdateUser(
     properties: any,
@@ -206,6 +232,36 @@ export class OrganizationUsersService {
     }
     await this.usersService.deleteUserByID(User_id);
     await this.organizationUserModel.deleteOne({ user_id }).exec();
+
+    // Sin esto, el progreso del usuario queda huérfano: sigue referenciando
+    // un user_id que ya no existe en User ni en organization-users, y no hay
+    // forma de volver a mostrarlo (nombre/correo) en ningún admin. Se borra
+    // best-effort (no debe tumbar el borrado del miembro si algo falla acá).
+    //
+    // Se usa el driver nativo (.collection) y no el modelo de Mongoose: estas
+    // colecciones tienen user_id guardado como string u ObjectId según cómo
+    // se insertó el registro, y el modelo castearía el filtro al tipo
+    // declarado en el schema, perdiendo el otro tipo (mismo motivo que
+    // idVariants en EventMetricsService/ActivityAttendeeService).
+    try {
+      const userVals = this.idVariants(User_id);
+      await Promise.all([
+        this.courseAttendeeModel.collection.deleteMany({
+          user_id: { $in: userVals },
+        }),
+        this.activityAttendeeModel.collection.deleteMany({
+          user_id: { $in: userVals },
+        }),
+        this.userActivityModel.collection.deleteMany({
+          user_id: { $in: userVals },
+        }),
+      ]);
+    } catch (error: any) {
+      console.error(
+        'Error limpiando progreso huérfano al eliminar miembro:',
+        error?.message || error,
+      );
+    }
   }
 
   async findByUserId(user_id: string): Promise<OrganizationUser> {

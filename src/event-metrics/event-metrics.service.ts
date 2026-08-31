@@ -10,6 +10,9 @@ import { UserActivity } from '../user-activity/schemas/user-activity.schema';
 import { Quiz, QuizDocument } from '../quiz/schemas/quiz.schema';
 import { UserQuizAttempt } from '../user-quiz-attempt/schemas/user-quiz-attempt.schema';
 import { Certificate } from '../certificates/schemas/certificate.schema';
+import { User } from '../users/schemas/user.schema';
+import { OrganizationUser } from '../organization-users/schemas/organization-user.schema';
+import admin from '../firebase-admin';
 
 export interface ActivityMetrics {
   activityId: string;
@@ -65,6 +68,33 @@ export interface EventMetrics {
   };
 }
 
+export interface EventMemberActivityProgress {
+  activityId: string;
+  progress: number;
+  completed: boolean;
+  timeSpentMs: number;
+}
+
+export interface EventMember {
+  userId: string;
+  name: string;
+  email: string;
+  courseProgress: number;
+  status: 'completed' | 'in_progress' | 'not_started';
+  enrolledAt: Date | null;
+  activities: EventMemberActivityProgress[];
+}
+
+export interface EventMembersMetrics {
+  activities: {
+    activityId: string;
+    name: string;
+    moduleName: string | null;
+    moduleOrder: number | null;
+  }[];
+  members: EventMember[];
+}
+
 @Injectable()
 export class EventMetricsService {
   constructor(
@@ -82,6 +112,9 @@ export class EventMetricsService {
     private readonly attemptModel: Model<UserQuizAttempt>,
     @InjectModel(Certificate.name)
     private readonly certificateModel: Model<Certificate>,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(OrganizationUser.name)
+    private readonly organizationUserModel: Model<OrganizationUser>,
   ) {}
 
   /**
@@ -231,14 +264,17 @@ export class EventMetricsService {
     };
   }
 
-  private async getActivityMetrics(
-    eventVals: any[],
-  ): Promise<ActivityMetrics[]> {
-    // event_id del filtro de UserActivity siempre es string (ver
-    // getCourseTimeMetrics); el resto de colecciones tienen tipos mixtos y se
-    // consultan con el driver nativo para evitar el casteo de Mongoose.
-    const eventIdStr = String(eventVals[0]);
-
+  /**
+   * Actividades de un evento con su módulo resuelto, más las dos
+   * representaciones de id de cada actividad (ver idVariants) para poder
+   * matchear activity-attendee/user-activity sin depender de cómo se guardó
+   * el tipo del id.
+   */
+  private async loadActivitiesWithModules(eventVals: any[]): Promise<{
+    activities: any[];
+    moduleById: Map<string, any>;
+    activityVals: any[];
+  }> {
     const [activities, modules] = await Promise.all([
       this.activityModel.collection
         .find(
@@ -254,10 +290,38 @@ export class EventMetricsService {
         .toArray(),
     ]);
 
+    const moduleById = new Map(modules.map((m: any) => [String(m._id), m]));
     // Registros antiguos de activity-attendee pueden no tener event_id (o
     // tenerlo en otro tipo); se recuperan también por activity_id, igual que
     // ActivityAttendeeService.findByUserIdAndEventId.
     const activityVals = activities.flatMap((a: any) => this.idVariants(a._id));
+
+    return { activities, moduleById, activityVals };
+  }
+
+  // Orden estable para el embudo y la tabla de miembros: por orden de módulo
+  // y luego por nombre.
+  private compareActivityOrder(
+    a: { moduleOrder: number | null; name: string },
+    b: { moduleOrder: number | null; name: string },
+  ): number {
+    const orderA = a.moduleOrder ?? Number.MAX_SAFE_INTEGER;
+    const orderB = b.moduleOrder ?? Number.MAX_SAFE_INTEGER;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.name.localeCompare(b.name);
+  }
+
+  private async getActivityMetrics(
+    eventVals: any[],
+  ): Promise<ActivityMetrics[]> {
+    // event_id del filtro de UserActivity siempre es string (ver
+    // getCourseTimeMetrics); el resto de colecciones tienen tipos mixtos y se
+    // consultan con el driver nativo para evitar el casteo de Mongoose.
+    const eventIdStr = String(eventVals[0]);
+
+    const { activities, moduleById, activityVals } =
+      await this.loadActivitiesWithModules(eventVals);
+
     const attendeeMatch: any[] = [{ event_id: { $in: eventVals } }];
     if (activityVals.length) {
       attendeeMatch.push({ activity_id: { $in: activityVals } });
@@ -302,7 +366,6 @@ export class EventMetricsService {
       ]),
     ]);
 
-    const moduleById = new Map(modules.map((m: any) => [String(m._id), m]));
     const attendeesByActivity = new Map(
       attendeeStats.map((s: any) => [String(s._id), s]),
     );
@@ -331,13 +394,7 @@ export class EventMetricsService {
       };
     });
 
-    // Orden estable para el embudo: por orden de módulo y luego por nombre.
-    result.sort((a, b) => {
-      const orderA = a.moduleOrder ?? Number.MAX_SAFE_INTEGER;
-      const orderB = b.moduleOrder ?? Number.MAX_SAFE_INTEGER;
-      if (orderA !== orderB) return orderA - orderB;
-      return a.name.localeCompare(b.name);
-    });
+    result.sort((a, b) => this.compareActivityOrder(a, b));
 
     return result;
   }
@@ -453,5 +510,247 @@ export class EventMetricsService {
       pending,
       failed,
     };
+  }
+
+  /**
+   * Avance de cada miembro inscrito, actividad por actividad. Complementa el
+   * embudo agregado de getActivityMetrics con el detalle por usuario que
+   * necesita el admin para ver quién se quedó atrás y en qué actividad.
+   */
+  async getEventMembers(
+    eventId: string,
+    organizationId: string,
+  ): Promise<EventMembersMetrics> {
+    const event = await this.eventModel.findById(eventId).exec();
+    if (!event || String(event.organizer_id) !== String(organizationId)) {
+      throw new NotFoundException('Evento no encontrado');
+    }
+
+    const eventVals = this.idVariants(eventId);
+
+    const [enrollment, { activities, moduleById, activityVals }] =
+      await Promise.all([
+        this.courseAttendeeModel.aggregate([
+          { $match: { event_id: { $in: eventVals } } },
+          {
+            $group: {
+              _id: { $toString: '$user_id' },
+              progress: { $max: { $ifNull: ['$progress', 0] } },
+              enrolledAt: { $min: '$createdAt' },
+            },
+          },
+          { $sort: { enrolledAt: 1 } },
+        ]),
+        this.loadActivitiesWithModules(eventVals),
+      ]);
+
+    const activityMeta = activities
+      .map((activity: any) => {
+        const mod = activity.module_id
+          ? moduleById.get(String(activity.module_id))
+          : null;
+        return {
+          activityId: String(activity._id),
+          name: activity.name,
+          moduleName: mod?.module_name ?? null,
+          moduleOrder: mod?.order ?? null,
+        };
+      })
+      .sort((a, b) => this.compareActivityOrder(a, b));
+
+    if (enrollment.length === 0) {
+      return { activities: activityMeta, members: [] };
+    }
+
+    // event_id del filtro de UserActivity siempre es string (ver
+    // getCourseTimeMetrics).
+    const eventIdStr = String(eventVals[0]);
+    const attendeeMatch: any[] = [{ event_id: { $in: eventVals } }];
+    if (activityVals.length) {
+      attendeeMatch.push({ activity_id: { $in: activityVals } });
+    }
+
+    const userVals = enrollment.flatMap((m: any) => this.idVariants(m._id));
+    const orgVals = this.idVariants(organizationId);
+
+    const [attendanceByUser, timeByUser, users, orgUsers] = await Promise.all([
+      this.activityAttendeeModel.aggregate([
+        { $match: { $or: attendeeMatch } },
+        // Dedupe usuario+actividad: puede haber duplicados con ids en
+        // distinto tipo (string vs ObjectId). A diferencia de
+        // getActivityMetrics, aquí no se colapsa por actividad: se necesita
+        // el progreso de cada usuario.
+        {
+          $group: {
+            _id: {
+              activity: { $toString: '$activity_id' },
+              user: { $toString: '$user_id' },
+            },
+            progress: { $max: { $ifNull: ['$progress', 0] } },
+          },
+        },
+      ]),
+      this.userActivityModel.aggregate([
+        { $match: { 'activities.event_id': eventIdStr } },
+        { $unwind: '$activities' },
+        { $match: { 'activities.event_id': eventIdStr } },
+        {
+          $group: {
+            _id: {
+              activity: '$activities.activity_id',
+              user: '$user_id',
+            },
+            timeMs: { $sum: '$activities.time_spent_ms' },
+          },
+        },
+      ]),
+      this.userModel.collection
+        .find({ _id: { $in: userVals } }, { projection: { names: 1, email: 1 } })
+        .toArray(),
+      // El nombre/correo "de la organización" vive en properties (config
+      // dinámica por organización, ver OrganizationUsersService.findByEmail y
+      // MembersTab.tsx), no en el User base: para miembros importados o
+      // creados directamente en el flujo de organización, User.names/email
+      // suele quedar vacío. No se filtra por organization_id: un miembro
+      // puede estar inscrito a un curso de esta organización pero tener su
+      // registro de organization-user en otra (multi-org); se prefiere el de
+      // esta organización pero se acepta cualquiera antes que no mostrar nada.
+      this.organizationUserModel.collection
+        .find(
+          { user_id: { $in: userVals } },
+          { projection: { properties: 1, user_id: 1, organization_id: 1 } },
+        )
+        .toArray(),
+    ]);
+
+    const progressByKey = new Map(
+      attendanceByUser.map((a: any) => [
+        `${a._id.activity}|${a._id.user}`,
+        a.progress,
+      ]),
+    );
+    const timeByKey = new Map(
+      timeByUser.map((t: any) => [`${t._id.activity}|${t._id.user}`, t.timeMs]),
+    );
+    const userById = new Map(users.map((u: any) => [String(u._id), u]));
+
+    const orgUsersByUserId = new Map<string, any[]>();
+    for (const ou of orgUsers as any[]) {
+      const key = String(ou.user_id);
+      if (!orgUsersByUserId.has(key)) orgUsersByUserId.set(key, []);
+      orgUsersByUserId.get(key)!.push(ou);
+    }
+    const pickOrgUser = (userId: string): any => {
+      const list = orgUsersByUserId.get(userId);
+      if (!list || list.length === 0) return null;
+      return (
+        list.find(
+          (ou) => String(ou.organization_id) === String(organizationId),
+        ) ?? list[0]
+      );
+    };
+
+    const draftMembers = enrollment.map((m: any) => {
+      const user: any = userById.get(m._id);
+      const orgUser = pickOrgUser(m._id);
+      const props = orgUser?.properties || {};
+
+      // El perfil de organización (properties) es la fuente de verdad del
+      // nombre/correo mostrado al admin; el User base es solo respaldo (ver
+      // comentario junto a la consulta de organizationUserModel más arriba).
+      const fullName = [props.nombres, props.apellidos]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      const name: string | null =
+        fullName || props.names || props.name || user?.names || null;
+      const email: string = props.email || props.correo || user?.email || '';
+
+      return { m, name, email, userExists: !!user };
+    });
+
+    // Último recurso: usuarios activos (tienen progreso real) sin User ni
+    // organization-user — por ejemplo si la cuenta se creó a medias y el
+    // documento User nunca llegó a persistirse. UserActivity sí guarda el
+    // firebase_uid en la raíz del documento (no depende de User), así que se
+    // usa para resolver nombre/correo directo desde Firebase Auth.
+    const unresolvedIds = draftMembers
+      .filter((d) => !d.name)
+      .map((d) => String(d.m._id));
+
+    const firebaseByUserId = new Map<string, { name?: string; email?: string }>();
+    if (unresolvedIds.length > 0) {
+      const uaDocs = await this.userActivityModel.collection
+        .find(
+          { user_id: { $in: unresolvedIds } },
+          { projection: { user_id: 1, firebase_uid: 1 } },
+        )
+        .toArray();
+      const firebaseUidByUserId = new Map(
+        uaDocs.map((d: any) => [String(d.user_id), d.firebase_uid]),
+      );
+
+      await Promise.all(
+        unresolvedIds.map(async (userId) => {
+          const uid = firebaseUidByUserId.get(userId);
+          if (!uid) return;
+          try {
+            const fbUser = await admin.auth().getUser(uid);
+            firebaseByUserId.set(userId, {
+              name: fbUser.displayName,
+              email: fbUser.email,
+            });
+          } catch {
+            // Cuenta de Firebase también inexistente/eliminada: se deja sin
+            // resolver, cae al fallback "Usuario sin nombre".
+          }
+        }),
+      );
+    }
+
+    const members: EventMember[] = draftMembers.map(
+      ({ m, name, email, userExists }) => {
+        const fallback = firebaseByUserId.get(String(m._id));
+        const memberActivities = activityMeta.map((meta) => {
+          const key = `${meta.activityId}|${m._id}`;
+          const progress = progressByKey.get(key) ?? 0;
+          return {
+            activityId: meta.activityId,
+            progress: Math.round(progress),
+            completed: progress >= 100,
+            timeSpentMs: timeByKey.get(key) ?? 0,
+          };
+        });
+
+        const resolvedName = name || fallback?.name || null;
+        // Si ni el User base ni Firebase Auth tienen rastro de esta persona,
+        // es casi siempre porque la cuenta fue eliminada desde el admin
+        // (OrganizationUsersService.deleteOrganizationUser borra el User y el
+        // organization-user, pero no los registros de asistencia/progreso que
+        // ya generó) — se etiqueta distinto de un perfil real simplemente sin
+        // nombre cargado.
+        const name_ =
+          resolvedName ??
+          (userExists || fallback ? 'Usuario sin nombre' : 'Cuenta eliminada');
+
+        const courseProgress = Math.round(m.progress ?? 0);
+        return {
+          userId: m._id,
+          name: name_,
+          email: email || fallback?.email || '',
+          courseProgress,
+          status:
+            courseProgress >= 100
+              ? 'completed'
+              : courseProgress > 0
+                ? 'in_progress'
+                : 'not_started',
+          enrolledAt: m.enrolledAt ?? null,
+          activities: memberActivities,
+        };
+      },
+    );
+
+    return { activities: activityMeta, members };
   }
 }

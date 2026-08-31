@@ -30,6 +30,7 @@ import {
   OrganizationUser,
   OrganizationUserSchema,
 } from '../organization-users/schemas/organization-user.schema';
+import { User, UserSchema } from '../users/schemas/user.schema';
 import { UsersModule } from '../users/users.module';
 
 @Module({
@@ -44,9 +45,12 @@ import { UsersModule } from '../users/users.module';
       { name: Quiz.name, schema: QuizSchema },
       { name: UserQuizAttempt.name, schema: UserQuizAttemptSchema },
       { name: Certificate.name, schema: CertificateSchema },
-      // Para OrgMembershipGuard (aislamiento por organización), sin importar
-      // OrganizationUsersModule que arrastra el ciclo con PaymentPlansModule.
+      // Para OrgMembershipGuard (aislamiento por organización) y para leer el
+      // nombre/correo del perfil de organización en getEventMembers; sin
+      // importar OrganizationUsersModule que arrastra el ciclo con
+      // PaymentPlansModule.
       { name: OrganizationUser.name, schema: OrganizationUserSchema },
+      { name: User.name, schema: UserSchema },
     ]),
     // Provee UsersService para SessionTokenGuard y OrgMembershipGuard.
     UsersModule,

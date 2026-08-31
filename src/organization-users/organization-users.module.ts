@@ -13,12 +13,30 @@ import {
   Organization,
   OrganizationSchema,
 } from 'src/organizations/schemas/organization.schema';
+import {
+  CourseAttendee,
+  CourseAttendeeSchema,
+} from 'src/course-attendee/schemas/course-attendee.schema';
+import {
+  ActivityAttendee,
+  ActivityAttendeeSchema,
+} from 'src/activity-attendee/schemas/activity-attendee.schema';
+import {
+  UserActivity,
+  UserActivitySchema,
+} from 'src/user-activity/schemas/user-activity.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: OrganizationUser.name, schema: OrganizationUserSchema },
       { name: Organization.name, schema: OrganizationSchema },
+      // Para limpiar el progreso del usuario al eliminarlo (ver
+      // deleteOrganizationUser): sin esto, borrar un miembro deja huérfanos
+      // en estas colecciones (referencian user_id pero nadie los borra).
+      { name: CourseAttendee.name, schema: CourseAttendeeSchema },
+      { name: ActivityAttendee.name, schema: ActivityAttendeeSchema },
+      { name: UserActivity.name, schema: UserActivitySchema },
     ]),
     EmailModule,
     UsersModule,

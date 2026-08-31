@@ -8,7 +8,11 @@ import {
 import { Types } from 'mongoose';
 import { SessionTokenGuard } from 'src/auth/session-token.guard';
 import { OrgMembershipGuard } from 'src/auth/org-membership.guard';
-import { EventMetricsService, EventMetrics } from './event-metrics.service';
+import {
+  EventMetricsService,
+  EventMetrics,
+  EventMembersMetrics,
+} from './event-metrics.service';
 
 @Controller('event-metrics')
 export class EventMetricsController {
@@ -35,5 +39,23 @@ export class EventMetricsController {
       throw new BadRequestException('eventId inválido');
     }
     return this.eventMetricsService.getEventMetrics(eventId, organizationId);
+  }
+
+  /**
+   * GET /event-metrics/organization/:organizationId/event/:eventId/members
+   *
+   * Avance de cada miembro inscrito, actividad por actividad. Complementa el
+   * embudo agregado de arriba con el detalle por usuario.
+   */
+  @UseGuards(SessionTokenGuard, OrgMembershipGuard)
+  @Get('organization/:organizationId/event/:eventId/members')
+  async getEventMembers(
+    @Param('organizationId') organizationId: string,
+    @Param('eventId') eventId: string,
+  ): Promise<EventMembersMetrics> {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException('eventId inválido');
+    }
+    return this.eventMetricsService.getEventMembers(eventId, organizationId);
   }
 }
