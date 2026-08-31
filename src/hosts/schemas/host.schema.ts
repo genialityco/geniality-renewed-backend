@@ -12,11 +12,14 @@ export class Host extends Document {
   @Prop({ default: false })
   description_activity: boolean;
 
-  @Prop({ required: true })
+  @Prop({ default: '' })
   description: string;
 
   @Prop({ default: null })
   profession: string;
+
+  @Prop({ default: null })
+  country: string;
 
   @Prop({ required: true })
   published: boolean;

@@ -199,6 +199,20 @@ export class Quiz {
   @Prop({ type: Types.ObjectId, ref: 'Event', required: true, index: true })
   eventId: Types.ObjectId;
 
+  /**
+   * Módulo al que pertenece el examen. `null` = examen general del curso.
+   * Un evento puede tener varios exámenes (uno general + uno por módulo).
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Module', default: null, index: true })
+  moduleId: Types.ObjectId | null;
+
+  /**
+   * Si está deshabilitado, el examen no se muestra al alumno en el curso
+   * (pero sigue existiendo y editable en el admin).
+   */
+  @Prop({ default: true })
+  enabled: boolean;
+
   @Prop({ type: [QuestionSchema], default: [] })
   questions: Question[];
 
@@ -211,5 +225,6 @@ export class Quiz {
 
 export const QuizSchema = SchemaFactory.createForClass(Quiz);
 
-// Ensure only one quiz per event (sparse para ignorar nulls)
-QuizSchema.index({ eventId: 1 }, { unique: true, sparse: true });
+// Un evento puede tener varios exámenes (general + por módulo). Índice NO único
+// para búsquedas por evento/módulo.
+QuizSchema.index({ eventId: 1, moduleId: 1 });

@@ -32,6 +32,18 @@ export class QuizService implements OnModuleInit {
         );
       }
 
+      // Elimina el índice único legado por evento para permitir varios exámenes
+      // por curso (uno general + uno por módulo).
+      const uniqueEventIndex = indexes.find(
+        (idx) => idx.name === 'eventId_1' && idx.unique,
+      );
+      if (uniqueEventIndex) {
+        await this.quizModel.collection.dropIndex('eventId_1');
+        this.logger.warn(
+          'Dropped legacy unique index "eventId_1" from quizzes collection.',
+        );
+      }
+
       // Asegura que los índices definidos en el esquema queden sincronizados.
       await this.quizModel.syncIndexes();
     } catch (error) {
@@ -46,16 +58,27 @@ export class QuizService implements OnModuleInit {
   async create(dto: CreateQuizDto): Promise<QuizDocument> {
     const eventObjectId = new Types.ObjectId(dto.eventId);
 
-    // Enforce one quiz per event at the service layer too (schema has unique index)
-    const existing = await this.quizModel.findOne({ eventId: eventObjectId });
+    // Un evento admite varios exámenes: uno general (moduleId null) y uno por
+    // módulo. Evitamos duplicar el examen general o el de un mismo módulo.
+    const moduleObjectId = dto.moduleId
+      ? new Types.ObjectId(dto.moduleId)
+      : null;
+
+    const existing = await this.quizModel.findOne({
+      eventId: eventObjectId,
+      moduleId: moduleObjectId,
+    });
     if (existing) {
       throw new ConflictException(
-        `A quiz already exists for event ${dto.eventId}. Use PUT to update it.`,
+        moduleObjectId
+          ? `A quiz already exists for module ${dto.moduleId}. Use PUT to update it.`
+          : `A general quiz already exists for event ${dto.eventId}. Use PUT to update it.`,
       );
     }
 
     const quiz = new this.quizModel({
       eventId: eventObjectId,
+      moduleId: moduleObjectId,
       questions: dto.questions,
     });
 
@@ -64,9 +87,17 @@ export class QuizService implements OnModuleInit {
 
   // ── Find by event ─────────────────────────────────────────────────────
 
+  /** Devuelve el examen general del curso (moduleId null) para compatibilidad. */
   async findByEventId(eventId: string): Promise<QuizDocument | null> {
     return this.quizModel
-      .findOne({ eventId: new Types.ObjectId(eventId) })
+      .findOne({ eventId: new Types.ObjectId(eventId), moduleId: null })
+      .exec();
+  }
+
+  /** Devuelve todos los exámenes de un curso (general + por módulo). */
+  async findAllByEventId(eventId: string): Promise<QuizDocument[]> {
+    return this.quizModel
+      .find({ eventId: new Types.ObjectId(eventId) })
       .exec();
   }
 
@@ -81,14 +112,36 @@ export class QuizService implements OnModuleInit {
   // ── Update (full replace of questions) ───────────────────────────────
 
   async update(quizId: string, dto: UpdateQuizDto): Promise<QuizDocument> {
+    const update: Record<string, any> = { questions: dto.questions };
+    // Permite reasignar el módulo del examen (o dejarlo como general con null).
+    if (dto.moduleId !== undefined) {
+      update.moduleId = dto.moduleId
+        ? new Types.ObjectId(dto.moduleId)
+        : null;
+    }
+
     const quiz = await this.quizModel
       .findByIdAndUpdate(
         quizId,
-        { $set: { questions: dto.questions } },
+        { $set: update },
         { new: true, runValidators: true },
       )
       .exec();
 
+    if (!quiz) throw new NotFoundException(`Quiz ${quizId} not found`);
+    return quiz;
+  }
+
+  // ── Enable / disable ──────────────────────────────────────────────────
+
+  async setEnabled(quizId: string, enabled: boolean): Promise<QuizDocument> {
+    const quiz = await this.quizModel
+      .findByIdAndUpdate(
+        quizId,
+        { $set: { enabled } },
+        { new: true, runValidators: true },
+      )
+      .exec();
     if (!quiz) throw new NotFoundException(`Quiz ${quizId} not found`);
     return quiz;
   }

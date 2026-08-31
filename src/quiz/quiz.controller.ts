@@ -41,6 +41,24 @@ export class QuizController {
   }
 
   /**
+   * GET /quiz/event/:eventId/list
+   * Devuelve TODOS los exámenes del curso (general + por módulo).
+   */
+  @Get('event/:eventId/list')
+  async findAllByEvent(@Param('eventId') eventId: string) {
+    if (!isValidObjectId(eventId)) {
+      throw new BadRequestException(`Invalid eventId format: ${eventId}`);
+    }
+    try {
+      return await this.quizService.findAllByEventId(eventId);
+    } catch (error) {
+      throw new BadRequestException(
+        `Error finding quizzes for event ${eventId}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
    * GET /quiz/:quizId
    * Returns a quiz by its own id.
    */
@@ -66,6 +84,18 @@ export class QuizController {
   @Put(':quizId')
   async update(@Param('quizId') quizId: string, @Body() dto: UpdateQuizDto) {
     return this.quizService.update(quizId, dto);
+  }
+
+  /**
+   * PATCH /quiz/:quizId/enabled
+   * Habilita o deshabilita el examen (visible u oculto para el alumno).
+   */
+  @Patch(':quizId/enabled')
+  async setEnabled(
+    @Param('quizId') quizId: string,
+    @Body('enabled') enabled: boolean,
+  ) {
+    return this.quizService.setEnabled(quizId, !!enabled);
   }
 
   /**

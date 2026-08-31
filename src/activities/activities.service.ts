@@ -161,9 +161,17 @@ export class ActivitiesService {
 
     const filterStage = {
       $match: {
-        $or: [
-          { organization_id: orgObjectId },
-          { '_event.organizer_id': orgObjectId },
+        $and: [
+          {
+            $or: [
+              { organization_id: orgObjectId },
+              { '_event.organizer_id': orgObjectId },
+            ],
+          },
+          // Excluir actividades cuyo evento/curso tenga la visualización oculta
+          // (visibility === 'PRIVATE'). Las actividades sin evento asociado
+          // (visibility inexistente) o de eventos públicos/exclusivos se mantienen.
+          { '_event.visibility': { $ne: 'PRIVATE' } },
         ],
       },
     };
