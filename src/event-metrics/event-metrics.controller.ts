@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
@@ -12,6 +13,7 @@ import {
   EventMetricsService,
   EventMetrics,
   EventMembersMetrics,
+  EventMembersSortKey,
 } from './event-metrics.service';
 
 @Controller('event-metrics')
@@ -52,10 +54,21 @@ export class EventMetricsController {
   async getEventMembers(
     @Param('organizationId') organizationId: string,
     @Param('eventId') eventId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('search') search?: string,
+    @Query('sortKey') sortKey?: EventMembersSortKey,
+    @Query('sortDir') sortDir?: 'asc' | 'desc',
   ): Promise<EventMembersMetrics> {
     if (!Types.ObjectId.isValid(eventId)) {
       throw new BadRequestException('eventId inválido');
     }
-    return this.eventMetricsService.getEventMembers(eventId, organizationId);
+    return this.eventMetricsService.getEventMembers(eventId, organizationId, {
+      page: page ? parseInt(page, 10) : undefined,
+      pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      search,
+      sortKey,
+      sortDir,
+    });
   }
 }

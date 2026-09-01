@@ -93,6 +93,19 @@ export interface EventMembersMetrics {
     moduleOrder: number | null;
   }[];
   members: EventMember[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export type EventMembersSortKey = 'name' | 'courseProgress' | 'enrolledAt';
+
+export interface GetEventMembersOptions {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sortKey?: EventMembersSortKey;
+  sortDir?: 'asc' | 'desc';
 }
 
 @Injectable()
@@ -116,6 +129,27 @@ export class EventMetricsService {
     @InjectModel(OrganizationUser.name)
     private readonly organizationUserModel: Model<OrganizationUser>,
   ) {}
+
+  // Caché en memoria de las partes costosas (agregaciones + resolución de
+  // nombres) de este dashboard de admin. TTL corto: prioriza no repetir el
+  // trabajo caro cuando el admin cambia de pestaña o pagina/busca/ordena,
+  // aceptando datos hasta CACHE_TTL_MS desactualizados. La validación de
+  // pertenencia del evento a la organización nunca se cachea (ver
+  // getEventMetrics/getEventMembers), así que esto no relaja el aislamiento
+  // por organización.
+  private readonly cache = new Map<string, { data: any; expiresAt: number }>();
+  private readonly CACHE_TTL_MS = 45_000;
+
+  private async getCached<T>(
+    key: string,
+    factory: () => Promise<T>,
+  ): Promise<T> {
+    const hit = this.cache.get(key);
+    if (hit && hit.expiresAt > Date.now()) return hit.data as T;
+    const data = await factory();
+    this.cache.set(key, { data, expiresAt: Date.now() + this.CACHE_TTL_MS });
+    return data;
+  }
 
   /**
    * Devuelve las dos representaciones posibles de un id (string y ObjectId).
@@ -148,17 +182,22 @@ export class EventMetricsService {
       throw new NotFoundException('Evento no encontrado');
     }
 
-    const eventObjectId = new Types.ObjectId(eventId);
-    const eventVals = this.idVariants(eventId);
+    const { enrollment, time, activities, quiz, certificates } =
+      await this.getCached(`metrics:${eventId}`, async () => {
+        const eventObjectId = new Types.ObjectId(eventId);
+        const eventVals = this.idVariants(eventId);
 
-    const [enrollment, time, activities, quiz, certificates] =
-      await Promise.all([
-        this.getEnrollmentMetrics(eventVals),
-        this.getCourseTimeMetrics(eventId),
-        this.getActivityMetrics(eventVals),
-        this.getQuizMetrics(eventObjectId),
-        this.getCertificateMetrics(eventVals),
-      ]);
+        const [enrollment, time, activities, quiz, certificates] =
+          await Promise.all([
+            this.getEnrollmentMetrics(eventVals),
+            this.getCourseTimeMetrics(eventId),
+            this.getActivityMetrics(eventVals),
+            this.getQuizMetrics(eventObjectId),
+            this.getCertificateMetrics(eventVals),
+          ]);
+
+        return { enrollment, time, activities, quiz, certificates };
+      });
 
     return {
       event: {
@@ -520,12 +559,37 @@ export class EventMetricsService {
   async getEventMembers(
     eventId: string,
     organizationId: string,
+    options: GetEventMembersOptions = {},
   ): Promise<EventMembersMetrics> {
     const event = await this.eventModel.findById(eventId).exec();
     if (!event || String(event.organizer_id) !== String(organizationId)) {
       throw new NotFoundException('Evento no encontrado');
     }
 
+    // Solo la organización dueña del evento llega hasta acá (ver validación
+    // arriba), así que para un mismo eventId el organizationId siempre es el
+    // mismo: cachear por eventId solo es seguro.
+    const resolved = await this.getCached(`members:${eventId}`, () =>
+      this.resolveEventMembers(eventId, organizationId),
+    );
+
+    return this.paginateMembers(resolved.activities, resolved.members, options);
+  }
+
+  /**
+   * Resuelve la lista completa de miembros inscritos (sin paginar). Es la
+   * parte cara del endpoint (joins con organization-users/users y fallback a
+   * Firebase Auth) y por eso getEventMembers la cachea entera: paginar,
+   * buscar u ordenar entre requests reutiliza este trabajo en vez de
+   * repetirlo.
+   */
+  private async resolveEventMembers(
+    eventId: string,
+    organizationId: string,
+  ): Promise<{
+    activities: EventMembersMetrics['activities'];
+    members: EventMember[];
+  }> {
     const eventVals = this.idVariants(eventId);
 
     const [enrollment, { activities, moduleById, activityVals }] =
@@ -571,7 +635,6 @@ export class EventMetricsService {
     }
 
     const userVals = enrollment.flatMap((m: any) => this.idVariants(m._id));
-    const orgVals = this.idVariants(organizationId);
 
     const [attendanceByUser, timeByUser, users, orgUsers] = await Promise.all([
       this.activityAttendeeModel.aggregate([
@@ -605,7 +668,10 @@ export class EventMetricsService {
         },
       ]),
       this.userModel.collection
-        .find({ _id: { $in: userVals } }, { projection: { names: 1, email: 1 } })
+        .find(
+          { _id: { $in: userVals } },
+          { projection: { names: 1, email: 1 } },
+        )
         .toArray(),
       // El nombre/correo "de la organización" vive en properties (config
       // dinámica por organización, ver OrganizationUsersService.findByEmail y
@@ -678,7 +744,10 @@ export class EventMetricsService {
       .filter((d) => !d.name)
       .map((d) => String(d.m._id));
 
-    const firebaseByUserId = new Map<string, { name?: string; email?: string }>();
+    const firebaseByUserId = new Map<
+      string,
+      { name?: string; email?: string }
+    >();
     if (unresolvedIds.length > 0) {
       const uaDocs = await this.userActivityModel.collection
         .find(
@@ -689,20 +758,48 @@ export class EventMetricsService {
       const firebaseUidByUserId = new Map(
         uaDocs.map((d: any) => [String(d.user_id), d.firebase_uid]),
       );
+      // userId por cada uid, para poder ir de vuelta de UserRecord a userId
+      // después del lookup batch (varios userId nunca deberían compartir
+      // firebase_uid, pero se usa el último por las dudas).
+      const userIdByUid = new Map<string, string>();
+      const uids = new Set<string>();
+      for (const [userId, uid] of firebaseUidByUserId) {
+        if (!uid) continue;
+        uids.add(uid);
+        userIdByUid.set(uid, userId);
+      }
+
+      // admin.auth().getUsers() acepta hasta 100 identificadores por llamada:
+      // se agrupan los uids en chunks de 100 y se resuelven en batch en vez
+      // de un getUser() por usuario (evita un fan-out sin límite hacia
+      // Firebase Auth cuando hay muchas cuentas huérfanas).
+      const uidList = Array.from(uids);
+      const CHUNK_SIZE = 100;
+      const chunks: string[][] = [];
+      for (let i = 0; i < uidList.length; i += CHUNK_SIZE) {
+        chunks.push(uidList.slice(i, i + CHUNK_SIZE));
+      }
 
       await Promise.all(
-        unresolvedIds.map(async (userId) => {
-          const uid = firebaseUidByUserId.get(userId);
-          if (!uid) return;
+        chunks.map(async (chunk) => {
           try {
-            const fbUser = await admin.auth().getUser(uid);
-            firebaseByUserId.set(userId, {
-              name: fbUser.displayName,
-              email: fbUser.email,
-            });
+            const result = await admin
+              .auth()
+              .getUsers(chunk.map((uid) => ({ uid })));
+            for (const fbUser of result.users) {
+              const userId = userIdByUid.get(fbUser.uid);
+              if (!userId) continue;
+              firebaseByUserId.set(userId, {
+                name: fbUser.displayName,
+                email: fbUser.email,
+              });
+            }
+            // Los uids en result.notFound quedan sin resolver: cuenta de
+            // Firebase también inexistente/eliminada, cae al fallback
+            // "Usuario sin nombre".
           } catch {
-            // Cuenta de Firebase también inexistente/eliminada: se deja sin
-            // resolver, cae al fallback "Usuario sin nombre".
+            // Falla del batch completo (p. ej. error de red): se deja el
+            // chunk sin resolver en vez de reintentar uno por uno.
           }
         }),
       );
@@ -752,5 +849,56 @@ export class EventMetricsService {
     );
 
     return { activities: activityMeta, members };
+  }
+
+  /**
+   * Aplica búsqueda, orden y paginación en memoria sobre la lista completa
+   * ya resuelta (y cacheada) de miembros. Mismo criterio de orden que usaba
+   * antes el frontend (EventMembersPanel.tsx), ahora server-side.
+   */
+  private paginateMembers(
+    activityMeta: EventMembersMetrics['activities'],
+    members: EventMember[],
+    options: GetEventMembersOptions,
+  ): EventMembersMetrics {
+    const sortKey = options.sortKey ?? 'enrolledAt';
+    const sortDir = options.sortDir ?? 'asc';
+    const page = Math.max(1, Math.floor(options.page ?? 1));
+    const pageSize = Math.min(
+      200,
+      Math.max(1, Math.floor(options.pageSize ?? 50)),
+    );
+
+    const term = options.search?.trim().toLowerCase();
+    const filtered = term
+      ? members.filter(
+          (m) =>
+            m.name.toLowerCase().includes(term) ||
+            m.email.toLowerCase().includes(term),
+        )
+      : members;
+
+    const sorted = [...filtered].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === 'name') cmp = a.name.localeCompare(b.name);
+      else if (sortKey === 'courseProgress')
+        cmp = a.courseProgress - b.courseProgress;
+      else
+        cmp = String(a.enrolledAt ?? '').localeCompare(
+          String(b.enrolledAt ?? ''),
+        );
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+
+    const total = sorted.length;
+    const start = (page - 1) * pageSize;
+
+    return {
+      activities: activityMeta,
+      members: sorted.slice(start, start + pageSize),
+      total,
+      page,
+      pageSize,
+    };
   }
 }
