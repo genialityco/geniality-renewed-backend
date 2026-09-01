@@ -538,6 +538,45 @@ describe('EventMetricsService', () => {
       expect(result.members[0].name).toBe('Cuenta eliminada');
     });
 
+    it('resuelve certificateStatus desde el certificado más reciente del usuario', async () => {
+      models.courseAttendee.aggregate.mockResolvedValueOnce([
+        { _id: USER_ID_1, progress: 100, enrolledAt: new Date('2026-01-01') },
+      ]);
+      models.activity.__toArray.mockResolvedValueOnce([]);
+      models.module.__toArray.mockResolvedValueOnce([]);
+      models.activityAttendee.aggregate.mockResolvedValueOnce([]);
+      models.userActivity.aggregate.mockResolvedValueOnce([]);
+      models.user.__toArray.mockResolvedValueOnce([
+        { _id: USER_ID_1, names: 'Uno', email: 'uno@test.com' },
+      ]);
+      models.organizationUser.__toArray.mockResolvedValueOnce([]);
+      models.certificate.aggregate.mockResolvedValueOnce([
+        { _id: USER_ID_1, status: 'COMPLETED' },
+      ]);
+
+      const result = await service.getEventMembers(EVENT_ID, ORG_ID);
+
+      expect(result.members[0].certificateStatus).toBe('COMPLETED');
+    });
+
+    it('marca certificateStatus como NOT_GENERATED cuando el usuario no tiene certificado', async () => {
+      models.courseAttendee.aggregate.mockResolvedValueOnce([
+        { _id: USER_ID_1, progress: 10, enrolledAt: new Date('2026-01-01') },
+      ]);
+      models.activity.__toArray.mockResolvedValueOnce([]);
+      models.module.__toArray.mockResolvedValueOnce([]);
+      models.activityAttendee.aggregate.mockResolvedValueOnce([]);
+      models.userActivity.aggregate.mockResolvedValueOnce([]);
+      models.user.__toArray.mockResolvedValueOnce([
+        { _id: USER_ID_1, names: 'Uno', email: 'uno@test.com' },
+      ]);
+      models.organizationUser.__toArray.mockResolvedValueOnce([]);
+
+      const result = await service.getEventMembers(EVENT_ID, ORG_ID);
+
+      expect(result.members[0].certificateStatus).toBe('NOT_GENERATED');
+    });
+
     it('reutiliza la resolución cacheada al paginar/buscar/ordenar', async () => {
       models.courseAttendee.aggregate.mockResolvedValueOnce([
         { _id: USER_ID_1, progress: 10, enrolledAt: new Date('2026-01-01') },

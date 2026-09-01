@@ -75,6 +75,12 @@ export interface EventMemberActivityProgress {
   timeSpentMs: number;
 }
 
+export type EventMemberCertificateStatus =
+  | 'COMPLETED'
+  | 'PENDING'
+  | 'FAILED'
+  | 'NOT_GENERATED';
+
 export interface EventMember {
   userId: string;
   name: string;
@@ -82,6 +88,7 @@ export interface EventMember {
   courseProgress: number;
   status: 'completed' | 'in_progress' | 'not_started';
   enrolledAt: Date | null;
+  certificateStatus: EventMemberCertificateStatus;
   activities: EventMemberActivityProgress[];
 }
 
@@ -636,58 +643,72 @@ export class EventMetricsService {
 
     const userVals = enrollment.flatMap((m: any) => this.idVariants(m._id));
 
-    const [attendanceByUser, timeByUser, users, orgUsers] = await Promise.all([
-      this.activityAttendeeModel.aggregate([
-        { $match: { $or: attendeeMatch } },
-        // Dedupe usuario+actividad: puede haber duplicados con ids en
-        // distinto tipo (string vs ObjectId). A diferencia de
-        // getActivityMetrics, aquí no se colapsa por actividad: se necesita
-        // el progreso de cada usuario.
-        {
-          $group: {
-            _id: {
-              activity: { $toString: '$activity_id' },
-              user: { $toString: '$user_id' },
+    const [attendanceByUser, timeByUser, users, orgUsers, certificatesByUser] =
+      await Promise.all([
+        this.activityAttendeeModel.aggregate([
+          { $match: { $or: attendeeMatch } },
+          // Dedupe usuario+actividad: puede haber duplicados con ids en
+          // distinto tipo (string vs ObjectId). A diferencia de
+          // getActivityMetrics, aquí no se colapsa por actividad: se necesita
+          // el progreso de cada usuario.
+          {
+            $group: {
+              _id: {
+                activity: { $toString: '$activity_id' },
+                user: { $toString: '$user_id' },
+              },
+              progress: { $max: { $ifNull: ['$progress', 0] } },
             },
-            progress: { $max: { $ifNull: ['$progress', 0] } },
           },
-        },
-      ]),
-      this.userActivityModel.aggregate([
-        { $match: { 'activities.event_id': eventIdStr } },
-        { $unwind: '$activities' },
-        { $match: { 'activities.event_id': eventIdStr } },
-        {
-          $group: {
-            _id: {
-              activity: '$activities.activity_id',
-              user: '$user_id',
+        ]),
+        this.userActivityModel.aggregate([
+          { $match: { 'activities.event_id': eventIdStr } },
+          { $unwind: '$activities' },
+          { $match: { 'activities.event_id': eventIdStr } },
+          {
+            $group: {
+              _id: {
+                activity: '$activities.activity_id',
+                user: '$user_id',
+              },
+              timeMs: { $sum: '$activities.time_spent_ms' },
             },
-            timeMs: { $sum: '$activities.time_spent_ms' },
           },
-        },
-      ]),
-      this.userModel.collection
-        .find(
-          { _id: { $in: userVals } },
-          { projection: { names: 1, email: 1 } },
-        )
-        .toArray(),
-      // El nombre/correo "de la organización" vive en properties (config
-      // dinámica por organización, ver OrganizationUsersService.findByEmail y
-      // MembersTab.tsx), no en el User base: para miembros importados o
-      // creados directamente en el flujo de organización, User.names/email
-      // suele quedar vacío. No se filtra por organization_id: un miembro
-      // puede estar inscrito a un curso de esta organización pero tener su
-      // registro de organization-user en otra (multi-org); se prefiere el de
-      // esta organización pero se acepta cualquiera antes que no mostrar nada.
-      this.organizationUserModel.collection
-        .find(
-          { user_id: { $in: userVals } },
-          { projection: { properties: 1, user_id: 1, organization_id: 1 } },
-        )
-        .toArray(),
-    ]);
+        ]),
+        this.userModel.collection
+          .find(
+            { _id: { $in: userVals } },
+            { projection: { names: 1, email: 1 } },
+          )
+          .toArray(),
+        // El nombre/correo "de la organización" vive en properties (config
+        // dinámica por organización, ver OrganizationUsersService.findByEmail y
+        // MembersTab.tsx), no en el User base: para miembros importados o
+        // creados directamente en el flujo de organización, User.names/email
+        // suele quedar vacío. No se filtra por organization_id: un miembro
+        // puede estar inscrito a un curso de esta organización pero tener su
+        // registro de organization-user en otra (multi-org); se prefiere el de
+        // esta organización pero se acepta cualquiera antes que no mostrar nada.
+        this.organizationUserModel.collection
+          .find(
+            { user_id: { $in: userVals } },
+            { projection: { properties: 1, user_id: 1, organization_id: 1 } },
+          )
+          .toArray(),
+        // Un usuario puede tener varios certificados para el mismo evento (p.
+        // ej. si se regeneró tras un FAILED); se ordena por fecha de creación
+        // descendente y $first se queda con el más reciente por usuario.
+        this.certificateModel.aggregate([
+          { $match: { eventId: { $in: eventVals }, userId: { $in: userVals } } },
+          { $sort: { createdAt: -1 } },
+          {
+            $group: {
+              _id: { $toString: '$userId' },
+              status: { $first: '$status' },
+            },
+          },
+        ]),
+      ]);
 
     const progressByKey = new Map(
       attendanceByUser.map((a: any) => [
@@ -699,6 +720,9 @@ export class EventMetricsService {
       timeByUser.map((t: any) => [`${t._id.activity}|${t._id.user}`, t.timeMs]),
     );
     const userById = new Map(users.map((u: any) => [String(u._id), u]));
+    const certificateStatusByUser = new Map<string, EventMemberCertificateStatus>(
+      certificatesByUser.map((c: any) => [c._id, c.status]),
+    );
 
     const orgUsersByUserId = new Map<string, any[]>();
     for (const ou of orgUsers as any[]) {
@@ -842,6 +866,8 @@ export class EventMetricsService {
               : courseProgress > 0
                 ? 'in_progress'
                 : 'not_started',
+          certificateStatus:
+            certificateStatusByUser.get(String(m._id)) ?? 'NOT_GENERATED',
           enrolledAt: m.enrolledAt ?? null,
           activities: memberActivities,
         };
