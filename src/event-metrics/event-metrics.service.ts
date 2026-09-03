@@ -325,7 +325,15 @@ export class EventMetricsService {
       this.activityModel.collection
         .find(
           { event_id: { $in: eventVals } },
-          { projection: { name: 1, module_id: 1 } },
+          {
+            projection: {
+              name: 1,
+              module_id: 1,
+              create_at: 1,
+              created_at: 1,
+              createdAt: 1,
+            },
+          },
         )
         .toArray(),
       this.moduleModel.collection
@@ -345,15 +353,38 @@ export class EventMetricsService {
     return { activities, moduleById, activityVals };
   }
 
-  // Orden estable para el embudo y la tabla de miembros: por orden de módulo
-  // y luego por nombre.
+  /**
+   * Fecha de creación de una actividad en milisegundos. La colección mezcla
+   * tres grafías del campo según la época del registro (`create_at` en la data
+   * antigua, `createdAt` desde que el schema usa timestamps); es el mismo
+   * fallback de `sortActivitiesByDate` en el front. Las actividades sin fecha
+   * quedan al final de su módulo en vez de encabezarlo.
+   */
+  private createdAtMs(activity: any): number {
+    const raw =
+      activity?.create_at ?? activity?.created_at ?? activity?.createdAt;
+    if (!raw) return Number.MAX_SAFE_INTEGER;
+    const ms = new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
+  }
+
+  /**
+   * Orden del embudo y de la tabla de miembros = orden real de aprendizaje del
+   * curso: módulos por `order` y, dentro de cada uno, actividades por fecha de
+   * creación (la colección `activities` no tiene campo de orden propio). Es el
+   * mismo criterio de `getOrderedActivities`/`sortActivitiesByDate` en el front
+   * (pages/course/helpers/courseDetailHelpers.ts): si divergen, el admin ve las
+   * actividades en un orden distinto al que recorre el alumno. El nombre queda
+   * solo como desempate final para que el orden sea estable.
+   */
   private compareActivityOrder(
-    a: { moduleOrder: number | null; name: string },
-    b: { moduleOrder: number | null; name: string },
+    a: { moduleOrder: number | null; name: string; createdAtMs: number },
+    b: { moduleOrder: number | null; name: string; createdAtMs: number },
   ): number {
     const orderA = a.moduleOrder ?? Number.MAX_SAFE_INTEGER;
     const orderB = b.moduleOrder ?? Number.MAX_SAFE_INTEGER;
     if (orderA !== orderB) return orderA - orderB;
+    if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
     return a.name.localeCompare(b.name);
   }
 
@@ -437,12 +468,14 @@ export class EventMetricsService {
         avgProgress: Math.round((att?.avgProgress ?? 0) * 10) / 10,
         totalTimeMs: time?.totalMs ?? 0,
         usersWithTime: time?.usersWithTime ?? 0,
+        createdAtMs: this.createdAtMs(activity),
       };
     });
 
     result.sort((a, b) => this.compareActivityOrder(a, b));
 
-    return result;
+    // `createdAtMs` es auxiliar para ordenar; no viaja al cliente.
+    return result.map(({ createdAtMs, ...activity }) => activity);
   }
 
   private async getQuizMetrics(eventObjectId: Types.ObjectId) {
@@ -625,9 +658,11 @@ export class EventMetricsService {
           name: activity.name,
           moduleName: mod?.module_name ?? null,
           moduleOrder: mod?.order ?? null,
+          createdAtMs: this.createdAtMs(activity),
         };
       })
-      .sort((a, b) => this.compareActivityOrder(a, b));
+      .sort((a, b) => this.compareActivityOrder(a, b))
+      .map(({ createdAtMs, ...activity }) => activity);
 
     if (enrollment.length === 0) {
       return { activities: activityMeta, members: [] };
