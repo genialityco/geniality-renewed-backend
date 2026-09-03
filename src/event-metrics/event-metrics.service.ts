@@ -27,6 +27,25 @@ export interface ActivityMetrics {
   usersWithTime: number;
 }
 
+/** Métricas de UN examen del curso: el general o el de un módulo. */
+export interface QuizMetrics {
+  quizId: string;
+  /** null = examen general del curso */
+  moduleId: string | null;
+  moduleName: string | null;
+  moduleOrder: number | null;
+  enabled: boolean;
+  passingScore: number | null;
+  totalAttempts: number;
+  uniqueUsers: number;
+  graded: number;
+  pending: number;
+  review: number;
+  avgBestScore: number | null;
+  passedUsers: number | null;
+  gradedUsers: number;
+}
+
 export interface EventMetrics {
   event: {
     id: string;
@@ -48,6 +67,16 @@ export interface EventMetrics {
     avgPerUserMs: number;
   };
   activities: ActivityMetrics[];
+  /**
+   * Todos los exámenes del curso: el general (moduleId null) primero y luego
+   * los de cada módulo en su orden. Vacío si el curso no tiene exámenes.
+   */
+  quizzes: QuizMetrics[];
+  /**
+   * @deprecated Usar `quizzes`. Se mantiene para los clientes desplegados
+   * antes de que el informe distinguiera los varios exámenes de un curso;
+   * refleja el examen general (o el primero, si no hay general).
+   */
   quiz: {
     exists: boolean;
     passingScore: number | null;
@@ -189,21 +218,21 @@ export class EventMetricsService {
       throw new NotFoundException('Evento no encontrado');
     }
 
-    const { enrollment, time, activities, quiz, certificates } =
+    const { enrollment, time, activities, quizzes, certificates } =
       await this.getCached(`metrics:${eventId}`, async () => {
         const eventObjectId = new Types.ObjectId(eventId);
         const eventVals = this.idVariants(eventId);
 
-        const [enrollment, time, activities, quiz, certificates] =
+        const [enrollment, time, activities, quizzes, certificates] =
           await Promise.all([
             this.getEnrollmentMetrics(eventVals),
             this.getCourseTimeMetrics(eventId),
             this.getActivityMetrics(eventVals),
-            this.getQuizMetrics(eventObjectId),
+            this.getQuizMetrics(eventObjectId, eventVals),
             this.getCertificateMetrics(eventVals),
           ]);
 
-        return { enrollment, time, activities, quiz, certificates };
+        return { enrollment, time, activities, quizzes, certificates };
       });
 
     return {
@@ -216,8 +245,43 @@ export class EventMetricsService {
       enrollment,
       time,
       activities,
-      quiz,
+      quizzes,
+      quiz: this.toLegacyQuiz(quizzes),
       certificates,
+    };
+  }
+
+  /**
+   * Compacta `quizzes` en el campo `quiz` antiguo (ver EventMetrics): el
+   * examen general si existe, si no el primero de la lista.
+   */
+  private toLegacyQuiz(quizzes: QuizMetrics[]): EventMetrics['quiz'] {
+    const main = quizzes.find((q) => q.moduleId === null) ?? quizzes[0];
+    if (!main) {
+      return {
+        exists: false,
+        passingScore: null,
+        totalAttempts: 0,
+        uniqueUsers: 0,
+        graded: 0,
+        pending: 0,
+        review: 0,
+        avgBestScore: null,
+        passedUsers: null,
+        gradedUsers: 0,
+      };
+    }
+    return {
+      exists: true,
+      passingScore: main.passingScore,
+      totalAttempts: main.totalAttempts,
+      uniqueUsers: main.uniqueUsers,
+      graded: main.graded,
+      pending: main.pending,
+      review: main.review,
+      avgBestScore: main.avgBestScore,
+      passedUsers: main.passedUsers,
+      gradedUsers: main.gradedUsers,
     };
   }
 
@@ -478,10 +542,74 @@ export class EventMetricsService {
     return result.map(({ createdAtMs, ...activity }) => activity);
   }
 
-  private async getQuizMetrics(eventObjectId: Types.ObjectId) {
+  /**
+   * Métricas de todos los exámenes del curso. Un evento puede tener varios
+   * (uno general + uno por módulo), así que se calcula uno por uno y se
+   * identifica cada resultado con su módulo; antes se tomaba un examen
+   * cualquiera con findOne y el informe no decía a cuál correspondía.
+   */
+  private async getQuizMetrics(
+    eventObjectId: Types.ObjectId,
+    eventVals: any[],
+  ): Promise<QuizMetrics[]> {
+    const [quizzes, modules] = await Promise.all([
+      this.quizModel
+        .find({ eventId: eventObjectId })
+        .select('config moduleId enabled')
+        .lean()
+        .exec(),
+      this.moduleModel.collection
+        .find(
+          { event_id: { $in: eventVals } },
+          { projection: { module_name: 1, order: 1 } },
+        )
+        .toArray(),
+    ]);
+
+    if (!quizzes.length) return [];
+
+    const moduleById = new Map(modules.map((m: any) => [String(m._id), m]));
+
+    const stats = await Promise.all(
+      quizzes.map((quiz: any) =>
+        this.getSingleQuizStats(String(quiz._id), quiz.config?.nota ?? null),
+      ),
+    );
+
+    const result: QuizMetrics[] = quizzes.map((quiz: any, i: number) => {
+      const mod = quiz.moduleId
+        ? moduleById.get(String(quiz.moduleId))
+        : null;
+      return {
+        quizId: String(quiz._id),
+        moduleId: quiz.moduleId ? String(quiz.moduleId) : null,
+        moduleName: mod?.module_name ?? null,
+        moduleOrder: mod?.order ?? null,
+        enabled: quiz.enabled !== false,
+        passingScore: quiz.config?.nota ?? null,
+        ...stats[i],
+      };
+    });
+
+    // El examen general primero; luego los de módulo en el orden del curso.
+    return result.sort((a, b) => {
+      if (!a.moduleId !== !b.moduleId) return a.moduleId ? 1 : -1;
+      const orderA = a.moduleOrder ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.moduleOrder ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      return (a.moduleName ?? '').localeCompare(b.moduleName ?? '');
+    });
+  }
+
+  /**
+   * Conteos de intentos y notas de un único examen. `passingScore` se recibe
+   * ya resuelto porque cada examen tiene su propia nota mínima.
+   */
+  private async getSingleQuizStats(
+    quizId: string,
+    passingScore: number | null,
+  ) {
     const empty = {
-      exists: false,
-      passingScore: null as number | null,
       totalAttempts: 0,
       uniqueUsers: 0,
       graded: 0,
@@ -492,18 +620,10 @@ export class EventMetricsService {
       gradedUsers: 0,
     };
 
-    const quiz = await this.quizModel
-      .findOne({ eventId: eventObjectId })
-      .select('config')
-      .exec();
-    if (!quiz) return empty;
-
-    const passingScore = quiz.config?.nota ?? null;
-
     // Métricas por usuario (mejor nota entre intentos calificados) y por
     // intento (conteos por estado) en una sola pasada.
     const [stats] = await this.attemptModel.aggregate([
-      { $match: { quizId: String(quiz._id) } },
+      { $match: { quizId } },
       {
         $group: {
           _id: '$userId',
@@ -553,11 +673,9 @@ export class EventMetricsService {
       },
     ]);
 
-    if (!stats) return { ...empty, exists: true, passingScore };
+    if (!stats) return empty;
 
     return {
-      exists: true,
-      passingScore,
       totalAttempts: stats.totalAttempts,
       uniqueUsers: stats.uniqueUsers,
       graded: stats.graded,

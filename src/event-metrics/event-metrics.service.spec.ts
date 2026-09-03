@@ -33,6 +33,7 @@ const QUIZ_ID = '507f191e810c19729de860ee';
 /** Mock de un Model<T> de Mongoose cubriendo los métodos que usa el servicio. */
 function createModelMock() {
   const execMock = jest.fn().mockResolvedValue(null);
+  const findExecMock = jest.fn().mockResolvedValue([]);
   const toArrayMock = jest.fn().mockResolvedValue([]);
   return {
     aggregate: jest.fn().mockResolvedValue([]),
@@ -41,8 +42,17 @@ function createModelMock() {
       select: () => ({ exec: execMock }),
       exec: execMock,
     })),
+    find: jest.fn(() => ({
+      select: () => ({
+        lean: () => ({ exec: findExecMock }),
+        exec: findExecMock,
+      }),
+      lean: () => ({ exec: findExecMock }),
+      exec: findExecMock,
+    })),
     collection: { find: jest.fn(() => ({ toArray: toArrayMock })) },
     __exec: execMock,
+    __findExec: findExecMock,
     __toArray: toArrayMock,
   };
 }
@@ -273,22 +283,21 @@ describe('EventMetricsService', () => {
   // ── getQuizMetrics ───────────────────────────────────────────────────
 
   describe('getQuizMetrics', () => {
-    it('devuelve exists:false cuando el evento no tiene examen', async () => {
-      models.quiz.__exec.mockResolvedValueOnce(null);
+    it('devuelve lista vacía cuando el evento no tiene exámenes', async () => {
+      models.quiz.__findExec.mockResolvedValueOnce([]);
 
       const svc: any = service;
-      const result = await svc.getQuizMetrics(new Types.ObjectId(EVENT_ID));
+      const result = await svc.getQuizMetrics(new Types.ObjectId(EVENT_ID), [
+        EVENT_ID,
+      ]);
 
-      expect(result.exists).toBe(false);
-      expect(result.passingScore).toBeNull();
-      expect(result.totalAttempts).toBe(0);
+      expect(result).toEqual([]);
     });
 
     it('calcula passedUsers solo cuando hay nota mínima configurada', async () => {
-      models.quiz.__exec.mockResolvedValueOnce({
-        _id: QUIZ_ID,
-        config: { nota: 70 },
-      });
+      models.quiz.__findExec.mockResolvedValueOnce([
+        { _id: QUIZ_ID, moduleId: null, enabled: true, config: { nota: 70 } },
+      ]);
       models.attempt.aggregate.mockResolvedValueOnce([
         {
           totalAttempts: 12,
@@ -303,19 +312,20 @@ describe('EventMetricsService', () => {
       ]);
 
       const svc: any = service;
-      const result = await svc.getQuizMetrics(new Types.ObjectId(EVENT_ID));
+      const [result] = await svc.getQuizMetrics(new Types.ObjectId(EVENT_ID), [
+        EVENT_ID,
+      ]);
 
-      expect(result.exists).toBe(true);
+      expect(result.quizId).toBe(QUIZ_ID);
       expect(result.passingScore).toBe(70);
       expect(result.passedUsers).toBe(4);
       expect(result.avgBestScore).toBe(81.3);
     });
 
     it('deja passedUsers en null si no hay nota mínima configurada', async () => {
-      models.quiz.__exec.mockResolvedValueOnce({
-        _id: QUIZ_ID,
-        config: { nota: null },
-      });
+      models.quiz.__findExec.mockResolvedValueOnce([
+        { _id: QUIZ_ID, moduleId: null, enabled: true, config: { nota: null } },
+      ]);
       models.attempt.aggregate.mockResolvedValueOnce([
         {
           totalAttempts: 3,
@@ -330,9 +340,62 @@ describe('EventMetricsService', () => {
       ]);
 
       const svc: any = service;
-      const result = await svc.getQuizMetrics(new Types.ObjectId(EVENT_ID));
+      const [result] = await svc.getQuizMetrics(new Types.ObjectId(EVENT_ID), [
+        EVENT_ID,
+      ]);
 
       expect(result.passedUsers).toBeNull();
+    });
+
+    it('identifica cada examen con su módulo y pone el general primero', async () => {
+      const MODULE_QUIZ_ID = '507f191e810c19729de860ef';
+      models.quiz.__findExec.mockResolvedValueOnce([
+        {
+          _id: MODULE_QUIZ_ID,
+          moduleId: MODULE_ID_1,
+          enabled: false,
+          config: { nota: 60 },
+        },
+        { _id: QUIZ_ID, moduleId: null, enabled: true, config: { nota: 70 } },
+      ]);
+      models.module.__toArray.mockResolvedValueOnce([
+        { _id: MODULE_ID_1, module_name: 'Módulo 1', order: 0 },
+      ]);
+      models.attempt.aggregate.mockResolvedValue([]);
+
+      const svc: any = service;
+      const result = await svc.getQuizMetrics(new Types.ObjectId(EVENT_ID), [
+        EVENT_ID,
+      ]);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].quizId).toBe(QUIZ_ID);
+      expect(result[0].moduleName).toBeNull();
+      expect(result[1].quizId).toBe(MODULE_QUIZ_ID);
+      expect(result[1].moduleName).toBe('Módulo 1');
+      expect(result[1].enabled).toBe(false);
+      expect(result[1].totalAttempts).toBe(0);
+    });
+  });
+
+  // ── toLegacyQuiz ─────────────────────────────────────────────────────
+
+  describe('toLegacyQuiz', () => {
+    it('prefiere el examen general sobre los de módulo', () => {
+      const svc: any = service;
+      const result = svc.toLegacyQuiz([
+        { quizId: 'a', moduleId: MODULE_ID_1, passingScore: 60, review: 1 },
+        { quizId: 'b', moduleId: null, passingScore: 70, review: 5 },
+      ]);
+
+      expect(result.exists).toBe(true);
+      expect(result.passingScore).toBe(70);
+      expect(result.review).toBe(5);
+    });
+
+    it('devuelve exists:false sin exámenes', () => {
+      const svc: any = service;
+      expect(svc.toLegacyQuiz([]).exists).toBe(false);
     });
   });
 
