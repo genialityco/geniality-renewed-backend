@@ -1,6 +1,7 @@
 import {
   IsString,
   IsArray,
+  IsBoolean,
   IsOptional,
   IsIn,
   ValidateNested,
@@ -215,4 +216,14 @@ export class UpdateQuizConfigDto {
   @IsString()
   @IsIn(['all', 'one-by-one'])
   questionDisplay?: 'all' | 'one-by-one';
+
+  /** Presentar las preguntas en orden aleatorio. */
+  @IsOptional()
+  @IsBoolean()
+  shuffleQuestions?: boolean;
+
+  /** Presentar las opciones de respuesta en orden aleatorio. */
+  @IsOptional()
+  @IsBoolean()
+  shuffleOptions?: boolean;
 }

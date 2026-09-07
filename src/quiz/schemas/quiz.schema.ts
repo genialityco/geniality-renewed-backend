@@ -182,6 +182,21 @@ export class QuizConfig {
    */
   @Prop({ type: String, enum: ['all', 'one-by-one'], default: 'all' })
   questionDisplay: 'all' | 'one-by-one';
+
+  /**
+   * Presentar las preguntas en orden aleatorio (distinto en cada intento).
+   * false = se respeta el orden definido por el administrador.
+   */
+  @Prop({ type: Boolean, default: false })
+  shuffleQuestions: boolean;
+
+  /**
+   * Presentar las opciones de respuesta en orden aleatorio.
+   * No aplica a las preguntas de concordancia de script (su escala es fija).
+   * false = se respeta el orden definido por el administrador.
+   */
+  @Prop({ type: Boolean, default: false })
+  shuffleOptions: boolean;
 }
 export const QuizConfigSchema = SchemaFactory.createForClass(QuizConfig);
 
