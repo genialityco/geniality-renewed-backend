@@ -24,7 +24,7 @@ export class VideoItem {
 
 export const VideoItemSchema = SchemaFactory.createForClass(VideoItem);
 
-@Schema({ collection: 'activities_test', timestamps: true })
+@Schema({ collection: 'activities', timestamps: true })
 export class Activity extends Document {
   @Prop({ required: true })
   name: string;
