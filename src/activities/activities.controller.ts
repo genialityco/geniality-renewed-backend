@@ -113,8 +113,18 @@ export class ActivitiesController {
       throw new NotFoundException('Activity not found');
     }
 
-    if (!activity.video) {
-      throw new BadRequestException('This activity has no video URL');
+    const primaryVideo = this.getPrimaryVideo(activity);
+    if (!primaryVideo) {
+      throw new BadRequestException('This activity has no video');
+    }
+
+    let videoUrl: string;
+    if (primaryVideo.provider === 'vimeo') {
+      videoUrl = `https://vimeo.com/${primaryVideo.video_id}`;
+    } else {
+      throw new BadRequestException(
+        `Video provider "${primaryVideo.provider}" is not supported for transcript generation yet`,
+      );
     }
 
     const baseUrl =
@@ -122,9 +132,9 @@ export class ActivitiesController {
     const pythonUrl = `${baseUrl}/transcribe`;
 
     // Resolver URL de Vimeo a URL de streaming directo si es necesario
-    console.log(`🔍 Resolviendo URL de video: ${activity.video}`);
+    console.log(`🔍 Resolviendo URL de video: ${videoUrl}`);
     const resolvedVideoUrl = await this.vimeoResolverService.resolveUrl(
-      activity.video,
+      videoUrl,
     );
     console.log(`✅ URL resuelta: ${resolvedVideoUrl}`);
 
@@ -407,6 +417,23 @@ export class ActivitiesController {
         `Failed to validate transcript: ${errorMsg}`,
       );
     }
+  }
+
+  // Selecciona el video "principal" de una actividad: el activo con mayor
+  // prioridad (número más bajo); si ninguno está activo, el de mayor
+  // prioridad entre todos.
+  private getPrimaryVideo(activity: Activity) {
+    const videos = activity.videos || [];
+    if (videos.length === 0) {
+      return null;
+    }
+
+    const active = videos.filter((v) => v.status === 'active');
+    const pool = active.length > 0 ? active : videos;
+
+    return [...pool].sort(
+      (a, b) => (a.priority ?? 0) - (b.priority ?? 0),
+    )[0];
   }
 
   // Función para normalizar la URL de Vimeo
