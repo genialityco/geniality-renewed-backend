@@ -47,3 +47,24 @@ export function resolveEmail(
 ): string | null {
   return orgUser?.properties?.email || user?.email || null;
 }
+
+/**
+ * user-activity.organization_id a veces queda guardado como la URL completa
+ * de la organización (ej. "https://app.geniality.com.co/organization/<id>")
+ * en vez del id solo, por un bug de origen en el frontend. Si no se
+ * normaliza antes de usarlo, tanto el lookup de la organización como los
+ * links armados con baseUrl + "/organization/" + organization_id quedan con
+ * la URL duplicada. Si detecta una URL, se queda con el segmento que sigue
+ * a "organization"; si no, lo deja tal cual.
+ */
+export function sanitizeOrganizationId(raw: string): string {
+  const str = String(raw ?? '').trim();
+  if (!/^https?:\/\//i.test(str)) return str;
+
+  const segments = str.split('/').filter(Boolean);
+  const orgIndex = segments.lastIndexOf('organization');
+  if (orgIndex >= 0 && segments[orgIndex + 1]) {
+    return segments[orgIndex + 1];
+  }
+  return segments[segments.length - 1] || str;
+}

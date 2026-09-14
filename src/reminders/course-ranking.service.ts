@@ -10,7 +10,12 @@ import {
   UserActivity,
 } from 'src/user-activity/schemas/user-activity.schema';
 import { WhatsappGatewayClient } from './whatsapp-gateway.client';
-import { resolveEmail, resolveName, resolvePhone } from './contact.util';
+import {
+  resolveEmail,
+  resolveName,
+  resolvePhone,
+  sanitizeOrganizationId,
+} from './contact.util';
 
 // Con menos inscritos, "el promedio del grupo" equivale a exponer el avance
 // puntual de uno o dos compañeros — se omite el curso hasta tener cohorte.
@@ -107,10 +112,6 @@ export class CourseRankingService {
       `Encontrados ${candidates.length} usuarios con curso activo esta semana`,
     );
 
-    if (candidates.length > 0) {
-      await this.whatsappGateway.registerAccount();
-    }
-
     // Un mismo curso puede repetirse entre varios usuarios de la corrida;
     // se calcula el cohorte una sola vez por curso.
     const cohortCache = new Map<string, CohortStats | null>();
@@ -175,6 +176,73 @@ export class CourseRankingService {
     return { avgProgress, maxProgress, progressByUser };
   }
 
+  /**
+   * Arma los parámetros de "ranking_lider_curso" o "ranking_comparativo_curso"
+   * con los datos reales del usuario (su curso más reciente esta semana en
+   * cualquier organización), sin enviar nada. templateName decide qué
+   * variante armar, independiente de si el usuario realmente lidera o no,
+   * para poder previsualizar cualquiera de las dos a partir de un userId.
+   */
+  async buildRankingParams(
+    userId: string,
+    templateName: 'ranking_lider_curso1' | 'ranking_comparativo_curso1',
+  ): Promise<{
+    parameters: string[];
+    buttonUrl: string;
+    fallbackEmail?: string;
+  } | null> {
+    const activity = await this.userActivityService.findLatestByUserId(
+      userId,
+    );
+    if (!activity) return null;
+
+    const course = this.pickFeaturedCourse(activity);
+    if (!course) return null;
+
+    const cohort = await this.computeCohortStats(course.event_id);
+    if (!cohort) return null;
+
+    const userProgress = cohort.progressByUser.get(String(activity.user_id));
+    if (userProgress === undefined) return null;
+
+    const organizationId = sanitizeOrganizationId(activity.organization_id);
+
+    const [user, orgUser] = await Promise.all([
+      this.usersService.findById(activity.user_id).catch(() => null),
+      this.organizationUsersService
+        .findByUserAndOrg(activity.user_id, organizationId)
+        .catch(() => null),
+    ]);
+
+    const organization = await this.organizationsService
+      .findOne(organizationId)
+      .catch(() => null);
+    if (!organization) return null;
+
+    const userName = resolveName(orgUser, user);
+    const email = resolveEmail(orgUser, user);
+    const courseName = course.course_name || 'tu curso';
+
+    const parameters =
+      templateName === 'ranking_lider_curso1'
+        ? [userName, courseName, organization.name, `${userProgress}%`]
+        : [
+            userName,
+            organization.name,
+            courseName,
+            `${userProgress}%`,
+            `${cohort.avgProgress}%`,
+          ];
+
+    return {
+      parameters,
+      // La plantilla de WhatsApp ya tiene fijo el dominio + "/organization/"
+      // en el botón; acá solo va lo que falta, no la URL completa.
+      buttonUrl: `${organizationId}/course/${course.event_id}`,
+      fallbackEmail: email || undefined,
+    };
+  }
+
   private async sendRankingFor(
     activity: UserActivity,
     course: CourseTime,
@@ -185,10 +253,12 @@ export class CourseRankingService {
     // course-attendee para este curso: no hay progreso que comparar.
     if (userProgress === undefined) return 'skipped';
 
+    const organizationId = sanitizeOrganizationId(activity.organization_id);
+
     const [user, orgUser] = await Promise.all([
       this.usersService.findById(activity.user_id).catch(() => null),
       this.organizationUsersService
-        .findByUserAndOrg(activity.user_id, activity.organization_id)
+        .findByUserAndOrg(activity.user_id, organizationId)
         .catch(() => null),
     ]);
 
@@ -196,14 +266,14 @@ export class CourseRankingService {
     if (!phone) return 'skipped';
 
     const organization = await this.organizationsService
-      .findOne(activity.organization_id)
+      .findOne(organizationId)
       .catch(() => null);
     if (!organization) return 'skipped';
 
     const userName = resolveName(orgUser, user);
     const email = resolveEmail(orgUser, user);
     const courseName = course.course_name || 'tu curso';
-    const courseUrl = `${this.baseUrl}/organization/${activity.organization_id}/course/${course.event_id}`;
+    const courseUrl = `${this.baseUrl}/organization/${organizationId}/course/${course.event_id}`;
     const isLeader = userProgress >= cohort.maxProgress;
 
     const fallbackFields = email
@@ -223,29 +293,34 @@ export class CourseRankingService {
         }
       : {};
 
-    // Plantillas de Meta esperadas:
-    // - ranking_lider_curso: {{1}} nombre, {{2}} curso, {{3}} % avance, {{4}} link
-    // - ranking_comparativo_curso: {{1}} nombre, {{2}} curso, {{3}} % avance propio,
-    //   {{4}} % promedio del grupo, {{5}} link
+    // Plantillas de Meta esperadas (el botón ya trae fijo el dominio +
+    // "/organization/"; buttonUrl solo lleva lo que falta):
+    // - ranking_lider_curso1: {{1}} nombre, {{2}} curso, {{3}} organización,
+    //   {{4}} % avance
+    // - ranking_comparativo_curso1: {{1}} nombre, {{2}} organización, {{3}} curso,
+    //   {{4}} % avance propio, {{5}} % promedio del grupo
+    const buttonUrl = `${organizationId}/course/${course.event_id}`;
     const result = await this.whatsappGateway.sendTemplate(
       isLeader
         ? {
             to: phone,
-            templateName: 'ranking_lider_curso',
-            parameters: [userName, courseName, `${userProgress}%`, courseUrl],
+            templateName: 'ranking_lider_curso1',
+            parameters: [userName, courseName, organization.name, `${userProgress}%`],
+            buttonUrl,
             languageCode: 'es',
             ...fallbackFields,
           }
         : {
             to: phone,
-            templateName: 'ranking_comparativo_curso',
+            templateName: 'ranking_comparativo_curso1',
             parameters: [
               userName,
+              organization.name,
               courseName,
               `${userProgress}%`,
               `${cohort.avgProgress}%`,
-              courseUrl,
             ],
+            buttonUrl,
             languageCode: 'es',
             ...fallbackFields,
           },

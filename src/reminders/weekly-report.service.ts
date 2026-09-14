@@ -9,7 +9,12 @@ import { OrganizationUsersService } from 'src/organization-users/organization-us
 import { UserActivity } from 'src/user-activity/schemas/user-activity.schema';
 import { UserActivitySnapshot } from './schemas/user-activity-snapshot.schema';
 import { WhatsappGatewayClient } from './whatsapp-gateway.client';
-import { resolveEmail, resolveName, resolvePhone } from './contact.util';
+import {
+  resolveEmail,
+  resolveName,
+  resolvePhone,
+  sanitizeOrganizationId,
+} from './contact.util';
 
 interface DeltaItem {
   name: string;
@@ -81,10 +86,6 @@ export class WeeklyReportService {
       `Encontrados ${recentActivities.length} registros con actividad en los últimos 7 días`,
     );
 
-    if (recentActivities.length > 0) {
-      await this.whatsappGateway.registerAccount();
-    }
-
     let sent = 0;
     let fallbackEmail = 0;
     let skipped = 0;
@@ -112,9 +113,70 @@ export class WeeklyReportService {
     return { sent, fallbackEmail, skipped, failed };
   }
 
+  /**
+   * Arma los parámetros de "reporte_semanal_progreso" con los datos reales
+   * del usuario (su actividad más reciente en cualquier organización), sin
+   * enviar nada ni guardar snapshot. Lo usa el endpoint de prueba de
+   * plantillas para previsualizar el mensaje a partir de un userId.
+   */
+  async buildWeeklyReportParams(userId: string): Promise<{
+    parameters: string[];
+    buttonUrl: string;
+    fallbackEmail?: string;
+  } | null> {
+    const activity = await this.userActivityService.findLatestByUserId(
+      userId,
+    );
+    if (!activity) return null;
+
+    const organizationId = sanitizeOrganizationId(activity.organization_id);
+
+    const snapshot = await this.snapshotModel
+      .findOne({
+        user_id: activity.user_id,
+        organization_id: activity.organization_id,
+      })
+      .sort({ taken_at: -1 });
+
+    const courseDeltas = this.computeCourseDeltas(activity, snapshot);
+    const activityDeltas = this.computeActivityDeltas(activity, snapshot);
+    const courseTotal = this.sumDeltas(courseDeltas);
+    const activityTotal = this.sumDeltas(activityDeltas);
+    const weeklyTotalMs = Math.max(courseTotal, activityTotal);
+
+    const featured = this.pickFeaturedItem(courseDeltas, activityDeltas);
+    if (!featured) return null;
+
+    const [user, orgUser] = await Promise.all([
+      this.usersService.findById(activity.user_id).catch(() => null),
+      this.organizationUsersService
+        .findByUserAndOrg(activity.user_id, organizationId)
+        .catch(() => null),
+    ]);
+
+    const organization = await this.organizationsService
+      .findOne(organizationId)
+      .catch(() => null);
+    if (!organization) return null;
+
+    const userName = resolveName(orgUser, user);
+    const email = resolveEmail(orgUser, user);
+    const timeText = this.formatDuration(weeklyTotalMs);
+
+    return {
+      parameters: [userName, organization.name, timeText, featured.name],
+      // La plantilla de WhatsApp ya tiene fijo el dominio + "/organization/"
+      // en el botón; acá solo va lo que falta, no la URL completa.
+      buttonUrl: `${organizationId}/${featured.path}`,
+      fallbackEmail: email || undefined,
+    };
+  }
+
   private async sendReportFor(
     activity: UserActivity,
   ): Promise<'sent' | 'fallback_email' | 'skipped'> {
+    const organizationId = sanitizeOrganizationId(activity.organization_id);
+
     const snapshot = await this.snapshotModel
       .findOne({
         user_id: activity.user_id,
@@ -138,7 +200,7 @@ export class WeeklyReportService {
     const [user, orgUser] = await Promise.all([
       this.usersService.findById(activity.user_id).catch(() => null),
       this.organizationUsersService
-        .findByUserAndOrg(activity.user_id, activity.organization_id)
+        .findByUserAndOrg(activity.user_id, organizationId)
         .catch(() => null),
     ]);
 
@@ -146,14 +208,14 @@ export class WeeklyReportService {
     if (!phone) return 'skipped';
 
     const organization = await this.organizationsService
-      .findOne(activity.organization_id)
+      .findOne(organizationId)
       .catch(() => null);
     if (!organization) return 'skipped';
 
     const featured = this.pickFeaturedItem(courseDeltas, activityDeltas);
     if (!featured) return 'skipped';
 
-    const itemUrl = `${this.baseUrl}/organization/${activity.organization_id}/${featured.path}`;
+    const itemUrl = `${this.baseUrl}/organization/${organizationId}/${featured.path}`;
     const userName = resolveName(orgUser, user);
     const email = resolveEmail(orgUser, user);
     const timeText = this.formatDuration(weeklyTotalMs);
@@ -172,12 +234,15 @@ export class WeeklyReportService {
         }
       : {};
 
-    // Plantilla de Meta esperada: {{1}} nombre, {{2}} tiempo de la semana,
-    // {{3}} curso/actividad destacada, {{4}} link para continuar
+    // Plantilla de Meta esperada: {{1}} nombre, {{2}} organización,
+    // {{3}} tiempo de la semana, {{4}} curso/actividad destacada; el botón
+    // de la plantilla ya trae fijo el dominio + "/organization/",
+    // buttonUrl solo lleva lo que falta.
     const result = await this.whatsappGateway.sendTemplate({
       to: phone,
       templateName: 'reporte_semanal_progreso',
-      parameters: [userName, timeText, featured.name, itemUrl],
+      parameters: [userName, organization.name, timeText, featured.name],
+      buttonUrl: `${organizationId}/${featured.path}`,
       languageCode: 'es',
       ...fallbackFields,
     });

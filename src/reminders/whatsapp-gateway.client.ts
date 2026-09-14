@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
@@ -8,6 +8,11 @@ export interface SendTemplatePayload {
   templateName: string;
   parameters: string[];
   languageCode?: string;
+  // Sufijo dinámico del botón de la plantilla (ej. "<orgId>/course/<id>").
+  // La plantilla de WhatsApp ya tiene fijo el dominio + "/organization/" en
+  // el botón, así que acá NO va la URL completa (duplicaría el dominio) ni
+  // como último elemento de "parameters".
+  buttonUrl?: string;
   // Si WhatsApp falla, el gateway envía este email como respaldo
   // (requiere fallbackEmail + fallbackSubject + fallbackHtml)
   fallbackEmail?: string;
@@ -21,12 +26,8 @@ export interface SendTemplatePayload {
  */
 @Injectable()
 export class WhatsappGatewayClient {
-  private readonly logger = new Logger(WhatsappGatewayClient.name);
-
   private readonly gatewayUrl: string;
   private readonly accountId: string;
-  private readonly phoneNumberId: string;
-  private readonly accessToken: string;
 
   constructor(
     private readonly httpService: HttpService,
@@ -36,44 +37,10 @@ export class WhatsappGatewayClient {
     this.accountId =
       this.configService.get<string>('WHATSAPP_GATEWAY_ACCOUNT_ID') ||
       'gencampus';
-    this.phoneNumberId = this.configService.get<string>(
-      'WHATSAPP_GATEWAY_PHONE_NUMBER_ID',
-    );
-    this.accessToken = this.configService.get<string>(
-      'WHATSAPP_GATEWAY_ACCESS_TOKEN',
-    );
   }
 
   get isConfigured(): boolean {
     return Boolean(this.gatewayUrl);
-  }
-
-  /**
-   * Se re-registra la cuenta en cada corrida para que un cambio de token
-   * en .env solo requiera reiniciar el backend.
-   */
-  async registerAccount(): Promise<void> {
-    if (!this.phoneNumberId || !this.accessToken) {
-      this.logger.warn(
-        'WHATSAPP_GATEWAY_PHONE_NUMBER_ID/ACCESS_TOKEN no configurados, se omite el registro de cuenta',
-      );
-      return;
-    }
-    try {
-      await lastValueFrom(
-        this.httpService.post(`${this.gatewayUrl}/api/account/register`, {
-          accountId: this.accountId,
-          phoneNumberId: this.phoneNumberId,
-          accessToken: this.accessToken,
-        }),
-      );
-    } catch (error) {
-      this.logger.error(
-        `No se pudo registrar la cuenta '${this.accountId}' en el gateway de WhatsApp: ${
-          (error as any)?.message || error
-        }`,
-      );
-    }
   }
 
   /**

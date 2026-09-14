@@ -378,6 +378,18 @@ export class UserActivityService implements OnModuleInit {
   }
 
   /**
+   * Obtiene el registro de actividad más reciente de un usuario sin
+   * necesidad de conocer de antemano la organización. Lo usa el endpoint
+   * de prueba de plantillas de WhatsApp para armar el mensaje con datos
+   * reales a partir de solo un userId.
+   */
+  async findLatestByUserId(userId: string): Promise<UserActivity | null> {
+    return this.userActivityModel
+      .findOne({ user_id: userId })
+      .sort({ last_updated: -1 });
+  }
+
+  /**
    * Obtiene los registros con actividad en los últimos N días.
    * Lo usa el reporte semanal para considerar solo usuarios activos.
    */

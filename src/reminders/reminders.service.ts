@@ -6,7 +6,12 @@ import { OrganizationsService } from 'src/organizations/organizations.service';
 import { OrganizationUsersService } from 'src/organization-users/organization-users.service';
 import { UserActivity } from 'src/user-activity/schemas/user-activity.schema';
 import { WhatsappGatewayClient } from './whatsapp-gateway.client';
-import { resolveEmail, resolveName, resolvePhone } from './contact.util';
+import {
+  resolveEmail,
+  resolveName,
+  resolvePhone,
+  sanitizeOrganizationId,
+} from './contact.util';
 
 interface ReminderItem {
   name: string;
@@ -70,10 +75,6 @@ export class RemindersService {
       `Encontrados ${staleActivities.length} registros en ventana de inactividad de 3 días`,
     );
 
-    if (staleActivities.length > 0) {
-      await this.whatsappGateway.registerAccount();
-    }
-
     let sent = 0;
     let fallbackEmail = 0;
     let skipped = 0;
@@ -101,13 +102,60 @@ export class RemindersService {
     return { sent, fallbackEmail, skipped, failed };
   }
 
-  private async sendReminderFor(
-    activity: UserActivity,
-  ): Promise<'sent' | 'fallback_email' | 'skipped'> {
+  /**
+   * Arma los parámetros de "recordatorio_inactividad_3dias" con los datos
+   * reales del usuario (su actividad más reciente en cualquier
+   * organización), sin enviar nada. Lo usa el endpoint de prueba de
+   * plantillas para previsualizar el mensaje a partir de un userId.
+   */
+  async buildInactivityReminderParams(userId: string): Promise<{
+    parameters: string[];
+    buttonUrl: string;
+    fallbackEmail?: string;
+  } | null> {
+    const activity = await this.userActivityService.findLatestByUserId(
+      userId,
+    );
+    if (!activity) return null;
+
+    const organizationId = sanitizeOrganizationId(activity.organization_id);
+
     const [user, orgUser] = await Promise.all([
       this.usersService.findById(activity.user_id).catch(() => null),
       this.organizationUsersService
-        .findByUserAndOrg(activity.user_id, activity.organization_id)
+        .findByUserAndOrg(activity.user_id, organizationId)
+        .catch(() => null),
+    ]);
+
+    const organization = await this.organizationsService
+      .findOne(organizationId)
+      .catch(() => null);
+    if (!organization) return null;
+
+    const lastItem = this.pickLastItem(activity);
+    if (!lastItem) return null;
+
+    const userName = resolveName(orgUser, user);
+    const email = resolveEmail(orgUser, user);
+
+    return {
+      parameters: [userName, organization.name, lastItem.name],
+      // La plantilla de WhatsApp ya tiene fijo el dominio + "/organization/"
+      // en el botón; acá solo va lo que falta, no la URL completa.
+      buttonUrl: `${organizationId}/${lastItem.path}`,
+      fallbackEmail: email || undefined,
+    };
+  }
+
+  private async sendReminderFor(
+    activity: UserActivity,
+  ): Promise<'sent' | 'fallback_email' | 'skipped'> {
+    const organizationId = sanitizeOrganizationId(activity.organization_id);
+
+    const [user, orgUser] = await Promise.all([
+      this.usersService.findById(activity.user_id).catch(() => null),
+      this.organizationUsersService
+        .findByUserAndOrg(activity.user_id, organizationId)
         .catch(() => null),
     ]);
 
@@ -115,14 +163,14 @@ export class RemindersService {
     if (!phone) return 'skipped';
 
     const organization = await this.organizationsService
-      .findOne(activity.organization_id)
+      .findOne(organizationId)
       .catch(() => null);
     if (!organization) return 'skipped';
 
     const lastItem = this.pickLastItem(activity);
     if (!lastItem) return 'skipped';
 
-    const itemUrl = `${this.baseUrl}/organization/${activity.organization_id}/${lastItem.path}`;
+    const itemUrl = `${this.baseUrl}/organization/${organizationId}/${lastItem.path}`;
     const userName = resolveName(orgUser, user);
     const email = resolveEmail(orgUser, user);
 
@@ -139,10 +187,14 @@ export class RemindersService {
         }
       : {};
 
+    // Plantilla de Meta esperada: {{1}} nombre, {{2}} organización,
+    // {{3}} curso/actividad; el botón de la plantilla ya trae fijo el
+    // dominio + "/organization/", buttonUrl solo lleva lo que falta.
     const result = await this.whatsappGateway.sendTemplate({
       to: phone,
       templateName: 'recordatorio_inactividad_3dias',
-      parameters: [userName, lastItem.name, itemUrl],
+      parameters: [userName, organization.name, lastItem.name],
+      buttonUrl: `${organizationId}/${lastItem.path}`,
       languageCode: 'es',
       ...fallbackFields,
     });
