@@ -18,14 +18,18 @@ export class ActivitiesService {
     const data = { ...activityData };
     if (data.event_id && typeof data.event_id === 'string') {
       try {
-        data.event_id = new Types.ObjectId(data.event_id as unknown as string) as any;
+        data.event_id = new Types.ObjectId(
+          data.event_id as unknown as string,
+        ) as any;
       } catch (_) {}
     }
 
     if (data.organization_id) {
       try {
         if (typeof data.organization_id === 'string') {
-          data.organization_id = new Types.ObjectId(data.organization_id) as any;
+          data.organization_id = new Types.ObjectId(
+            data.organization_id,
+          ) as any;
         } else {
           const rawOrgId = (data.organization_id as any)?._id;
           if (typeof rawOrgId === 'string') {
@@ -183,9 +187,9 @@ export class ActivitiesService {
         event_id: {
           $cond: [
             { $gt: [{ $size: '$_event' }, 0] }, // Si _event tiene elementos
-            { $arrayElemAt: ['$_event', 0] },    // Usar el evento poblado
-            '$event_id'                           // Si no, mantener el event_id original
-          ]
+            { $arrayElemAt: ['$_event', 0] }, // Usar el evento poblado
+            '$event_id', // Si no, mantener el event_id original
+          ],
         },
       },
     };
@@ -220,7 +224,7 @@ export class ActivitiesService {
           return doc.toObject();
         }
         return result;
-      })
+      }),
     );
 
     return { results: populated as any, total, page, limit };

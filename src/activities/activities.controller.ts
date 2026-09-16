@@ -16,9 +16,12 @@ import { Activity } from './schemas/activity.schema';
 import { TranscriptSegmentsService } from 'src/transcript-segments/transcript-segments.service';
 import { TranscriptionPollingService } from './transcription-polling.service';
 import { VimeoResolverService } from './vimeo-resolver.service';
-import { MigrationTextTranscriptionService, MigrationResult } from './migration-text-transcription.service';
-import { HttpService } from '@nestjs/axios';
-import { lastValueFrom } from 'rxjs';
+import { BunnyResolverService } from './bunny-resolver.service';
+import { AssemblyAiService } from './assemblyai.service';
+import {
+  MigrationTextTranscriptionService,
+  MigrationResult,
+} from './migration-text-transcription.service';
 import { DocumentsService } from '../documents/documents.service';
 
 @Controller('activities')
@@ -26,9 +29,10 @@ export class ActivitiesController {
   constructor(
     private readonly activitiesService: ActivitiesService,
     private readonly transcriptSegmentsService: TranscriptSegmentsService,
-    private readonly httpService: HttpService,
     private readonly transcriptionPollingService: TranscriptionPollingService,
     private readonly vimeoResolverService: VimeoResolverService,
+    private readonly bunnyResolverService: BunnyResolverService,
+    private readonly assemblyAiService: AssemblyAiService,
     private readonly documentsService: DocumentsService,
     private readonly migrationService: MigrationTextTranscriptionService,
   ) {}
@@ -101,13 +105,9 @@ export class ActivitiesController {
     return this.activitiesService.updateVideoProgress(id, progress);
   }
 
-  // Generar transcripción - enqueua en el servicio externo y comienza polling asincrónico
+  // Generar transcripción - enqueua en AssemblyAI y comienza polling asincrónico
   @Post('generate-transcript/:activity_id')
-  async generateTranscript(
-    @Param('activity_id') activity_id: string,
-    @Body('use_gpu') use_gpu: boolean = true,
-    @Body('generate_embeddings') generate_embeddings: boolean = true,
-  ) {
+  async generateTranscript(@Param('activity_id') activity_id: string) {
     const activity = await this.activitiesService.findOne(activity_id);
     if (!activity) {
       throw new NotFoundException('Activity not found');
@@ -118,103 +118,56 @@ export class ActivitiesController {
       throw new BadRequestException('This activity has no video');
     }
 
-    let videoUrl: string;
+    // Resolver el video a una URL pública reproducible, según su proveedor
+    let audioUrl: string;
     if (primaryVideo.provider === 'vimeo') {
-      videoUrl = `https://vimeo.com/${primaryVideo.video_id}`;
+      console.log(
+        `🔍 Resolviendo URL de video (Vimeo): ${primaryVideo.video_id}`,
+      );
+      audioUrl = await this.vimeoResolverService.resolveDirectUrlViaApi(
+        primaryVideo.video_id,
+        activity.organization_id?.toString(),
+      );
+    } else if (primaryVideo.provider === 'bunny') {
+      console.log(
+        `🔍 Resolviendo URL de video (Bunny): ${primaryVideo.video_id}`,
+      );
+      audioUrl = await this.bunnyResolverService.resolveUrl(
+        primaryVideo.video_id,
+        primaryVideo.meta?.library_id,
+      );
     } else {
       throw new BadRequestException(
-        `Video provider "${primaryVideo.provider}" is not supported for transcript generation yet`,
+        `Video provider "${primaryVideo.provider}" is not supported for transcript generation`,
       );
     }
+    console.log(`✅ URL resuelta: ${audioUrl}`);
 
-    const baseUrl =
-      process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
-    const pythonUrl = `${baseUrl}/transcribe`;
+    const transcriptId =
+      await this.assemblyAiService.submitTranscription(audioUrl);
 
-    // Resolver URL de Vimeo a URL de streaming directo si es necesario
-    console.log(`🔍 Resolviendo URL de video: ${videoUrl}`);
-    const resolvedVideoUrl = await this.vimeoResolverService.resolveUrl(
-      videoUrl,
-    );
-    console.log(`✅ URL resuelta: ${resolvedVideoUrl}`);
-
-    // Construir payload exactamente como espera el endpoint
-    const payload: any = {
-      video_url: resolvedVideoUrl,
-      activity_id,
-      name_activity: activity.name,
-      use_gpu: use_gpu ?? false,
-      generate_embeddings: generate_embeddings ?? true,
-    };
-
-    // Log sin mostrar propiedades undefined
-    console.log('📤 Enviando solicitud de transcripción (payload limpio):', {
-      pythonUrl,
-      payload,
+    // Guardar el id del transcript en la actividad
+    await this.activitiesService.update(activity_id, {
+      transcription_job_id: transcriptId,
     });
 
-    try {
-      const response$ = this.httpService.post(pythonUrl, payload);
-      const response = await lastValueFrom(response$);
-      const data = response.data;
+    console.log(
+      `✅ Transcript ${transcriptId} enqueued y guardado en BD para activity ${activity_id}`,
+    );
 
-      console.log('📥 Respuesta completa del servidor de transcripción:', {
-        status: data.status,
-        jobId: data.job_id,
-        fullResponse: data,
-      });
+    // Iniciar polling asincrónico (NO await - se ejecuta en background)
+    this.transcriptionPollingService.startPolling(transcriptId, activity_id);
 
-      if (data.error) {
-        throw new BadRequestException(`Transcription error: ${data.error}`);
-      }
-
-      if (!data.job_id) {
-        throw new BadRequestException(
-          `No job_id in response. Response: ${JSON.stringify(data)}`,
-        );
-      }
-
-      // Guardar el job_id en la actividad
-      await this.activitiesService.update(activity_id, {
-        transcription_job_id: data.job_id,
-      });
-
-      console.log(
-        `✅ Job ${data.job_id} enqueued y guardado en BD para activity ${activity_id}`,
-      );
-
-      // Iniciar polling asincrónico (NO await - se ejecuta en background)
-      this.transcriptionPollingService.startPolling(data.job_id, activity_id);
-
-      return {
-        message: 'Transcription job enqueued successfully',
-        jobId: data.job_id,
-        status: data.status,
-      };
-    } catch (error: any) {
-      console.error('❌ Error al enviar job al microservicio:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-      });
-
-      throw new BadRequestException(
-        `Failed to enqueue transcript job: ${
-          error.response?.data?.error || error.message || 'Unknown error'
-        }`,
-      );
-    }
+    return {
+      message: 'Transcription job enqueued successfully',
+      jobId: transcriptId,
+      status: 'queued',
+    };
   }
 
   @Get('transcription-status/:job_id')
   async getJobStatus(@Param('job_id') job_id: string) {
-    const baseUrl =
-      process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
-    const response$ = this.httpService.get(
-      `${baseUrl}/transcribe/${job_id}/status`,
-    );
-    const response = await lastValueFrom(response$);
-    return response.data;
+    return this.assemblyAiService.getTranscriptionResult(job_id);
   }
 
   // Validar y recuperar transcripts en "done"
@@ -243,44 +196,45 @@ export class ActivitiesController {
       try {
         console.log(`✓ Verificando job ${jobId} para activity ${activity._id}`);
 
-        // Consultar estado del job
-        const baseUrl =
-          process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
-        const resultUrl = `${baseUrl}/transcribe/${jobId}/result`;
-        const response$ = this.httpService.get(resultUrl);
-        const response = await lastValueFrom(response$);
-        const data = response.data;
+        // Consultar estado del transcript en AssemblyAI
+        const data = await this.assemblyAiService.getTranscriptionResult(jobId);
 
-        if (data.status === 'done' && data.segments) {
+        if (data.status === 'completed') {
+          const sentences = await this.assemblyAiService.getSentences(jobId);
           console.log(
-            `✅ Job ${jobId} está completo con ${data.segments.length} segmentos`,
+            `✅ Job ${jobId} está completo con ${sentences.length} sentences`,
           );
 
-          // Guardar segmentos
+          // Guardar segmentos (AssemblyAI da start/end en ms; los segmentos se guardan en segundos)
+          const segments = sentences.map((s) => ({
+            startTime: s.start / 1000,
+            endTime: s.end / 1000,
+            text: s.text,
+          }));
           await this.transcriptSegmentsService.createSegments(
             String(activity._id),
-            data.segments,
+            segments,
           );
 
-          // Marcar como disponible
-          await this.activitiesService.updateTranscriptAvailable(
-            String(activity._id),
-            true,
-          );
+          // Marcar como disponible y guardar el texto completo
+          await this.activitiesService.update(String(activity._id), {
+            transcript_available: true,
+            textTranscription: data.text,
+          });
 
           results.updated++;
           results.details.push({
             activityId: activity._id,
             jobId,
             status: 'done',
-            segmentCount: data.segments.length,
+            segmentCount: segments.length,
             message: 'Transcript marcado como disponible',
           });
 
           console.log(
             `📝 Activity ${activity._id} marcada como transcript_available`,
           );
-        } else if (data.status === 'processing') {
+        } else if (data.status === 'processing' || data.status === 'queued') {
           console.log(`⏳ Job ${jobId} aún está procesando`);
           results.details.push({
             activityId: activity._id,
@@ -350,34 +304,34 @@ export class ActivitiesController {
     const jobId = activity.transcription_job_id;
 
     try {
-      // Consultar estado del job
-      const baseUrl =
-        process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
-      const resultUrl = `${baseUrl}/transcribe/${jobId}/result`;
-      console.log(`📥 Consultando: ${resultUrl}`);
-
-      const response$ = this.httpService.get(resultUrl);
-      const response = await lastValueFrom(response$);
-      const data = response.data;
+      // Consultar estado del transcript en AssemblyAI
+      console.log(`📥 Consultando transcript ${jobId} en AssemblyAI`);
+      const data = await this.assemblyAiService.getTranscriptionResult(jobId);
 
       console.log(`📊 Status del job: ${data.status}`);
 
-      if (data.status === 'done' && data.segments) {
+      if (data.status === 'completed') {
+        const sentences = await this.assemblyAiService.getSentences(jobId);
         console.log(
-          `✅ Job ${jobId} está completo con ${data.segments.length} segmentos`,
+          `✅ Job ${jobId} está completo con ${sentences.length} sentences`,
         );
 
-        // Guardar segmentos
+        // Guardar segmentos (AssemblyAI da start/end en ms; los segmentos se guardan en segundos)
+        const segments = sentences.map((s) => ({
+          startTime: s.start / 1000,
+          endTime: s.end / 1000,
+          text: s.text,
+        }));
         await this.transcriptSegmentsService.createSegments(
           activity_id,
-          data.segments,
+          segments,
         );
 
-        // Marcar como disponible
-        await this.activitiesService.updateTranscriptAvailable(
-          activity_id,
-          true,
-        );
+        // Marcar como disponible y guardar el texto completo
+        await this.activitiesService.update(activity_id, {
+          transcript_available: true,
+          textTranscription: data.text,
+        });
 
         const updatedActivity =
           await this.activitiesService.findOne(activity_id);
@@ -390,9 +344,9 @@ export class ActivitiesController {
           message: 'Transcription validated and saved successfully',
           activity: updatedActivity,
           status: 'done',
-          segmentCount: data.segments.length,
+          segmentCount: segments.length,
         };
-      } else if (data.status === 'processing') {
+      } else if (data.status === 'processing' || data.status === 'queued') {
         console.log(`⏳ Job ${jobId} aún está procesando`);
         return {
           message: 'Transcription is still processing',
@@ -431,9 +385,7 @@ export class ActivitiesController {
     const active = videos.filter((v) => v.status === 'active');
     const pool = active.length > 0 ? active : videos;
 
-    return [...pool].sort(
-      (a, b) => (a.priority ?? 0) - (b.priority ?? 0),
-    )[0];
+    return [...pool].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))[0];
   }
 
   // Función para normalizar la URL de Vimeo

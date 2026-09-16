@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
 import { TranscriptSegmentsService } from 'src/transcript-segments/transcript-segments.service';
 import { ActivitiesService } from './activities.service';
-import { lastValueFrom } from 'rxjs';
+import { AssemblyAiService } from './assemblyai.service';
 
 @Injectable()
 export class TranscriptionPollingService {
@@ -10,7 +9,7 @@ export class TranscriptionPollingService {
   private pollingIntervals: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(
-    private readonly httpService: HttpService,
+    private readonly assemblyAiService: AssemblyAiService,
     private readonly transcriptSegmentsService: TranscriptSegmentsService,
     private readonly activitiesService: ActivitiesService,
   ) {}
@@ -48,12 +47,15 @@ export class TranscriptionPollingService {
     this.pollingIntervals.set(jobId, intervalId);
 
     // Timeout: detener polling después de 60 minutos (máximo razonableintentaré 60 minutos para videos largos)
-    setTimeout(() => {
-      if (this.pollingIntervals.has(jobId)) {
-        this.logger.warn(`Polling timeout for job ${jobId} after 60 minutes`);
-        this.stopPolling(jobId);
-      }
-    }, 60 * 60 * 1000);
+    setTimeout(
+      () => {
+        if (this.pollingIntervals.has(jobId)) {
+          this.logger.warn(`Polling timeout for job ${jobId} after 60 minutes`);
+          this.stopPolling(jobId);
+        }
+      },
+      60 * 60 * 1000,
+    );
   }
 
   /**
@@ -64,30 +66,35 @@ export class TranscriptionPollingService {
     activityId: string,
   ): Promise<void> {
     try {
-      const baseUrl =
-        process.env.TRANSCRIPTION_SERVICE_URL || 'http://127.0.0.1:5001';
-      const resultUrl = `${baseUrl}/transcribe/${jobId}/result`;
-      this.logger.debug(`🔍 Polling: GET ${resultUrl}`);
-      
-      const response$ = this.httpService.get(resultUrl);
-      const response = await lastValueFrom(response$);
-      const data = response.data;
+      this.logger.debug(`🔍 Polling AssemblyAI transcript ${jobId}`);
+
+      const data = await this.assemblyAiService.getTranscriptionResult(jobId);
 
       this.logger.debug(`📥 Response status: ${data.status}`);
 
-      if (data.status === 'done' && data.segments) {
+      if (data.status === 'completed') {
+        const sentences = await this.assemblyAiService.getSentences(jobId);
         this.logger.log(
-          `✅ Transcription completed for job ${jobId} with ${data.segments.length} segments`,
+          `✅ Transcription completed for job ${jobId} with ${sentences.length} sentences`,
         );
 
-        // Guardar segmentos en MongoDB
+        // Guardar segmentos en MongoDB (AssemblyAI da start/end en ms; los
+        // segmentos se guardan en segundos, ver ActivityTranscript.tsx)
+        const segments = sentences.map((s) => ({
+          startTime: s.start / 1000,
+          endTime: s.end / 1000,
+          text: s.text,
+        }));
         await this.transcriptSegmentsService.createSegments(
           activityId,
-          data.segments,
+          segments,
         );
 
-        // Marcar transcripción como disponible
-        await this.activitiesService.updateTranscriptAvailable(activityId, true);
+        // Marcar transcripción como disponible y guardar el texto completo
+        await this.activitiesService.update(activityId, {
+          transcript_available: true,
+          textTranscription: data.text,
+        });
         this.logger.log(
           `✏️ Activity ${activityId} marked as transcript_available: true`,
         );
@@ -99,7 +106,7 @@ export class TranscriptionPollingService {
           `❌ Transcription error for job ${jobId}: ${data.error}`,
         );
         this.stopPolling(jobId);
-      } else if (data.status === 'processing') {
+      } else if (data.status === 'processing' || data.status === 'queued') {
         this.logger.debug(`⏳ Job ${jobId} still processing...`);
       }
     } catch (error: any) {

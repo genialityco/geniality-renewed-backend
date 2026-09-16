@@ -53,9 +53,10 @@ export class MigrationTextTranscriptionService {
           this.logger.debug(`⏳ Procesando actividad: ${activity._id}`);
 
           // Obtener segmentos
-          const segments = await this.transcriptSegmentsService.getSegmentsByActivity(
-            activity._id.toString(),
-          );
+          const segments =
+            await this.transcriptSegmentsService.getSegmentsByActivity(
+              activity._id.toString(),
+            );
 
           if (!segments || segments.length === 0) {
             this.logger.warn(
@@ -88,7 +89,8 @@ export class MigrationTextTranscriptionService {
           );
         } catch (error) {
           result.errorCount++;
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           result.errors.push({
             activityId: activity._id.toString(),
             error: errorMessage,
@@ -134,9 +136,8 @@ Errores: ${result.errorCount}
         throw new Error('Activity does not have transcript_available = true');
       }
 
-      const segments = await this.transcriptSegmentsService.getSegmentsByActivity(
-        activityId,
-      );
+      const segments =
+        await this.transcriptSegmentsService.getSegmentsByActivity(activityId);
 
       if (!segments || segments.length === 0) {
         throw new Error('No segments found for this activity');
@@ -161,8 +162,11 @@ Errores: ${result.errorCount}
         message: `Successfully migrated activity ${activityId}`,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.logger.error(`❌ Error migrando actividad ${activityId}: ${errorMessage}`);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `❌ Error migrando actividad ${activityId}: ${errorMessage}`,
+      );
       return {
         success: false,
         message: errorMessage,
