@@ -11,6 +11,7 @@ import { BunnyResolverService } from './bunny-resolver.service';
 import { AssemblyAiService } from './assemblyai.service';
 import { DocumentsModule } from '../documents/documents.module';
 import { MigrationTextTranscriptionService } from './migration-text-transcription.service';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
@@ -20,6 +21,9 @@ import { MigrationTextTranscriptionService } from './migration-text-transcriptio
     HttpModule,
     TranscriptSegmentsModule,
     DocumentsModule,
+    // Provee UsersService para SessionTokenGuard en los endpoints de
+    // transcripción/migración.
+    UsersModule,
   ],
   providers: [
     ActivitiesService,

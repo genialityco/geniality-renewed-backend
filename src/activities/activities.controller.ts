@@ -10,7 +10,9 @@ import {
   Query,
   NotFoundException,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
+import { SessionTokenGuard } from '../auth/session-token.guard';
 import { ActivitiesService } from './activities.service';
 import { Activity } from './schemas/activity.schema';
 import { TranscriptSegmentsService } from 'src/transcript-segments/transcript-segments.service';
@@ -106,6 +108,7 @@ export class ActivitiesController {
   }
 
   // Generar transcripción - enqueua en AssemblyAI y comienza polling asincrónico
+  @UseGuards(SessionTokenGuard)
   @Post('generate-transcript/:activity_id')
   async generateTranscript(@Param('activity_id') activity_id: string) {
     const activity = await this.activitiesService.findOne(activity_id);
@@ -165,12 +168,14 @@ export class ActivitiesController {
     };
   }
 
+  @UseGuards(SessionTokenGuard)
   @Get('transcription-status/:job_id')
   async getJobStatus(@Param('job_id') job_id: string) {
     return this.assemblyAiService.getTranscriptionResult(job_id);
   }
 
   // Validar y recuperar transcripts en "done"
+  @UseGuards(SessionTokenGuard)
   @Post('validate-transcripts')
   async validateTranscripts() {
     console.log('🔍 Iniciando validación de transcripts pendientes...');
@@ -286,6 +291,7 @@ export class ActivitiesController {
   }
 
   // Validar y actualizar un transcript específico si está en "done"
+  @UseGuards(SessionTokenGuard)
   @Post('validate-transcript/:activity_id')
   async validateSingleTranscript(@Param('activity_id') activity_id: string) {
     console.log(`🔍 Validando transcript para activity ${activity_id}`);
@@ -425,6 +431,7 @@ export class ActivitiesController {
    * Ejecuta la migración completa
    * POST /activities/migration/run
    */
+  @UseGuards(SessionTokenGuard)
   @Post('migration/run')
   async runMigration(): Promise<MigrationResult> {
     console.log('🚀 Usuario ejecutando migración de textTranscription');
@@ -435,6 +442,7 @@ export class ActivitiesController {
    * Obtiene estadísticas de la migración sin ejecutarla
    * GET /activities/migration/statistics
    */
+  @UseGuards(SessionTokenGuard)
   @Get('migration/statistics')
   async getMigrationStatistics() {
     console.log('📊 Usuario solicitando estadísticas de migración');
@@ -445,6 +453,7 @@ export class ActivitiesController {
    * Migra una actividad específica
    * POST /activities/migration/:activityId
    */
+  @UseGuards(SessionTokenGuard)
   @Post('migration/:activityId')
   async migrateSpecificActivity(@Param('activityId') activityId: string) {
     console.log(`🔄 Usuario migrando actividad específica: ${activityId}`);
