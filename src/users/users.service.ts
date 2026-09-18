@@ -129,10 +129,11 @@ export class UsersService {
     phone?: string,
     password?: string,
   ): Promise<User> {
+    const cleanEmail = (email || '').trim().toLowerCase();
     const existingUser = await this.userModel.findOne({ uid }).exec();
     if (existingUser) {
       existingUser.names = name;
-      existingUser.email = email;
+      existingUser.email = cleanEmail;
       if (phone) existingUser.phone = phone;
       if (!Array.isArray(existingUser.sessionTokens))
         existingUser.sessionTokens = [];
@@ -141,7 +142,7 @@ export class UsersService {
       const newUser = new this.userModel({
         uid,
         names: name,
-        email,
+        email: cleanEmail,
         phone,
         sessionTokens: [],
         password,
