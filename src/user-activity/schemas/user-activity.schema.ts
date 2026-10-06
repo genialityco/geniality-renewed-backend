@@ -84,7 +84,9 @@ export const UserActivitySchema = SchemaFactory.createForClass(UserActivity);
 UserActivitySchema.index({ user_id: 1 });
 UserActivitySchema.index({ firebase_uid: 1 });
 UserActivitySchema.index({ organization_id: 1 });
-UserActivitySchema.index({ user_id: 1, organization_id: 1 });
+// { user_id, organization_id } se declara abajo como único; declararlo también
+// aquí genera el mismo nombre de índice y syncIndexes falla con
+// IndexKeySpecsConflict.
 UserActivitySchema.index({ last_updated: 1 });
 
 // Índice único para prevenir duplicados: solo un registro por usuario+organización

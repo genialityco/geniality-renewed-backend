@@ -171,7 +171,17 @@ export class ActivitiesController {
   @UseGuards(SessionTokenGuard)
   @Get('transcription-status/:job_id')
   async getJobStatus(@Param('job_id') job_id: string) {
-    return this.assemblyAiService.getTranscriptionResult(job_id);
+    try {
+      return await this.assemblyAiService.getTranscriptionResult(job_id);
+    } catch (error: any) {
+      // Sin esto el AxiosError (p. ej. 400 "transcript id not found") sale
+      // como 500 sin mensaje útil.
+      throw new BadRequestException(
+        `No se pudo consultar el transcript ${job_id} en AssemblyAI: ${
+          error.response?.data?.error || error.message
+        }`,
+      );
+    }
   }
 
   // Validar y recuperar transcripts en "done"

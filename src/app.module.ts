@@ -27,6 +27,7 @@ import { CertificateTemplatesModule } from './certificate-templates/certificate-
 import { CertificatesModule } from './certificates/certificates.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { EventMetricsModule } from './event-metrics/event-metrics.module';
+import { AiEvaluationsModule } from './ai-evaluations/ai-evaluations.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { EventMetricsModule } from './event-metrics/event-metrics.module';
     CertificatesModule,
     RemindersModule,
     EventMetricsModule,
+    AiEvaluationsModule,
   ],
   // providers: [SessionTokenGuard],
 })

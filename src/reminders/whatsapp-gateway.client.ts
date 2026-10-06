@@ -67,4 +67,19 @@ export class WhatsappGatewayClient {
       throw error;
     }
   }
+
+  /**
+   * Envía un mensaje de texto libre (Cloud API). Solo funciona dentro de la
+   * ventana de 24 h desde el último mensaje del usuario, p. ej. al responder
+   * en una conversación iniciada por él.
+   */
+  async sendText(to: string, message: string): Promise<void> {
+    await lastValueFrom(
+      this.httpService.post(`${this.gatewayUrl}/api/send-text`, {
+        accountId: this.accountId,
+        to,
+        message,
+      }),
+    );
+  }
 }
