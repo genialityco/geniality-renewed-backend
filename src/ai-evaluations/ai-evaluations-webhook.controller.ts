@@ -8,11 +8,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { timingSafeEqual } from 'crypto';
-import { AiEvaluationEngineService } from './ai-evaluation-engine.service';
+import { WhatsappInboundService } from './whatsapp-inbound.service';
 
 interface InboundMessage {
   from?: string;
   text?: string;
+  // id del botón/opción interactiva o payload del quick reply de plantilla
+  replyId?: string;
   wamid?: string;
   timestamp?: string;
 }
@@ -24,14 +26,15 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Recibe los mensajes de texto entrantes que reenvía el gateway de WhatsApp
- * (wa-multisession-backend). Responde de inmediato y procesa en segundo
+ * Recibe los mensajes entrantes (texto y respuestas a botones) que reenvía el
+ * gateway de WhatsApp (wa-multisession-backend) para las evaluaciones EV- y
+ * los simulacros de práctica. Responde de inmediato y procesa en segundo
  * plano: el gateway contesta a Meta dentro del mismo request y Meta reintenta
  * si tarda.
  */
 @Controller('ai-evaluations/whatsapp')
 export class AiEvaluationsWebhookController {
-  constructor(private readonly engine: AiEvaluationEngineService) {}
+  constructor(private readonly inboundService: WhatsappInboundService) {}
 
   /** POST /ai-evaluations/whatsapp/inbound  [x-webhook-secret] */
   @Post('inbound')
@@ -53,7 +56,8 @@ export class AiEvaluationsWebhookController {
     const phone = String(body?.from || '').replace(/\D/g, '');
     const text = String(body?.text || '').trim();
     if (phone && text) {
-      this.engine.enqueueInbound(phone, text, body.wamid);
+      const replyId = body.replyId ? String(body.replyId) : undefined;
+      this.inboundService.enqueue(phone, text, replyId, body.wamid);
     }
     return { status: 'accepted' };
   }

@@ -27,6 +27,14 @@ export class OrganizationUser extends Document {
 
   @Prop({ type: Boolean, default: false })
   memberShipStatus?: boolean;
+
+  // Consentimiento para recibir prácticas y seguimiento académico por
+  // WhatsApp (requerido por Meta para mensajes iniciados por la plataforma).
+  @Prop({ type: Boolean, default: false })
+  whatsapp_opt_in?: boolean;
+
+  @Prop({ type: Date, default: null })
+  whatsapp_opt_in_at?: Date | null;
 }
 
 export const OrganizationUserSchema =

@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Event } from 'src/events/schemas/event.schema';
-import { WhatsappGatewayClient } from 'src/reminders/whatsapp-gateway.client';
 import {
   ACTIVE_STATUSES,
   AiEvaluationQuestion,
@@ -34,7 +33,6 @@ const WHOLE_COURSE_WORDS = new Set([
 const SESSION_IDLE_HOURS =
   Number(process.env.AI_EVALUATION_SESSION_TTL_HOURS) || 24;
 const MIN_CONTENT_CHARS = 300;
-const DEDUPE_TTL_MS = 24 * 3600 * 1000;
 
 const DIFFICULTY_HINT: Record<string, string> = {
   basic: 'Preguntas de nivel básico: definiciones y comprensión de conceptos.',
@@ -77,18 +75,13 @@ function similarity(a: string, b: string): number {
 }
 
 /**
- * Conversación de evaluación por WhatsApp. Recibe los mensajes entrantes que
- * reenvía el gateway (wa-multisession-backend) y responde por el mismo
- * gateway. El estado vive en `ai_evaluation_sessions`.
- *
- * Los mensajes de un mismo teléfono se procesan en serie con una cola en
- * memoria; asume una sola instancia del backend.
+ * Conversación de evaluación por WhatsApp (iniciada con un código EV-XXXXXX).
+ * WhatsappInboundService recibe los mensajes, los enruta aquí y envía la
+ * respuesta. El estado vive en `ai_evaluation_sessions`.
  */
 @Injectable()
 export class AiEvaluationEngineService {
   private readonly logger = new Logger(AiEvaluationEngineService.name);
-  private readonly phoneQueues = new Map<string, Promise<unknown>>();
-  private readonly seenMessages = new Map<string, number>();
 
   constructor(
     @InjectModel(AiEvaluationSession.name)
@@ -98,56 +91,11 @@ export class AiEvaluationEngineService {
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     private readonly content: CourseContentService,
     private readonly gemini: GeminiTextClient,
-    private readonly whatsapp: WhatsappGatewayClient,
   ) {}
 
-  /**
-   * Punto de entrada del webhook. No bloquea: encola el mensaje del teléfono
-   * y responde por WhatsApp cuando termina.
-   */
-  enqueueInbound(phone: string, text: string, wamid?: string): void {
-    if (wamid && this.isDuplicate(wamid)) return;
-
-    const previous = this.phoneQueues.get(phone) || Promise.resolve();
-    const next = previous
-      .catch(() => undefined)
-      .then(() => this.processInbound(phone, text));
-    this.phoneQueues.set(phone, next);
-    next.finally(() => {
-      if (this.phoneQueues.get(phone) === next) this.phoneQueues.delete(phone);
-    });
-  }
-
-  private isDuplicate(wamid: string): boolean {
-    const now = Date.now();
-    for (const [id, at] of this.seenMessages) {
-      if (now - at > DEDUPE_TTL_MS) this.seenMessages.delete(id);
-      else break; // Map mantiene orden de inserción
-    }
-    if (this.seenMessages.has(wamid)) return true;
-    this.seenMessages.set(wamid, now);
-    return false;
-  }
-
-  private async processInbound(phone: string, text: string): Promise<void> {
-    let reply: string | null;
-    try {
-      reply = await this.handleMessage(phone, text);
-    } catch (error) {
-      this.logger.error(
-        `Error procesando mensaje de ${phone}: ${(error as Error).message}`,
-      );
-      reply =
-        'Tuve un problema procesando tu mensaje. Por favor envíalo de nuevo en un momento.';
-    }
-    if (!reply) return;
-    try {
-      await this.whatsapp.sendText(phone, reply);
-    } catch (error) {
-      this.logger.error(
-        `No se pudo enviar la respuesta a ${phone}: ${(error as Error).message}`,
-      );
-    }
+  /** ¿El teléfono tiene una evaluación en curso (no vencida)? */
+  async hasActiveSession(phone: string): Promise<boolean> {
+    return Boolean(await this.findActiveSession(phone));
   }
 
   /**

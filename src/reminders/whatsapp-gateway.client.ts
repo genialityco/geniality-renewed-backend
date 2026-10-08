@@ -82,4 +82,48 @@ export class WhatsappGatewayClient {
       }),
     );
   }
+
+  /**
+   * Envía botones de respuesta (máx. 3, títulos de 20 caracteres) o una lista
+   * (máx. 10 filas). Igual que sendText, solo dentro de la ventana de 24 h.
+   * La respuesta del usuario llega al webhook de entrada con `replyId`.
+   */
+  async sendInteractive(
+    to: string,
+    message: InteractiveMessage,
+  ): Promise<void> {
+    await lastValueFrom(
+      this.httpService.post(`${this.gatewayUrl}/api/send-interactive`, {
+        accountId: this.accountId,
+        to,
+        ...message,
+      }),
+    );
+  }
+
+  /** Envía un mensaje de texto o interactivo según su forma. */
+  async sendOutbound(to: string, message: OutboundMessage): Promise<void> {
+    if (typeof message === 'string') return this.sendText(to, message);
+    if (message.buttons?.length || message.list?.sections?.length) {
+      return this.sendInteractive(to, message);
+    }
+    return this.sendText(to, message.body);
+  }
 }
+
+export interface InteractiveMessage {
+  body: string;
+  header?: string;
+  footer?: string;
+  buttons?: { id: string; title: string }[];
+  list?: {
+    button: string;
+    sections: {
+      title?: string;
+      rows: { id: string; title: string; description?: string }[];
+    }[];
+  };
+}
+
+/** Mensaje saliente de un bot: texto plano o interactivo. */
+export type OutboundMessage = string | InteractiveMessage;
