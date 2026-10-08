@@ -370,8 +370,14 @@ export class PracticeEngineService {
   private choicePrompt(session: Session): OutboundMessage {
     const sid = String(session._id);
     const options = session.activity_options || [];
-    const clip = (text: string, max: number) =>
-      text.length > max ? `${text.slice(0, max - 1)}…` : text;
+    // Por caracteres (no unidades UTF-16) para no partir emojis: Meta
+    // rechaza la lista si un título queda con un carácter inválido
+    const clip = (text: string, max: number) => {
+      const chars = Array.from(String(text || '').trim());
+      return chars.length > max
+        ? `${chars.slice(0, max - 1).join('')}…`
+        : chars.join('');
+    };
     const lines = options.map((o, i) => `*${i + 1}.* ${o.activity_name}`);
     return {
       body:

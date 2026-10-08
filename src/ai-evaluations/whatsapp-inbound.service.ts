@@ -14,6 +14,32 @@ import { PracticeEngineService } from './practice-engine.service';
 
 const DEDUPE_TTL_MS = 24 * 3600 * 1000;
 
+function sendErrorDetail(error: unknown): string {
+  const data = (error as any)?.response?.data;
+  return (
+    [data?.error, data?.code, data?.details].filter(Boolean).join(' · ') ||
+    (error as Error).message
+  );
+}
+
+/**
+ * Versión en texto de un mensaje interactivo, por si Meta lo rechaza. Los
+ * cuerpos del motor ya enumeran las opciones de las listas; de los botones
+ * se agregan sus títulos.
+ */
+function asPlainText(message: Exclude<OutboundMessage, string>): string {
+  const parts: string[] = [];
+  if (message.header) parts.push(`*${message.header}*`);
+  parts.push(message.body);
+  if (message.buttons?.length) {
+    parts.push(
+      `Responde: ${message.buttons.map((b) => `*${b.title}*`).join(' / ')}`,
+    );
+  }
+  if (message.footer) parts.push(`_${message.footer}_`);
+  return parts.join('\n\n');
+}
+
 /**
  * Entrada única de los mensajes de WhatsApp que reenvía el gateway
  * (wa-multisession-backend). Deduplica por wamid, procesa en serie los
@@ -92,28 +118,46 @@ export class WhatsappInboundService {
         ),
       );
 
-    this.logger.log(
-      `Mensaje entrante de ${phone}: "${text.slice(0, 60)}"${replyId ? ` (replyId ${replyId})` : ''}`,
-    );
+    // El número también se usa para otras cosas: solo se registran en el log
+    // los mensajes que le corresponden a GenCampus
+    const summary = `"${text.slice(0, 60)}"${replyId ? ` (replyId ${replyId})` : ''}`;
     let replies: OutboundMessage[] | null;
     try {
       replies = await this.route(phone, text, replyId);
     } catch (error) {
       this.logger.error(
-        `Error procesando mensaje de ${phone}: ${(error as Error).message}`,
+        `Error procesando mensaje de ${phone} ${summary}: ${(error as Error).message}`,
       );
       replies = [
         'Tuve un problema procesando tu mensaje. Por favor envíalo de nuevo en un momento.',
       ];
     }
     if (!replies?.length) return;
+    this.logger.log(`Mensaje entrante de ${phone}: ${summary}`);
 
     for (const message of replies) {
       try {
         await this.whatsapp.sendOutbound(phone, message);
+        continue;
+      } catch (error) {
+        const detail = sendErrorDetail(error);
+        if (typeof message === 'string') {
+          this.logger.error(
+            `No se pudo enviar la respuesta a ${phone}: ${detail}`,
+          );
+          return;
+        }
+        // Meta rechazó el interactivo (botones/lista): se manda como texto,
+        // que el motor también entiende (número, letra, "empezar"...)
+        this.logger.warn(
+          `Interactivo rechazado para ${phone} (${detail}); se envía como texto`,
+        );
+      }
+      try {
+        await this.whatsapp.sendText(phone, asPlainText(message));
       } catch (error) {
         this.logger.error(
-          `No se pudo enviar la respuesta a ${phone}: ${(error as any)?.response?.data?.details || (error as Error).message}`,
+          `No se pudo enviar la respuesta a ${phone}: ${sendErrorDetail(error)}`,
         );
         return;
       }
@@ -151,9 +195,6 @@ export class WhatsappInboundService {
     if (practiceSession) {
       return this.practice.handleMessage(phone, text, replyId);
     }
-    this.logger.log(
-      `Sin simulacro ni evaluación activos para ${phone}; mensaje ignorado`,
-    );
     return null;
   }
 
