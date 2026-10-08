@@ -11,6 +11,9 @@ import {
   PracticeSessionStatus,
 } from './schemas/practice-session.schema';
 import { QuestionAttempt } from './schemas/question-attempt.schema';
+import { ActivityQuestion } from './schemas/activity-question.schema';
+import { QuestionUsageService } from './question-usage.service';
+import { idVariants } from './course-content.service';
 import {
   ACTIVE_STATUSES as AI_EVAL_ACTIVE_STATUSES,
   AiEvaluationSession,
@@ -23,13 +26,20 @@ import {
   formatTime,
   gradeAnswer,
   normalizeText,
+  shuffleArray,
   similarity,
+  toPracticeQuestion,
 } from './practice-format';
 
 // Una sesión sin mensajes en este tiempo se da por vencida
 const SESSION_TTL_DAYS = Number(process.env.PRACTICE_SESSION_TTL_DAYS) || 7;
 const PASSING_SCORE = 70;
 const MAX_INVALID_HINTS = 3;
+// Índice de pregunta reservado en los ids de botones/filas: -1 invitación,
+// -2 elección de actividad
+const CHOICE_INDEX = '-2';
+const LIST_TITLE_MAX = 24;
+const LIST_DESCRIPTION_MAX = 72;
 
 const CANCEL_WORDS = new Set([
   'salir',
@@ -90,8 +100,9 @@ function isDeclineCommand(command: string): boolean {
 }
 
 /**
- * Conversación del simulacro de práctica por WhatsApp: invitación → preguntas
- * del banco (`activity_questions`) → calificación → resumen. Los tipos
+ * Conversación del simulacro de práctica por WhatsApp: invitación → elección
+ * de una de sus últimas actividades completadas → preguntas no vistas de esa
+ * actividad (`activity_questions`) → calificación → resumen. Los tipos
  * cerrados se califican sin IA (practice-format.ts); las abiertas y los
  * "completar" dudosos, con Gemini. Cada respuesta queda en
  * `question_attempts` y el resultado en `practice_sessions`.
@@ -109,7 +120,10 @@ export class PracticeEngineService {
     private readonly aiEvalSessionModel: Model<AiEvaluationSession>,
     @InjectModel(OrganizationUser.name)
     private readonly organizationUserModel: Model<OrganizationUser>,
+    @InjectModel(ActivityQuestion.name)
+    private readonly questionModel: Model<ActivityQuestion>,
     private readonly gemini: GeminiTextClient,
+    private readonly usage: QuestionUsageService,
   ) {}
 
   // ─── Estado ────────────────────────────────────────────────────────────
@@ -119,6 +133,7 @@ export class PracticeEngineService {
     const session = await this.sessionModel
       .findOne({
         ...phoneFilter(phone),
+        channel: { $ne: 'web' },
         status: { $in: PRACTICE_ACTIVE_STATUSES },
       })
       .sort({ updated_at: -1 })
@@ -142,6 +157,7 @@ export class PracticeEngineService {
     const active = await this.sessionModel
       .find({
         ...phoneFilter(phone),
+        channel: { $ne: 'web' },
         status: { $in: PRACTICE_ACTIVE_STATUSES },
       })
       .exec();
@@ -244,13 +260,15 @@ export class PracticeEngineService {
         '• *salir*: termina el simulacro.\n' +
         '• *baja*: no recibir más prácticas por WhatsApp.';
       if (session.status === 'invited') return [help, this.invitePrompt(sid)];
+      if (session.status === 'choosing')
+        return [help, this.choicePrompt(session)];
       return [help, this.currentQuestion(session)];
     }
 
     if (CANCEL_WORDS.has(command)) {
-      if (session.status === 'invited') {
+      if (session.status === 'invited' || session.status === 'choosing') {
         await this.update(session, {
-          status: 'declined',
+          status: session.status === 'invited' ? 'declined' : 'cancelled',
           finished_at: new Date(),
         });
         return ['Listo, cancelamos el simulacro. ¡Éxitos con tu curso! 👋'];
@@ -261,6 +279,9 @@ export class PracticeEngineService {
 
     if (session.status === 'invited') {
       return this.handleInvitation(session, command, replyId);
+    }
+    if (session.status === 'choosing') {
+      return this.handleChoice(session, command, replyId);
     }
     return this.handleAnswer(session, text, replyId, SKIP_WORDS.has(command));
   }
@@ -312,6 +333,24 @@ export class PracticeEngineService {
         { $set: { status: 'cancelled', finished_at: new Date() } },
       )
       .exec();
+
+    const options = session.activity_options || [];
+    if (options.length === 1) return this.startWithActivity(session, 0);
+    if (options.length > 1) {
+      await this.update(session, { status: 'choosing' });
+      return [this.choicePrompt(session)];
+    }
+
+    // Simulacros creados antes de la elección de actividad: ya traen preguntas
+    if (!session.questions.length) {
+      await this.update(session, {
+        status: 'cancelled',
+        finished_at: new Date(),
+      });
+      return [
+        'Ya practicaste todas las preguntas disponibles de tus actividades recientes. ¡Buen trabajo! 🌟',
+      ];
+    }
     await this.update(session, {
       status: 'in_progress',
       started_at: new Date(),
@@ -321,6 +360,145 @@ export class PracticeEngineService {
     const courses = [...new Set(session.questions.map((q) => q.event_name))];
     const intro =
       `¡Vamos! 💪 Son *${session.questions.length} preguntas* de ${courses.length > 1 ? 'tus cursos' : `*${courses[0]}*`}.\n` +
+      'Es solo práctica: no afecta tus notas. Escribe *ayuda* si necesitas las instrucciones.';
+    return [intro, this.currentQuestion(session)];
+  }
+
+  // ─── Elección de actividad ─────────────────────────────────────────────
+
+  /** Lista con las últimas actividades completadas (también vale el número). */
+  private choicePrompt(session: Session): OutboundMessage {
+    const sid = String(session._id);
+    const options = session.activity_options || [];
+    const clip = (text: string, max: number) =>
+      text.length > max ? `${text.slice(0, max - 1)}…` : text;
+    const lines = options.map((o, i) => `*${i + 1}.* ${o.activity_name}`);
+    return {
+      body:
+        '¿De cuál actividad quieres practicar? Estas son las últimas que completaste:\n\n' +
+        lines.join('\n') +
+        `\n\nResponde con el número (1 a ${options.length}) o elígela en la lista.`,
+      footer: 'Escribe "salir" para cancelar',
+      list: {
+        button: 'Elegir actividad',
+        sections: [
+          {
+            title: 'Actividades recientes',
+            rows: options.map((o, i) => ({
+              id: `${REPLY_PREFIX}:${sid}:${CHOICE_INDEX}:${i}`,
+              title: clip(`${i + 1}. ${o.activity_name}`, LIST_TITLE_MAX),
+              description: clip(
+                `${o.activity_name} · ${o.available} pregunta${o.available === 1 ? '' : 's'}`,
+                LIST_DESCRIPTION_MAX,
+              ),
+            })),
+          },
+        ],
+      },
+    };
+  }
+
+  private async handleChoice(
+    session: Session,
+    command: string,
+    replyId?: string,
+  ): Promise<OutboundMessage[]> {
+    const options = session.activity_options || [];
+    let index: number | null = null;
+
+    const [prefix, replySid, replyIdx, value] = (replyId || '').split(':');
+    if (
+      prefix === REPLY_PREFIX &&
+      replySid === String(session._id) &&
+      replyIdx === CHOICE_INDEX
+    ) {
+      index = Number(value);
+    } else {
+      // "2", "la 2", "opción 2" o el nombre (o parte) de la actividad
+      const num = Number(/\b(\d{1,2})\b/.exec(command)?.[1]);
+      if (num >= 1 && num <= options.length) {
+        index = num - 1;
+      } else if (command.length >= 4) {
+        let best = 0;
+        let bestIndex = -1;
+        for (let i = 0; i < options.length; i++) {
+          const name = normalizeText(options[i].activity_name);
+          const score = name.includes(command) ? 1 : similarity(name, command);
+          if (score > best) {
+            best = score;
+            bestIndex = i;
+          }
+        }
+        if (best >= 0.6) index = bestIndex;
+      }
+    }
+
+    if (index === null || !options[index]) {
+      return [
+        `🤔 No entendí cuál actividad. Responde con el número (1 a ${options.length}).`,
+        this.choicePrompt(session),
+      ];
+    }
+    return this.startWithActivity(session, index);
+  }
+
+  /** Sortea las preguntas no vistas de la actividad elegida y arranca. */
+  private async startWithActivity(
+    session: Session,
+    index: number,
+  ): Promise<OutboundMessage[]> {
+    const options = session.activity_options || [];
+    const option = options[index];
+    const [bank, used] = await Promise.all([
+      this.questionModel
+        .find({
+          activity_id: { $in: idVariants(option.activity_id) },
+          enabled: true,
+        })
+        .lean()
+        .exec(),
+      this.usage.usedQuestionIds(session.user_id),
+    ]);
+    const fresh = bank.filter((q) => !used.has(String(q._id)));
+
+    if (!fresh.length) {
+      // Se agotaron mientras tanto (p. ej. practicó en la plataforma)
+      const remaining = options.filter((_, i) => i !== index);
+      if (remaining.length) {
+        await this.update(session, {
+          status: 'choosing',
+          activity_options: remaining,
+        });
+        return [
+          `Ya practicaste todas las preguntas de _${option.activity_name}_. Elige otra 👇`,
+          this.choicePrompt(session),
+        ];
+      }
+      await this.update(session, {
+        status: 'cancelled',
+        finished_at: new Date(),
+      });
+      return [
+        'Ya practicaste todas las preguntas disponibles de tus actividades recientes. ¡Buen trabajo! 🌟',
+      ];
+    }
+
+    const num = session.num_questions || 3;
+    const questions = shuffleArray(fresh)
+      .slice(0, num)
+      .map((q) =>
+        toPracticeQuestion(q, option.activity_name, option.event_name),
+      );
+    await this.update(session, {
+      status: 'in_progress',
+      started_at: new Date(),
+      current_question: 0,
+      questions,
+      chosen_activity_id: option.activity_id,
+    });
+
+    const intro =
+      `¡Vamos! 💪 Son *${questions.length} pregunta${questions.length === 1 ? '' : 's'}* de _${option.activity_name}_.\n` +
       'Es solo práctica: no afecta tus notas. Escribe *ayuda* si necesitas las instrucciones.';
     return [intro, this.currentQuestion(session)];
   }
@@ -484,8 +662,11 @@ export class PracticeEngineService {
     return lines.join('\n');
   }
 
-  /** Califica con Gemini: abiertas y "completar" con respuesta no exacta. */
-  private async gradeWithAi(
+  /**
+   * Califica con Gemini: abiertas y "completar" con respuesta no exacta.
+   * También la usa la práctica web (WebPracticeService).
+   */
+  async gradeWithAi(
     q: PracticeQuestion,
     text: string,
   ): Promise<

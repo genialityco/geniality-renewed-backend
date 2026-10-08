@@ -137,7 +137,7 @@ export class WhatsappInboundService {
     if (
       practiceSession &&
       (this.practice.isOwnReply(replyId) ||
-        practiceSession.status === 'in_progress')
+        practiceSession.status !== 'invited')
     ) {
       return this.practice.handleMessage(phone, text, replyId);
     }

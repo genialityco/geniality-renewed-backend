@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SessionTokenGuard } from 'src/auth/session-token.guard';
-import { OrgMembershipGuard } from 'src/auth/org-membership.guard';
+import { OrgAdminGuard } from 'src/auth/org-admin.guard';
 import {
   AiEvaluationsService,
   UpsertContextBody,
@@ -74,7 +74,7 @@ export class AiEvaluationsController {
   // :moduleKey = id del módulo, o "course" para el contexto de todo el curso.
 
   /** GET /ai-evaluations/organization/:organizationId/event/:eventId/contexts */
-  @UseGuards(SessionTokenGuard, OrgMembershipGuard)
+  @UseGuards(SessionTokenGuard, OrgAdminGuard)
   @Get('organization/:organizationId/event/:eventId/contexts')
   async listContexts(
     @Param('organizationId') organizationId: string,
@@ -84,7 +84,7 @@ export class AiEvaluationsController {
   }
 
   /** PUT /ai-evaluations/organization/:organizationId/event/:eventId/contexts/:moduleKey */
-  @UseGuards(SessionTokenGuard, OrgMembershipGuard)
+  @UseGuards(SessionTokenGuard, OrgAdminGuard)
   @Put('organization/:organizationId/event/:eventId/contexts/:moduleKey')
   async upsertContext(
     @Req() req: any,
@@ -103,7 +103,7 @@ export class AiEvaluationsController {
   }
 
   /** DELETE /ai-evaluations/organization/:organizationId/event/:eventId/contexts/:moduleKey */
-  @UseGuards(SessionTokenGuard, OrgMembershipGuard)
+  @UseGuards(SessionTokenGuard, OrgAdminGuard)
   @Delete('organization/:organizationId/event/:eventId/contexts/:moduleKey')
   async deleteContext(
     @Param('organizationId') organizationId: string,
@@ -117,7 +117,7 @@ export class AiEvaluationsController {
    * POST /ai-evaluations/organization/:organizationId/event/:eventId/contexts/:moduleKey/draft
    * Genera (sin guardar) un borrador del contexto a partir del contenido del módulo.
    */
-  @UseGuards(SessionTokenGuard, OrgMembershipGuard)
+  @UseGuards(SessionTokenGuard, OrgAdminGuard)
   @Post('organization/:organizationId/event/:eventId/contexts/:moduleKey/draft')
   async generateDraft(
     @Param('organizationId') organizationId: string,
@@ -128,7 +128,7 @@ export class AiEvaluationsController {
   }
 
   /** GET /ai-evaluations/organization/:organizationId/event/:eventId/results */
-  @UseGuards(SessionTokenGuard, OrgMembershipGuard)
+  @UseGuards(SessionTokenGuard, OrgAdminGuard)
   @Get('organization/:organizationId/event/:eventId/results')
   async eventResults(
     @Param('organizationId') organizationId: string,

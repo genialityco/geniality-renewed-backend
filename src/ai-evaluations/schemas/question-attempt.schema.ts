@@ -2,10 +2,12 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import { ActivityQuestionType } from './activity-question.schema';
 
+export type QuestionAttemptSource = 'practice' | 'in_video' | 'web_practice';
+
 /**
  * Un intento de un estudiante sobre una pregunta del banco
- * (`activity_questions`). Historial para analítica y para priorizar en los
- * siguientes simulacros las preguntas falladas o no vistas.
+ * (`activity_questions`). Historial para analítica y para no repetirle
+ * preguntas (ver QuestionUsageService).
  */
 @Schema({
   collection: 'question_attempts',
@@ -19,9 +21,12 @@ export class QuestionAttempt extends Document {
   @Prop({ type: Types.ObjectId, required: true }) question_id: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Activity' }) activity_id: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Event' }) event_id: Types.ObjectId;
-  // Sesión de origen (practice_sessions)
-  @Prop({ type: Types.ObjectId }) session_id: Types.ObjectId;
-  @Prop({ type: String, default: 'practice' }) source: 'practice';
+  // Sesión de origen (practice_sessions); null en las preguntas del video
+  @Prop({ type: Types.ObjectId, default: null })
+  session_id: Types.ObjectId | null;
+  // practice: simulacro por WhatsApp · in_video: pregunta dentro del video
+  // · web_practice: "Evaluar mis conocimientos" de la actividad
+  @Prop({ type: String, default: 'practice' }) source: QuestionAttemptSource;
   @Prop({ type: String }) type: ActivityQuestionType;
   @Prop({ default: '' }) answer: string;
   @Prop({ default: 0 }) score: number; // 0-100

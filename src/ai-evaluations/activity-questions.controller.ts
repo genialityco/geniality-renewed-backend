@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SessionTokenGuard } from 'src/auth/session-token.guard';
-import { OrgMembershipGuard } from 'src/auth/org-membership.guard';
+import { OrgAdminGuard } from 'src/auth/org-admin.guard';
 import {
   ActivityQuestionsService,
   GenerateQuestionsBody,
@@ -19,9 +19,10 @@ import {
 
 /**
  * Banco de preguntas por actividad (admin): generación con IA a partir del
- * curso y el transcript del video, y edición manual.
+ * curso y el transcript del video, y edición manual. Solo administradores:
+ * las preguntas incluyen las respuestas y generar consume Gemini.
  */
-@UseGuards(SessionTokenGuard, OrgMembershipGuard)
+@UseGuards(SessionTokenGuard, OrgAdminGuard)
 @Controller('ai-evaluations/organization/:organizationId')
 export class ActivityQuestionsController {
   constructor(private readonly service: ActivityQuestionsService) {}

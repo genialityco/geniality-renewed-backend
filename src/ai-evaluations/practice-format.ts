@@ -12,6 +12,60 @@ import { BLANK } from './question-types';
 
 const LETTERS = 'abcdefghij';
 
+// Simulacros cortos: 3 o 4 preguntas al azar
+const MIN_DEFAULT_QUESTIONS = 3;
+const MAX_DEFAULT_QUESTIONS = 4;
+
+/** 3 o 4 preguntas al azar: simulacros cortos. */
+export function randomQuestionCount() {
+  return (
+    MIN_DEFAULT_QUESTIONS +
+    Math.floor(
+      Math.random() * (MAX_DEFAULT_QUESTIONS - MIN_DEFAULT_QUESTIONS + 1),
+    )
+  );
+}
+
+export function shuffleArray<T>(items: T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** Copia de una pregunta del banco para guardarla en la sesión. */
+export function toPracticeQuestion(
+  q: Record<string, any>,
+  activityName: string,
+  eventName: string,
+): PracticeQuestion {
+  const base = {
+    type: q.type || 'open',
+    options: q.options || [],
+    pairs: q.pairs || [],
+  };
+  return {
+    question_id: q._id,
+    activity_id: q.activity_id,
+    activity_name: activityName || 'Actividad',
+    event_id: q.event_id,
+    event_name: eventName || 'Curso',
+    ...base,
+    question: q.question,
+    answer: q.answer,
+    accepted_answers: q.accepted_answers || [],
+    key_points: q.key_points || [],
+    explanation: q.explanation || '',
+    topic: q.topic || '',
+    start_time: q.start_time ?? null,
+    shuffle: buildShuffle(base),
+    invalid_tries: 0,
+    response: null,
+  };
+}
+
 /** Prefijo de los ids de botones/filas del simulacro: pq:<sesión>:<pregunta>:<valor> */
 export const REPLY_PREFIX = 'pq';
 

@@ -8,6 +8,7 @@ import {
 
 export type PracticeSessionStatus =
   | 'invited' // enviada la invitación, esperando "Empezar"
+  | 'choosing' // eligiendo de cuál actividad reciente practicar
   | 'in_progress'
   | 'completed'
   | 'declined' // respondió "Ahora no"
@@ -16,8 +17,22 @@ export type PracticeSessionStatus =
 
 export const PRACTICE_ACTIVE_STATUSES: PracticeSessionStatus[] = [
   'invited',
+  'choosing',
   'in_progress',
 ];
+
+/**
+ * Actividad reciente entre las que el estudiante elige al empezar el
+ * simulacro (las últimas que completó con preguntas sin ver).
+ */
+export interface PracticeActivityOption {
+  activity_id: Types.ObjectId;
+  activity_name: string;
+  event_id: Types.ObjectId;
+  event_name: string;
+  completed_at: Date | null;
+  available: number;
+}
 
 /** Respuesta del estudiante a una pregunta del simulacro. */
 export interface PracticeResponse {
@@ -59,8 +74,8 @@ export interface PracticeQuestion {
 
 /**
  * Simulacro de evaluación por WhatsApp (práctica, no cuenta para notas).
- * Lo dispara un admin para un estudiante con las preguntas de las
- * actividades que ha desarrollado.
+ * Lo dispara un admin o el repaso automático, con preguntas que el
+ * estudiante no ha visto de las actividades que ha desarrollado.
  */
 @Schema({
   collection: 'practice_sessions',
@@ -71,10 +86,26 @@ export class PracticeSession extends Document {
   user_id: Types.ObjectId;
   @Prop() user_name: string;
   @Prop() email: string;
-  @Prop({ required: true }) phone: string;
+  // Vacío en las prácticas dentro de la plataforma (channel "web")
+  @Prop({ default: '' }) phone: string;
   @Prop({ type: Types.ObjectId, ref: 'Organization', required: true })
   organization_id: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'User' }) triggered_by: Types.ObjectId;
+  // Admin que lo envió; null en los repasos automáticos
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  triggered_by: Types.ObjectId | null;
+  // manual: lo envió un admin · auto: repaso automático (PracticeReviewCron)
+  // · student: el estudiante la inició desde la actividad (channel "web")
+  @Prop({ type: String, default: 'manual' }) trigger:
+    | 'manual'
+    | 'auto'
+    | 'student';
+  // whatsapp: simulacro conversacional · web: práctica dentro de la plataforma
+  @Prop({ type: String, default: 'whatsapp' }) channel: 'whatsapp' | 'web';
+  // Curso del que salen las preguntas
+  @Prop({ type: Types.ObjectId, ref: 'Event', default: null })
+  event_id: Types.ObjectId | null;
+  // Repaso automático: cubre actividades completadas hasta esta fecha
+  @Prop({ type: Date, default: null }) material_until: Date | null;
 
   @Prop({ type: String, default: 'invited' }) status: PracticeSessionStatus;
   // Cómo se envió la invitación: plantilla (fuera de la ventana de 24 h) o
@@ -83,6 +114,14 @@ export class PracticeSession extends Document {
     | 'template'
     | 'interactive'
     | null;
+
+  // Simulacros por WhatsApp: el estudiante elige al empezar entre estas
+  // actividades y ahí se sortean `num_questions` preguntas de la elegida
+  @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
+  activity_options: PracticeActivityOption[];
+  @Prop({ default: 0 }) num_questions: number;
+  @Prop({ type: Types.ObjectId, default: null })
+  chosen_activity_id: Types.ObjectId | null;
 
   @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
   questions: PracticeQuestion[];
@@ -107,3 +146,9 @@ export const PracticeSessionSchema =
   SchemaFactory.createForClass(PracticeSession);
 PracticeSessionSchema.index({ phone: 1, status: 1, updated_at: -1 });
 PracticeSessionSchema.index({ organization_id: 1, created_at: -1 });
+PracticeSessionSchema.index({
+  user_id: 1,
+  event_id: 1,
+  trigger: 1,
+  invited_at: -1,
+});

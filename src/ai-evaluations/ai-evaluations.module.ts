@@ -13,6 +13,12 @@ import { PracticeController } from './practice.controller';
 import { PracticeEngineService } from './practice-engine.service';
 import { PracticeSessionsService } from './practice-sessions.service';
 import { WhatsappInboundService } from './whatsapp-inbound.service';
+import { QuestionUsageService } from './question-usage.service';
+import { InVideoQuestionsController } from './in-video-questions.controller';
+import { InVideoQuestionsService } from './in-video-questions.service';
+import { PracticeReviewCron } from './practice-review.cron';
+import { WebPracticeController } from './web-practice.controller';
+import { WebPracticeService } from './web-practice.service';
 import { OrgAdminGuard } from '../auth/org-admin.guard';
 import { WhatsappGatewayClient } from '../reminders/whatsapp-gateway.client';
 import {
@@ -109,6 +115,8 @@ import { UsersModule } from '../users/users.module';
     AiEvaluationsWebhookController,
     ActivityQuestionsController,
     PracticeController,
+    InVideoQuestionsController,
+    WebPracticeController,
   ],
   providers: [
     AiEvaluationsService,
@@ -120,6 +128,10 @@ import { UsersModule } from '../users/users.module';
     WhatsappInboundService,
     PracticeEngineService,
     PracticeSessionsService,
+    QuestionUsageService,
+    InVideoQuestionsService,
+    PracticeReviewCron,
+    WebPracticeService,
     OrgAdminGuard,
   ],
 })

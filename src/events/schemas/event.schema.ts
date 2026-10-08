@@ -14,7 +14,10 @@ export class Event extends Document {
   @Prop() venue?: string;
   @Prop() location?: string;
 
-  @Prop({ required: true, enum: ['PUBLIC', 'PRIVATE', 'EXCLUSIVE_FOR_MEMBERS'] })
+  @Prop({
+    required: true,
+    enum: ['PUBLIC', 'PRIVATE', 'EXCLUSIVE_FOR_MEMBERS'],
+  })
   visibility: 'PUBLIC' | 'PRIVATE' | 'EXCLUSIVE_FOR_MEMBERS';
 
   @Prop() description?: string;
@@ -61,6 +64,40 @@ export class Event extends Document {
   certificate_required_exams: number | null;
   // Mensaje que ve el alumno cuando el certificado está bloqueado.
   @Prop({ default: '' }) certificate_locked_message: string;
+
+  // ===== Preguntas dentro del video =====
+  // Práctica opcional: pausan el video y muestran una pregunta cerrada del
+  // banco de la actividad. No afectan el progreso ni el gating.
+  @Prop({ default: false }) in_video_questions_enabled: boolean;
+  // Minutos mínimos entre dos preguntas del mismo video.
+  @Prop({ default: 5, min: 1, max: 120 })
+  in_video_questions_interval_minutes: number;
+  // Máximo de preguntas por video (por estudiante).
+  @Prop({ default: 3, min: 1, max: 20 }) in_video_questions_max: number;
+
+  // ===== Repaso automático por WhatsApp =====
+  // Simulacro de 3-4 preguntas no vistas, días después de completar
+  // actividades. Solo a estudiantes con opt-in y teléfono.
+  @Prop({ default: false }) whatsapp_review_enabled: boolean;
+  // Días entre completar actividades y recibir el repaso (y entre repasos).
+  @Prop({ default: 2, min: 1, max: 60 }) whatsapp_review_delay_days: number;
+  // Zona horaria IANA en la que se evalúan las franjas de envío.
+  @Prop({ default: 'America/Bogota' }) whatsapp_review_timezone: string;
+  // Días de la semana permitidos (0 = domingo … 6 = sábado).
+  @Prop({ type: [Number], default: [1, 2, 3, 4, 5, 6] })
+  whatsapp_review_days: number[];
+  // Franjas en las que se puede enviar ([{ start: 'HH:mm', end: 'HH:mm' }]).
+  @Prop({
+    type: [MongooseSchema.Types.Mixed],
+    default: [{ start: '09:00', end: '19:00' }],
+  })
+  whatsapp_review_windows: { start: string; end: string }[];
+  // Franjas de descanso dentro de las anteriores: no se envía.
+  @Prop({
+    type: [MongooseSchema.Types.Mixed],
+    default: [{ start: '12:00', end: '14:00' }],
+  })
+  whatsapp_review_rest_windows: { start: string; end: string }[];
 
   @Prop({ type: Map, of: MongooseSchema.Types.Mixed, default: {} })
   styles?: Record<string, any>;

@@ -19,19 +19,18 @@ import { resolveName, resolvePhone } from 'src/reminders/contact.util';
 import { ActivityQuestion } from './schemas/activity-question.schema';
 import {
   PRACTICE_ACTIVE_STATUSES,
-  PracticeQuestion,
+  PracticeActivityOption,
   PracticeSession,
 } from './schemas/practice-session.schema';
-import { QuestionAttempt } from './schemas/question-attempt.schema';
 import { idVariants } from './course-content.service';
-import { buildShuffle } from './practice-format';
+import { randomQuestionCount } from './practice-format';
 import { PracticeEngineService } from './practice-engine.service';
 import { WhatsappInboundService } from './whatsapp-inbound.service';
+import { QuestionUsageService } from './question-usage.service';
 
-// Si el admin no indica cuántas, el simulacro es corto: 3 o 4 preguntas al azar
-const MIN_DEFAULT_QUESTIONS = 3;
-const MAX_DEFAULT_QUESTIONS = 4;
 const MAX_NUM_QUESTIONS = 30;
+// Al empezar, el estudiante elige entre sus últimas N actividades completadas
+const MAX_ACTIVITY_OPTIONS = 3;
 const DEFAULT_MIN_PROGRESS = Number(process.env.PRACTICE_MIN_PROGRESS) || 100;
 // Plantilla aprobada en Meta para invitar fuera de la ventana de 24 h.
 // Variables: {{1}} nombre, {{2}} número de preguntas, {{3}} curso,
@@ -53,6 +52,21 @@ function escapeRegex(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** WhatsApp rechazó la invitación (la sesión ya quedó cancelada). */
+class InviteError extends Error {}
+
+interface Student {
+  user: User;
+  orgUser: OrganizationUser;
+  name: string;
+  email: string;
+  phone: string | null;
+}
+
+type Material = Awaited<
+  ReturnType<PracticeSessionsService['availableMaterial']>
+>;
+
 function maskPhone(phone: string | null) {
   if (!phone) return null;
   return `${'•'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-4)}`;
@@ -70,8 +84,6 @@ export class PracticeSessionsService {
   constructor(
     @InjectModel(PracticeSession.name)
     private readonly sessionModel: Model<PracticeSession>,
-    @InjectModel(QuestionAttempt.name)
-    private readonly attemptModel: Model<QuestionAttempt>,
     @InjectModel(ActivityQuestion.name)
     private readonly questionModel: Model<ActivityQuestion>,
     @InjectModel(ActivityAttendee.name)
@@ -88,6 +100,7 @@ export class PracticeSessionsService {
     private readonly practiceEngine: PracticeEngineService,
     private readonly inbound: WhatsappInboundService,
     private readonly whatsapp: WhatsappGatewayClient,
+    private readonly usage: QuestionUsageService,
   ) {}
 
   // ─── Opt-in (estudiante) ───────────────────────────────────────────────
@@ -189,6 +202,7 @@ export class PracticeSessionsService {
       .findOne({
         user_id: student.user._id,
         organization_id: new Types.ObjectId(organizationId),
+        channel: { $ne: 'web' },
         status: { $in: PRACTICE_ACTIVE_STATUSES },
       })
       .select('status created_at')
@@ -217,31 +231,24 @@ export class PracticeSessionsService {
     };
   }
 
-  /** Crea el simulacro y envía la invitación por WhatsApp. */
+  /** Crea el simulacro y envía la invitación por WhatsApp (admin). */
   async send(organizationId: string, body: PracticeSendBody, adminUid: string) {
     const student = await this.resolveStudent(organizationId, body.email);
-    // TEMPORAL: el opt-in de WhatsApp no bloquea el simulacro por ahora.
-    // if (!student.orgUser.whatsapp_opt_in) {
-    //   throw new BadRequestException(
-    //     'El estudiante no ha autorizado recibir prácticas por WhatsApp (debe activarlo en su perfil).',
-    //   );
-    // }
+    if (!student.orgUser.whatsapp_opt_in) {
+      throw new BadRequestException(
+        'El estudiante no ha autorizado recibir prácticas por WhatsApp (debe activarlo en su perfil).',
+      );
+    }
     if (!student.phone) {
       throw new BadRequestException(
         'El estudiante no tiene un teléfono registrado en la organización.',
       );
     }
 
-    const num = Math.round(
-      Number(
-        body.num_questions ??
-          MIN_DEFAULT_QUESTIONS +
-            Math.floor(
-              Math.random() *
-                (MAX_DEFAULT_QUESTIONS - MIN_DEFAULT_QUESTIONS + 1),
-            ),
-      ),
-    );
+    const num =
+      body.num_questions === undefined || body.num_questions === null
+        ? randomQuestionCount()
+        : Math.round(Number(body.num_questions));
     if (!Number.isFinite(num) || num < 1 || num > MAX_NUM_QUESTIONS) {
       throw new BadRequestException(
         `El número de preguntas debe estar entre 1 y ${MAX_NUM_QUESTIONS}`,
@@ -264,55 +271,128 @@ export class PracticeSessionsService {
     }
     if (!material.questions.length) {
       throw new BadRequestException(
-        `No hay preguntas disponibles en "${course.name}": el estudiante no ha desarrollado actividades de este curso con preguntas activas.`,
+        `No hay preguntas nuevas en "${course.name}": el estudiante ya vio todas las preguntas activas de las actividades que ha desarrollado.`,
       );
     }
 
-    const selected = await this.selectQuestions(
+    const admin = await this.usersService.findByFirebaseUid(adminUid);
+    try {
+      return await this.createAndInvite({
+        organizationId,
+        student,
+        course,
+        material,
+        num,
+        trigger: 'manual',
+        triggeredBy: admin._id as Types.ObjectId,
+      });
+    } catch (error) {
+      if (error instanceof InviteError) {
+        throw new BadGatewayException(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Repaso automático (PracticeReviewCron): simulacro corto con preguntas no
+   * vistas de las actividades que completó hasta `materialUntil`. Si no
+   * corresponde enviarlo devuelve el motivo.
+   */
+  async sendAutoReview(params: {
+    organizationId: string;
+    userId: unknown;
+    eventId: string;
+    materialUntil: Date;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const { organizationId, userId, eventId, materialUntil } = params;
+    const student = await this.resolveStudentById(organizationId, userId);
+    if (!student) return { sent: false, reason: 'no_member' };
+    if (!student.orgUser.whatsapp_opt_in)
+      return { sent: false, reason: 'no_opt_in' };
+    if (!student.phone) return { sent: false, reason: 'no_phone' };
+
+    const active = await this.sessionModel
+      .exists({
+        $or: [{ user_id: student.user._id }, { phone: student.phone }],
+        channel: { $ne: 'web' },
+        status: { $in: PRACTICE_ACTIVE_STATUSES },
+      })
+      .exec();
+    if (active) return { sent: false, reason: 'active_session' };
+
+    const material = await this.availableMaterial(
       student.user._id,
-      material.questions,
-      num,
+      organizationId,
+      DEFAULT_MIN_PROGRESS,
+      eventId,
+      { completedBefore: materialUntil },
     );
-    const questions: PracticeQuestion[] = selected.map((q) => {
-      const activity = material.activityById.get(String(q.activity_id));
-      const base = {
-        type: q.type || 'open',
-        options: q.options || [],
-        pairs: q.pairs || [],
-      };
-      return {
-        question_id: q._id as Types.ObjectId,
-        activity_id: q.activity_id,
-        activity_name: activity?.name || 'Actividad',
-        event_id: q.event_id,
-        event_name: material.eventById.get(String(q.event_id))?.name || 'Curso',
-        ...base,
-        question: q.question,
-        answer: q.answer,
-        accepted_answers: q.accepted_answers || [],
-        key_points: q.key_points || [],
-        explanation: q.explanation || '',
-        topic: q.topic || '',
-        start_time: q.start_time ?? null,
-        shuffle: buildShuffle(base),
-        invalid_tries: 0,
-        response: null,
-      };
+    const course = material.eventById.get(eventId);
+    if (!course) return { sent: false, reason: 'no_course' };
+    if (!material.questions.length)
+      return { sent: false, reason: 'no_new_questions' };
+
+    await this.createAndInvite({
+      organizationId,
+      student,
+      course,
+      material,
+      num: randomQuestionCount(),
+      trigger: 'auto',
+      triggeredBy: null,
+      materialUntil,
     });
+    return { sent: true };
+  }
+
+  /**
+   * Crea la sesión y envía la invitación: con botones dentro de la ventana
+   * de 24 h, o con la plantilla aprobada fuera de ella. Las preguntas no se
+   * eligen aquí: al empezar, el estudiante escoge entre sus últimas
+   * actividades completadas con preguntas sin ver (activity_options) y el
+   * motor sortea `num` de esa actividad. Si WhatsApp rechaza el envío,
+   * cancela la sesión y lanza InviteError.
+   */
+  private async createAndInvite(params: {
+    organizationId: string;
+    student: Student;
+    course: { _id: unknown; name: string };
+    material: Material;
+    num: number;
+    trigger: 'manual' | 'auto';
+    triggeredBy: Types.ObjectId | null;
+    materialUntil?: Date;
+  }) {
+    const { organizationId, student, course, material, num, trigger } = params;
+    const phone = student.phone as string;
+    const activityOptions = material.activityOptions.slice(
+      0,
+      MAX_ACTIVITY_OPTIONS,
+    );
+    if (!activityOptions.length) {
+      throw new BadRequestException(
+        'No hay actividades con preguntas nuevas para este estudiante.',
+      );
+    }
 
     // Un solo simulacro activo por teléfono
-    await this.practiceEngine.cancelActive(student.phone);
+    await this.practiceEngine.cancelActive(phone);
 
-    const admin = await this.usersService.findByFirebaseUid(adminUid);
     const session = await this.sessionModel.create({
       user_id: student.user._id,
       user_name: student.name,
       email: student.email,
-      phone: student.phone,
+      phone,
       organization_id: new Types.ObjectId(organizationId),
-      triggered_by: admin._id,
+      event_id: new Types.ObjectId(String(course._id)),
+      triggered_by: params.triggeredBy,
+      trigger,
+      material_until: params.materialUntil || null,
       status: 'invited',
-      questions,
+      activity_options: activityOptions,
+      num_questions: num,
+      questions: [],
       invited_at: new Date(),
     });
 
@@ -326,34 +406,31 @@ export class PracticeSessionsService {
 
     // Dentro de la ventana de 24 h se puede invitar con botones (sin
     // plantilla); fuera de ella, solo con la plantilla aprobada.
-    const windowOpen = await this.inbound.isWindowOpen(student.phone);
+    const windowOpen = await this.inbound.isWindowOpen(phone);
     try {
       if (windowOpen) {
         const sid = String(session._id);
-        await this.whatsapp.sendOutbound(student.phone, {
-          body:
-            `Hola ${firstName} 👋 Preparamos un *simulacro de práctica* de ${questions.length} preguntas del curso *${course.name}* en ${orgName}.\n` +
-            'Es solo práctica: no afecta tus notas.',
+        const intro =
+          trigger === 'auto'
+            ? `Hola ${firstName} 👋 ¡Hora de repasar! Preparamos un *simulacro de práctica* de ${num} preguntas sobre lo que viste en *${course.name}* (${orgName}).\n`
+            : `Hola ${firstName} 👋 Preparamos un *simulacro de práctica* de ${num} preguntas del curso *${course.name}* en ${orgName}.\n`;
+        await this.whatsapp.sendOutbound(phone, {
+          body: intro + 'Es solo práctica: no afecta tus notas.',
           buttons: this.practiceEngine.inviteButtons(sid),
         });
       } else {
         await this.whatsapp.sendTemplate({
-          to: student.phone,
+          to: phone,
           templateName: INVITE_TEMPLATE,
           languageCode: INVITE_TEMPLATE_LANG,
-          parameters: [
-            firstName,
-            String(questions.length),
-            course.name,
-            orgName,
-          ],
+          parameters: [firstName, String(num), course.name, orgName],
         });
       }
     } catch (error) {
       const detail =
         (error as any)?.response?.data?.details || (error as Error).message;
       this.logger.error(
-        `No se pudo enviar la invitación a ${student.phone}: ${detail}`,
+        `No se pudo enviar la invitación (${trigger}) a ${phone}: ${detail}`,
       );
       await this.sessionModel
         .updateOne(
@@ -361,7 +438,7 @@ export class PracticeSessionsService {
           { $set: { status: 'cancelled', finished_at: new Date() } },
         )
         .exec();
-      throw new BadGatewayException(
+      throw new InviteError(
         windowOpen
           ? `WhatsApp rechazó el mensaje: ${detail}`
           : `No se pudo enviar la plantilla "${INVITE_TEMPLATE}" (¿está aprobada en Meta?): ${detail}`,
@@ -378,9 +455,10 @@ export class PracticeSessionsService {
       session_id: String(session._id),
       status: 'invited',
       invite_channel: windowOpen ? 'interactive' : 'template',
-      questions: questions.length,
-      courses: [...new Set(questions.map((q) => q.event_name))],
-      phone_masked: maskPhone(student.phone),
+      questions: num,
+      courses: [course.name],
+      activities: activityOptions.map((o) => o.activity_name),
+      phone_masked: maskPhone(phone),
     };
   }
 
@@ -404,11 +482,20 @@ export class PracticeSessionsService {
       email: s.email,
       status: s.status,
       invite_channel: s.invite_channel,
-      total_questions: s.questions.length,
+      trigger: s.trigger || 'manual',
+      channel: s.channel || 'whatsapp',
+      total_questions: s.questions.length || s.num_questions || 0,
       answered_count: s.answered_count,
       correct_count: s.correct_count,
       score: s.score,
-      courses: [...new Set(s.questions.map((q) => q.event_name))],
+      courses: [
+        ...new Set(
+          (s.questions.length ? s.questions : s.activity_options || []).map(
+            (q) => q.event_name,
+          ),
+        ),
+      ],
+      activity_name: s.questions[0]?.activity_name || null,
       invited_at: s.invited_at,
       started_at: s.started_at,
       finished_at: s.finished_at,
@@ -441,8 +528,36 @@ export class PracticeSessionsService {
     return n;
   }
 
+  /** Estudiante de la organización por id de usuario (repaso automático). */
+  private async resolveStudentById(
+    organizationId: string,
+    userId: unknown,
+  ): Promise<Student | null> {
+    if (!Types.ObjectId.isValid(String(userId))) return null;
+    const [user, orgUser] = await Promise.all([
+      this.userModel.findById(String(userId)).exec(),
+      this.organizationUserModel
+        .findOne({
+          organization_id: { $in: idVariants(organizationId) },
+          user_id: { $in: idVariants(userId) },
+        })
+        .exec(),
+    ]);
+    if (!user || !orgUser) return null;
+    return {
+      user,
+      orgUser,
+      name: resolveName(orgUser, user),
+      email: orgUser.properties?.email || user.email || '',
+      phone: resolvePhone(orgUser, user),
+    };
+  }
+
   /** Estudiante de la organización por email (de la membresía o del usuario). */
-  private async resolveStudent(organizationId: string, email?: string) {
+  private async resolveStudent(
+    organizationId: string,
+    email?: string,
+  ): Promise<Student> {
     const clean = String(email || '').trim();
     if (!clean) throw new BadRequestException('El email es requerido');
     if (!Types.ObjectId.isValid(organizationId)) {
@@ -487,13 +602,16 @@ export class PracticeSessionsService {
 
   /**
    * Cursos de la organización, actividades que el estudiante ha desarrollado
-   * (progreso >= minProgress) y sus preguntas activas.
+   * (progreso >= minProgress) y sus preguntas activas que nunca ha visto (ver
+   * QuestionUsageService). `completedBefore` limita a las actividades
+   * completadas hasta esa fecha (repaso espaciado).
    */
-  private async availableMaterial(
+  async availableMaterial(
     userId: unknown,
     organizationId: string,
     minProgress: number,
     eventId?: string,
+    opts: { completedBefore?: Date } = {},
   ) {
     const eventFilter: Record<string, any> = {
       organizer_id: { $in: idVariants(organizationId) },
@@ -516,16 +634,25 @@ export class PracticeSessionsService {
         user_id: { $in: idVariants(userId) },
         event_id: { $in: events.flatMap((e) => idVariants(e._id)) },
         progress: { $gte: minProgress },
+        ...(opts.completedBefore
+          ? { updatedAt: { $lte: opts.completedBefore } }
+          : {}),
       })
-      .select('activity_id event_id progress')
+      .select('activity_id event_id progress updatedAt')
       .lean()
       .exec();
     const progressByActivity = new Map(
       attendees.map((a) => [String(a.activity_id), a.progress]),
     );
+    const completedAt = new Map<string, Date | null>(
+      attendees.map((a) => [
+        String(a.activity_id),
+        (a as any).updatedAt ? new Date((a as any).updatedAt) : null,
+      ]),
+    );
     const activityIds = [...progressByActivity.keys()];
 
-    const [activities, questions] = await Promise.all([
+    const [activities, allQuestions, used] = await Promise.all([
       this.activityModel
         .find({ _id: { $in: activityIds.map((id) => new Types.ObjectId(id)) } })
         .select('name event_id')
@@ -538,7 +665,9 @@ export class PracticeSessionsService {
         })
         .lean()
         .exec(),
+      this.usage.usedQuestionIds(userId),
     ]);
+    const questions = allQuestions.filter((q) => !used.has(String(q._id)));
     const activityById = new Map(activities.map((a) => [String(a._id), a]));
 
     const countByActivity = new Map<string, number>();
@@ -566,66 +695,22 @@ export class PracticeSessionsService {
       })
       .filter((c) => c.activities.length);
 
-    return { courses, questions, activityById, eventById };
-  }
+    // Actividades con preguntas sin ver, de la más reciente a la más antigua
+    const activityOptions: PracticeActivityOption[] = activities
+      .filter((a) => countByActivity.get(String(a._id)))
+      .map((a) => ({
+        activity_id: a._id as Types.ObjectId,
+        activity_name: a.name || 'Actividad',
+        event_id: a.event_id as unknown as Types.ObjectId,
+        event_name: eventById.get(String(a.event_id))?.name || 'Curso',
+        completed_at: completedAt.get(String(a._id)) || null,
+        available: countByActivity.get(String(a._id)) || 0,
+      }))
+      .sort(
+        (x, y) =>
+          (y.completed_at?.getTime() || 0) - (x.completed_at?.getTime() || 0),
+      );
 
-  /**
-   * Elige `num` preguntas: primero las que falló la última vez, luego las no
-   * vistas y al final las ya acertadas; repartidas entre actividades.
-   */
-  private async selectQuestions<
-    T extends { _id: unknown; activity_id: Types.ObjectId },
-  >(userId: unknown, questions: T[], num: number): Promise<T[]> {
-    const history = await this.attemptModel
-      .aggregate<{ _id: Types.ObjectId; last_correct: boolean }>([
-        {
-          $match: {
-            user_id: { $in: idVariants(userId) },
-            question_id: { $in: questions.map((q) => q._id) },
-          },
-        },
-        { $sort: { created_at: -1 } },
-        {
-          $group: { _id: '$question_id', last_correct: { $first: '$correct' } },
-        },
-      ])
-      .exec();
-    const lastCorrect = new Map(
-      history.map((h) => [String(h._id), h.last_correct]),
-    );
-
-    const ranked = questions
-      .map((q) => {
-        const seen = lastCorrect.get(String(q._id));
-        const tier = seen === false ? 0 : seen === undefined ? 1 : 2;
-        return { q, rank: tier + Math.random() * 0.9 };
-      })
-      .sort((a, b) => a.rank - b.rank)
-      .map((r) => r.q);
-
-    // Primera pasada con tope por actividad para repartir; luego se completa
-    const activities = new Set(questions.map((q) => String(q.activity_id)))
-      .size;
-    const cap = Math.max(1, Math.ceil(num / activities));
-    const perActivity = new Map<string, number>();
-    const picked: T[] = [];
-    for (const q of ranked) {
-      if (picked.length >= num) break;
-      const key = String(q.activity_id);
-      if ((perActivity.get(key) || 0) >= cap) continue;
-      perActivity.set(key, (perActivity.get(key) || 0) + 1);
-      picked.push(q);
-    }
-    for (const q of ranked) {
-      if (picked.length >= num) break;
-      if (!picked.includes(q)) picked.push(q);
-    }
-
-    // Orden final aleatorio para mezclar cursos y tipos
-    for (let i = picked.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [picked[i], picked[j]] = [picked[j], picked[i]];
-    }
-    return picked;
+    return { courses, questions, activityById, eventById, activityOptions };
   }
 }
