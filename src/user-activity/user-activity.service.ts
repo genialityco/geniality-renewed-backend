@@ -131,6 +131,13 @@ export class UserActivityService implements OnModuleInit {
   }
 
   /**
+   * Tope de cada envío de tiempo. El front sincroniza cada 30 s, así que un
+   * delta mayor solo puede venir de un cliente defectuoso (o de un reloj que
+   * saltó) y no debe inflar las métricas.
+   */
+  private static readonly MAX_TIME_DELTA_MS = 15 * 60 * 1000;
+
+  /**
    * Actualiza el tiempo dedicado a un curso
    */
   async updateCourseTime(
@@ -140,53 +147,14 @@ export class UserActivityService implements OnModuleInit {
     eventId: string,
     timeDeltaMs: number,
     courseName?: string,
-  ): Promise<UserActivity> {
-    const activity = await this.userActivityModel.findOne({
-      user_id: userId,
-      organization_id: organizationId,
-      is_active: true,
+  ): Promise<void> {
+    await this.addTime(userId, organizationId, {
+      arrayField: 'courses',
+      totalField: 'total_courses_time_ms',
+      match: { course_id: courseId, event_id: eventId },
+      name: courseName ? { course_name: courseName } : {},
+      timeDeltaMs,
     });
-
-    if (!activity) {
-      throw new NotFoundException(
-        `No hay sesión activa para el usuario ${userId}`,
-      );
-    }
-
-    // Buscar si el curso ya existe en el registro
-    const courseIndex = activity.courses.findIndex(
-      (c) => c.course_id === courseId && c.event_id === eventId,
-    );
-
-    const now = new Date();
-
-    if (courseIndex >= 0) {
-      // Actualizar tiempo existente
-      activity.courses[courseIndex].time_spent_ms += timeDeltaMs;
-      activity.courses[courseIndex].last_updated = now;
-      // Actualizar nombre si se proporciona
-      if (courseName) {
-        activity.courses[courseIndex].course_name = courseName;
-      }
-    } else {
-      // Agregar nuevo curso
-      activity.courses.push({
-        course_id: courseId,
-        event_id: eventId,
-        course_name: courseName,
-        time_spent_ms: Math.max(0, timeDeltaMs),
-        last_updated: now,
-      });
-    }
-
-    // Recalcular total de cursos
-    activity.total_courses_time_ms = activity.courses.reduce(
-      (sum, c) => sum + c.time_spent_ms,
-      0,
-    );
-
-    activity.last_updated = now;
-    return activity.save();
   }
 
   /**
@@ -199,53 +167,95 @@ export class UserActivityService implements OnModuleInit {
     eventId: string,
     timeDeltaMs: number,
     activityName?: string,
-  ): Promise<UserActivity> {
-    const activity = await this.userActivityModel.findOne({
-      user_id: userId,
-      organization_id: organizationId,
-      is_active: true,
+  ): Promise<void> {
+    await this.addTime(userId, organizationId, {
+      arrayField: 'activities',
+      totalField: 'total_activities_time_ms',
+      match: { activity_id: activityId, event_id: eventId },
+      name: activityName ? { activity_name: activityName } : {},
+      timeDeltaMs,
     });
+  }
 
-    if (!activity) {
-      throw new NotFoundException(
-        `No hay sesión activa para el usuario ${userId}`,
-      );
-    }
-
-    // Buscar si la actividad ya existe en el registro
-    const activityIndex = activity.activities.findIndex(
-      (a) => a.activity_id === activityId && a.event_id === eventId,
+  /**
+   * Suma tiempo a un curso o actividad del registro del usuario.
+   *
+   * - Se hace con updates atómicos ($inc / $push) y no con leer-sumar-guardar:
+   *   el front envía curso y actividad casi a la vez (y puede haber varias
+   *   pestañas), y con save() un envío pisaba al otro perdiendo tiempo y
+   *   duplicando entradas del arreglo.
+   * - No exige `is_active`: cerrar o recargar CUALQUIER pestaña marca la
+   *   sesión como terminada (beforeunload), y antes eso hacía que todo el
+   *   tiempo de las demás pestañas se rechazara con 404 y se perdiera.
+   */
+  private async addTime(
+    userId: string,
+    organizationId: string,
+    opts: {
+      arrayField: 'courses' | 'activities';
+      totalField: 'total_courses_time_ms' | 'total_activities_time_ms';
+      match: Record<string, string>;
+      name: Record<string, string>;
+      timeDeltaMs: number;
+    },
+  ): Promise<void> {
+    const { arrayField, totalField, match, name } = opts;
+    const delta = Math.round(
+      Math.min(
+        Math.max(opts.timeDeltaMs || 0, 0),
+        UserActivityService.MAX_TIME_DELTA_MS,
+      ),
     );
-
     const now = new Date();
+    const owner = { user_id: userId, organization_id: organizationId };
+    const elemMatch = { [arrayField]: { $elemMatch: match } };
 
-    if (activityIndex >= 0) {
-      // Actualizar tiempo existente
-      activity.activities[activityIndex].time_spent_ms += timeDeltaMs;
-      activity.activities[activityIndex].last_updated = now;
-      // Actualizar nombre si se proporciona
-      if (activityName) {
-        activity.activities[activityIndex].activity_name = activityName;
-      }
-    } else {
-      // Agregar nueva actividad
-      activity.activities.push({
-        activity_id: activityId,
-        event_id: eventId,
-        activity_name: activityName,
-        time_spent_ms: Math.max(0, timeDeltaMs),
-        last_updated: now,
-      });
-    }
-
-    // Recalcular total de actividades
-    activity.total_activities_time_ms = activity.activities.reduce(
-      (sum, a) => sum + a.time_spent_ms,
-      0,
+    const nameSet = Object.fromEntries(
+      Object.entries(name).map(([k, v]) => [`${arrayField}.$.${k}`, v]),
     );
+    const incExisting = () =>
+      this.userActivityModel.updateOne(
+        { ...owner, ...elemMatch },
+        {
+          $inc: {
+            [`${arrayField}.$.time_spent_ms`]: delta,
+            [totalField]: delta,
+          },
+          $set: {
+            [`${arrayField}.$.last_updated`]: now,
+            last_updated: now,
+            ...nameSet,
+          },
+        },
+      );
 
-    activity.last_updated = now;
-    return activity.save();
+    if ((await incExisting()).matchedCount > 0) return;
+
+    // Primera vez en este curso/actividad. El filtro con $not evita que dos
+    // envíos simultáneos agreguen la misma entrada dos veces.
+    const pushed = await this.userActivityModel.updateOne(
+      { ...owner, [arrayField]: { $not: { $elemMatch: match } } },
+      {
+        $push: {
+          [arrayField]: {
+            ...match,
+            ...name,
+            time_spent_ms: delta,
+            last_updated: now,
+          },
+        },
+        $inc: { [totalField]: delta },
+        $set: { last_updated: now },
+      },
+    );
+    if (pushed.matchedCount > 0) return;
+
+    // Otro envío la agregó entre medio: ahora sí existe.
+    if ((await incExisting()).matchedCount > 0) return;
+
+    throw new NotFoundException(
+      `No hay registro de actividad para el usuario ${userId}`,
+    );
   }
 
   /**

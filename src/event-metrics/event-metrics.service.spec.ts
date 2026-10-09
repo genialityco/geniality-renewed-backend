@@ -240,6 +240,9 @@ describe('EventMetricsService', () => {
         inProgress: 2,
         notStarted: 3,
         openedFirstActivity: 4,
+        // u-opened está en 0% en la primera actividad
+        startedFirstActivity: 3,
+        startedUserIds: ['u-done', 'u-partial', 'u-act1'],
         // u-done 100, u-partial 25, u-act1 62.5, u-opened 0 → 46.875; el
         // 113% se limita a 100 y u-only2 no cuenta porque no entró a la
         // primera actividad
@@ -263,9 +266,55 @@ describe('EventMetricsService', () => {
     });
   });
 
+  // ── getCourseTimeMetrics ─────────────────────────────────────────────
+
+  describe('getCourseTimeMetrics', () => {
+    it('promedia el tiempo entre todos los que empezaron, aunque no tengan tiempo', async () => {
+      models.userActivity.aggregate.mockResolvedValueOnce([
+        { _id: null, totalMs: 90_000 },
+      ]);
+
+      const svc: any = service;
+      const result = await svc.getCourseTimeMetrics(EVENT_ID, [
+        USER_ID_1,
+        USER_ID_2,
+        'u-sin-tiempo',
+      ]);
+
+      const pipeline = models.userActivity.aggregate.mock.calls[0][0];
+      expect(pipeline[0].$match.user_id.$in).toEqual(
+        expect.arrayContaining([USER_ID_1, USER_ID_2, 'u-sin-tiempo']),
+      );
+      expect(result).toEqual({
+        totalMs: 90_000,
+        usersWithTime: 3,
+        avgPerUserMs: 30_000,
+      });
+    });
+
+    it('devuelve ceros si nadie ha empezado', async () => {
+      const svc: any = service;
+      const result = await svc.getCourseTimeMetrics(EVENT_ID, []);
+      expect(result).toEqual({ totalMs: 0, usersWithTime: 0, avgPerUserMs: 0 });
+    });
+  });
+
   // ── getActivityMetrics ───────────────────────────────────────────────
 
   describe('getActivityMetrics', () => {
+    it('solo cuenta como iniciados a quienes tienen avance > 0', async () => {
+      models.activity.__toArray.mockResolvedValueOnce([
+        { _id: ACTIVITY_ID_1, name: 'Actividad 1', module_id: null },
+      ]);
+      models.module.__toArray.mockResolvedValueOnce([]);
+
+      const svc: any = service;
+      await svc.getActivityMetrics([EVENT_ID]);
+
+      const pipeline = models.activityAttendee.aggregate.mock.calls[0][0];
+      expect(pipeline[2]).toEqual({ $match: { progress: { $gt: 0 } } });
+    });
+
     it('combina asistencia y tiempo por actividad, ordenado por módulo', async () => {
       models.activity.__toArray.mockResolvedValueOnce([
         { _id: ACTIVITY_ID_1, name: 'Actividad 1', module_id: MODULE_ID_1 },
@@ -438,7 +487,7 @@ describe('EventMetricsService', () => {
   // ── getCertificateMetrics ────────────────────────────────────────────
 
   describe('getCertificateMetrics', () => {
-    it('cuenta certificados por estado', async () => {
+    it('cuenta certificados por estado, una vez por persona', async () => {
       models.certificate.aggregate.mockResolvedValueOnce([
         { _id: 'COMPLETED', count: 7 },
         { _id: 'PENDING', count: 2 },
@@ -448,6 +497,14 @@ describe('EventMetricsService', () => {
       const svc: any = service;
       const result = await svc.getCertificateMetrics([EVENT_ID]);
 
+      // Primero agrupa por usuario y luego clasifica por su mejor estado
+      const pipeline = models.certificate.aggregate.mock.calls[0][0];
+      expect(pipeline[1].$group._id).toEqual({
+        $ifNull: [{ $toString: '$userId' }, { $toString: '$_id' }],
+      });
+      expect(pipeline[2].$group._id.$cond[0]).toEqual({
+        $in: ['COMPLETED', '$statuses'],
+      });
       expect(result).toEqual({
         total: 10,
         completed: 7,
