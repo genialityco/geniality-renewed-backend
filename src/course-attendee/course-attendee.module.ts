@@ -11,6 +11,7 @@ import { Activity, ActivitySchema } from '../activities/schemas/activity.schema'
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import { ActivityAttendeeModule } from '../activity-attendee/activity-attendee.module';
 import { UsersModule } from '../users/users.module';
+import { ProgressEventsModule } from '../progress-events/progress-events.module';
 import {
   OrganizationUser,
   OrganizationUserSchema,
@@ -31,6 +32,7 @@ import {
     // UsersModule (sin ciclos) provee UsersService para SessionTokenGuard y
     // para resolver el uid de Firebase en OrgMembershipGuard.
     UsersModule,
+    ProgressEventsModule,
   ],
   controllers: [CourseAttendeeController],
   providers: [CourseAttendeeService],

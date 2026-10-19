@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { ActivityAttendee } from './schemas/activity-attendee.schema';
 import { Activity } from '../activities/schemas/activity.schema';
 import { CourseAttendee } from '../course-attendee/schemas/course-attendee.schema';
+import { ProgressEventsService } from '../progress-events/progress-events.service';
 
 @Injectable()
 export class ActivityAttendeeService {
@@ -14,6 +15,7 @@ export class ActivityAttendeeService {
     private readonly activityModel: Model<Activity>,
     @InjectModel(CourseAttendee.name)
     private readonly courseAttendeeModel: Model<CourseAttendee>,
+    private readonly progressEvents: ProgressEventsService,
   ) {}
 
   private async syncCourseProgress(
@@ -55,7 +57,8 @@ export class ActivityAttendeeService {
     // Upsert type-agnostic: matchea el registro existente sin importar cómo se
     // guardaron los ids; solo inserta si de verdad no existe (evita duplicados
     // por diferencia de tipo user_id string vs ObjectId).
-    await this.courseAttendeeModel.collection.updateOne(
+    // returnDocument 'before' da el progreso anterior para registrar el cambio
+    const before = await this.courseAttendeeModel.collection.findOneAndUpdate(
       { user_id: { $in: userVals }, event_id: { $in: eventVals } },
       {
         $set: { progress: courseProgress },
@@ -67,8 +70,15 @@ export class ActivityAttendeeService {
           createdAt: new Date(),
         },
       },
-      { upsert: true },
+      { upsert: true, returnDocument: 'before', projection: { progress: 1 } },
     );
+
+    await this.progressEvents.recordCourseProgress({
+      userId,
+      eventId: String(eventId),
+      from: Number(before?.progress) || 0,
+      to: courseProgress,
+    });
   }
 
   async create(createDto: any): Promise<ActivityAttendee> {
@@ -94,6 +104,12 @@ export class ActivityAttendeeService {
       throw new Error(`Activity con id ${activityId} no encontrada o sin event_id`);
     }
 
+    const previous = await this.activityAttendeeModel
+      .findOne({ user_id: userId, activity_id: activityId })
+      .select('progress')
+      .lean()
+      .exec();
+
     const attendee = await this.activityAttendeeModel
       .findOneAndUpdate(
         {
@@ -116,6 +132,14 @@ export class ActivityAttendeeService {
         },
       )
       .exec();
+
+    await this.progressEvents.recordActivityProgress({
+      userId,
+      eventId: String(activity.event_id),
+      activityId,
+      from: Math.min(Number(previous?.progress) || 0, 100),
+      to: Math.min(Number(attendee?.progress) || 0, 100),
+    });
 
     await this.syncCourseProgress(userId, activityId);
 

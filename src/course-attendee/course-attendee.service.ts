@@ -6,6 +6,7 @@ import { CourseAttendee } from './schemas/course-attendee.schema';
 import { Activity } from '../activities/schemas/activity.schema';
 import { Event } from '../events/schemas/event.schema';
 import { ActivityAttendeeService } from '../activity-attendee/activity-attendee.service';
+import { ProgressEventsService } from '../progress-events/progress-events.service';
 
 @Injectable()
 export class CourseAttendeeService {
@@ -17,6 +18,7 @@ export class CourseAttendeeService {
     @InjectModel(Event.name)
     private readonly eventModel: Model<Event>,
     private readonly activityAttendeeService: ActivityAttendeeService,
+    private readonly progressEvents: ProgressEventsService,
   ) {}
 
   /**
@@ -52,7 +54,7 @@ export class CourseAttendeeService {
     // $in encuentra el registro existente sin importar cómo se guardaron los
     // ids; solo inserta si no existe, evitando duplicados por diferencia de
     // tipo (string vs ObjectId). $max nunca baja el progreso.
-    await this.courseAttendeeModel.collection.updateOne(
+    const before = await this.courseAttendeeModel.collection.findOneAndUpdate(
       { user_id: { $in: userVals }, event_id: { $in: eventVals } },
       {
         $max: { progress: Math.round(progress || 0) },
@@ -64,14 +66,22 @@ export class CourseAttendeeService {
           createdAt: new Date(),
         },
       },
-      { upsert: true },
+      { upsert: true, returnDocument: 'before', projection: { progress: 1 } },
     );
 
-    const doc = await this.courseAttendeeModel.collection.findOne({
+    const after = await this.courseAttendeeModel.collection.findOne({
       user_id: { $in: userVals },
       event_id: { $in: eventVals },
     });
-    return doc as unknown as CourseAttendee;
+
+    await this.progressEvents.recordCourseProgress({
+      userId,
+      eventId: String(eventId),
+      from: Number(before?.progress) || 0,
+      to: Number(after?.progress) || 0,
+    });
+
+    return after as unknown as CourseAttendee;
   }
 
   async findAll(): Promise<CourseAttendee[]> {

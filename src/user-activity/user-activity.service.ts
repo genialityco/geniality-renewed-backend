@@ -393,9 +393,26 @@ export class UserActivityService implements OnModuleInit {
    * de prueba de plantillas de WhatsApp para armar el mensaje con datos
    * reales a partir de solo un userId.
    */
-  async findLatestByUserId(userId: string): Promise<UserActivity | null> {
+  async findLatestByUserId(
+    userId: string,
+    organizationId?: string,
+  ): Promise<UserActivity | null> {
+    // organization_id a veces quedó guardado como la URL completa de la
+    // organización (ver sanitizeOrganizationId), por eso el $or.
+    const orgFilter = organizationId
+      ? {
+          $or: [
+            { organization_id: organizationId },
+            {
+              organization_id: {
+                $regex: `/organization/${organizationId.replace(/[^a-fA-F0-9]/g, '')}/?$`,
+              },
+            },
+          ],
+        }
+      : {};
     return this.userActivityModel
-      .findOne({ user_id: userId })
+      .findOne({ user_id: userId, ...orgFilter })
       .sort({ last_updated: -1 });
   }
 
