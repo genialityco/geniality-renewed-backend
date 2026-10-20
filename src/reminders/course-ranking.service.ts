@@ -16,6 +16,7 @@ import {
   resolvePhone,
   sanitizeOrganizationId,
 } from './contact.util';
+import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 
 // Con menos inscritos, "el promedio del grupo" equivale a exponer el avance
 // puntual de uno o dos compañeros — se omite el curso hasta tener cohorte.
@@ -266,9 +267,6 @@ export class CourseRankingService {
         .catch(() => null),
     ]);
 
-    // Meta exige consentimiento para mensajes iniciados por la plataforma
-    if (!orgUser?.whatsapp_opt_in) return 'skipped';
-
     const phone = resolvePhone(orgUser, user);
     if (!phone) return 'skipped';
 
@@ -276,6 +274,13 @@ export class CourseRankingService {
       .findOne(organizationId)
       .catch(() => null);
     if (!organization) return 'skipped';
+
+    // Meta exige consentimiento para mensajes iniciados por la plataforma
+    if (
+      !hasWhatsappConsent(orgUser, organization.whatsapp_consent_property)
+    ) {
+      return 'skipped';
+    }
 
     const userName = resolveName(orgUser, user);
     const email = resolveEmail(orgUser, user);

@@ -35,6 +35,12 @@ export class OrganizationUser extends Document {
 
   @Prop({ type: Date, default: null })
   whatsapp_opt_in_at?: Date | null;
+
+  // Baja explícita (BAJA por WhatsApp o desactivar en el perfil). Prevalece
+  // sobre cualquier consentimiento, incluido el campo de consentimiento de
+  // la organización (ver common/whatsapp-consent.ts).
+  @Prop({ type: Date, default: null })
+  whatsapp_opt_out_at?: Date | null;
 }
 
 export const OrganizationUserSchema =

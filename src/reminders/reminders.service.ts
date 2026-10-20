@@ -12,6 +12,7 @@ import {
   resolvePhone,
   sanitizeOrganizationId,
 } from './contact.util';
+import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 
 interface ReminderItem {
   name: string;
@@ -164,9 +165,6 @@ export class RemindersService {
         .catch(() => null),
     ]);
 
-    // Meta exige consentimiento para mensajes iniciados por la plataforma
-    if (!orgUser?.whatsapp_opt_in) return 'skipped';
-
     const phone = resolvePhone(orgUser, user);
     if (!phone) return 'skipped';
 
@@ -174,6 +172,13 @@ export class RemindersService {
       .findOne(organizationId)
       .catch(() => null);
     if (!organization) return 'skipped';
+
+    // Meta exige consentimiento para mensajes iniciados por la plataforma
+    if (
+      !hasWhatsappConsent(orgUser, organization.whatsapp_consent_property)
+    ) {
+      return 'skipped';
+    }
 
     const lastItem = this.pickLastItem(activity);
     if (!lastItem) return 'skipped';

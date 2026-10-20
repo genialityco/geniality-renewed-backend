@@ -125,6 +125,7 @@ export class PracticeSessionsService {
           $set: {
             whatsapp_opt_in: optIn,
             whatsapp_opt_in_at: optIn ? new Date() : null,
+            whatsapp_opt_out_at: optIn ? null : new Date(),
           },
         },
       )

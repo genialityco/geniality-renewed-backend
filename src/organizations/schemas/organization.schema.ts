@@ -17,6 +17,10 @@ export class Organization extends Document {
   @Prop() visibility: 'PUBLIC' | 'PRIVATE';
   @Prop({ type: [MongooseSchema.Types.Mixed], default: [] })
   user_properties: any[];
+  // Nombre de un campo booleano de user_properties que cuenta como
+  // consentimiento para recibir WhatsApp (ver common/whatsapp-consent.ts).
+  @Prop({ type: String, default: null })
+  whatsapp_consent_property?: string | null;
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   styles?: { banner_image_email?: string; FooterImage?: string; banner_image?: string; event_image?: string; logo_image?: string; auth_image?: string };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })

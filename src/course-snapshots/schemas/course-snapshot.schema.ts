@@ -36,6 +36,9 @@ export interface CourseSnapshotMetrics {
   days_to_complete_median: number | null;
   days_to_complete_sample: number;
   with_phone: number;
+  /** No completados con teléfono (ausente en snapshots anteriores) */
+  not_completed_with_phone?: number;
+  /** Con consentimiento efectivo de WhatsApp (ver common/whatsapp-consent.ts) */
   with_whatsapp_opt_in: number;
   /** No completados con teléfono y opt-in: público alcanzable por WhatsApp */
   reachable_not_completed: number;
