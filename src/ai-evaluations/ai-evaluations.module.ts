@@ -19,6 +19,22 @@ import { InVideoQuestionsService } from './in-video-questions.service';
 import { PracticeReviewCron } from './practice-review.cron';
 import { WebPracticeController } from './web-practice.controller';
 import { WebPracticeService } from './web-practice.service';
+import {
+  ClinicalCasesAdminController,
+  ClinicalCasesController,
+} from './clinical-cases.controller';
+import { ClinicalCasesService } from './clinical-cases.service';
+import { ClinicalCaseEngineService } from './clinical-case-engine.service';
+import { ClinicalCaseResourcesService } from './clinical-case-resources.service';
+import { TranscriptSegmentsModule } from '../transcript-segments/transcript-segments.module';
+import {
+  ClinicalCase,
+  ClinicalCaseSchema,
+} from './schemas/clinical-case.schema';
+import {
+  ClinicalCaseSession,
+  ClinicalCaseSessionSchema,
+} from './schemas/clinical-case-session.schema';
 import { OrgAdminGuard } from '../auth/org-admin.guard';
 import { WhatsappGatewayClient } from '../reminders/whatsapp-gateway.client';
 import {
@@ -93,6 +109,8 @@ import { UsersModule } from '../users/users.module';
       { name: PracticeSession.name, schema: PracticeSessionSchema },
       { name: QuestionAttempt.name, schema: QuestionAttemptSchema },
       { name: WhatsappContact.name, schema: WhatsappContactSchema },
+      { name: ClinicalCase.name, schema: ClinicalCaseSchema },
+      { name: ClinicalCaseSession.name, schema: ClinicalCaseSessionSchema },
       { name: ActivityAttendee.name, schema: ActivityAttendeeSchema },
       // Organization: OrgAdminGuard y nombre de la organización en invitaciones
       { name: Organization.name, schema: OrganizationSchema },
@@ -109,6 +127,8 @@ import { UsersModule } from '../users/users.module';
     ]),
     // Provee UsersService para SessionTokenGuard y OrgMembershipGuard.
     UsersModule,
+    // Búsqueda en transcripts para "dónde estudiarlo" de los casos clínicos
+    TranscriptSegmentsModule,
   ],
   controllers: [
     AiEvaluationsController,
@@ -117,6 +137,8 @@ import { UsersModule } from '../users/users.module';
     PracticeController,
     InVideoQuestionsController,
     WebPracticeController,
+    ClinicalCasesAdminController,
+    ClinicalCasesController,
   ],
   providers: [
     AiEvaluationsService,
@@ -132,6 +154,9 @@ import { UsersModule } from '../users/users.module';
     InVideoQuestionsService,
     PracticeReviewCron,
     WebPracticeService,
+    ClinicalCasesService,
+    ClinicalCaseEngineService,
+    ClinicalCaseResourcesService,
     OrgAdminGuard,
   ],
 })

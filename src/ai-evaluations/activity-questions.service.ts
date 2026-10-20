@@ -341,7 +341,7 @@ export class ActivityQuestionsService {
    * Material de referencia de la actividad: curso, módulo, actividad,
    * transcript completo (en bloques de ~1 min con [m:ss]) y documentos.
    */
-  private async buildMaterial(
+  async buildMaterial(
     event: Event,
     activity: Activity,
   ): Promise<ActivityMaterial> {

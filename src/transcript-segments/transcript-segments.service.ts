@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -294,6 +299,7 @@ export class TranscriptSegmentsService {
   private async textSearchCandidates(
     searchText: string,
     limit: number,
+    scope?: Record<string, any>,
   ): Promise<RankableSegment[]> {
     const pipeline = [
       {
@@ -322,6 +328,7 @@ export class TranscriptSegmentsService {
           },
         },
       },
+      ...(scope ? [{ $match: scope }] : []),
       { $limit: limit },
       {
         $project: {
@@ -347,6 +354,7 @@ export class TranscriptSegmentsService {
   private async vectorSearchCandidates(
     searchText: string,
     limit: number,
+    scope?: Record<string, any>,
   ): Promise<RankableSegment[]> {
     try {
       const queryVector = await this.embeddingService.embedQuery(searchText);
@@ -360,6 +368,9 @@ export class TranscriptSegmentsService {
             limit,
           },
         },
+        // Filtro posterior: el índice vectorial no declara activity_id como
+        // filtro, así que se acota después (menos recall en cursos chicos)
+        ...(scope ? [{ $match: scope }] : []),
         {
           $project: {
             _id: 1,
@@ -379,6 +390,150 @@ export class TranscriptSegmentsService {
       );
       return [];
     }
+  }
+
+  /**
+   * Fusión RRF de la búsqueda de texto y la semántica, solo dentro de
+   * `activityIds`, sin fragmentos demasiado cortos (una frase de 4 palabras
+   * se parece semánticamente a casi cualquier cosa) ni repetidos.
+   */
+  private async fuseInActivities(
+    searchText: string,
+    activityIds: unknown[],
+    minChars: number,
+  ) {
+    const query = String(searchText || '').trim();
+    if (!query || !activityIds.length) return [];
+    const ids = activityIds.flatMap((id) => {
+      const value = String(id);
+      return Types.ObjectId.isValid(value)
+        ? [value, new Types.ObjectId(value)]
+        : [value];
+    });
+    const scope = {
+      activity_id: { $in: ids },
+      $expr: { $gte: [{ $strLenCP: { $ifNull: ['$text', ''] } }, minChars] },
+    };
+    const [textResults, vectorResults] = await Promise.all([
+      this.textSearchCandidates(query, 50, scope).catch((error) => {
+        this.logger.warn(`Búsqueda de texto acotada falló: ${error.message}`);
+        return [] as RankableSegment[];
+      }),
+      this.vectorSearchCandidates(query, CANDIDATE_LIMIT, scope),
+    ]);
+
+    const fused = new Map<string, { doc: RankableSegment; score: number }>();
+    const addRanked = (list: RankableSegment[]) => {
+      list.forEach((doc, index) => {
+        const key = String(doc._id);
+        const rrf = 1 / (RRF_K + index + 1);
+        const existing = fused.get(key);
+        if (existing) existing.score += rrf;
+        else fused.set(key, { doc, score: rrf });
+      });
+    };
+    addRanked(textResults);
+    addRanked(vectorResults);
+
+    // El mismo texto en varias actividades (intros, frases repetidas) cuenta una vez
+    const seenText = new Set<string>();
+    return [...fused.values()]
+      .sort((a, b) => b.score - a.score)
+      .filter(({ doc }) => {
+        const key = String(doc.text || '')
+          .trim()
+          .toLowerCase();
+        if (seenText.has(key)) return false;
+        seenText.add(key);
+        return true;
+      });
+  }
+
+  /**
+   * Mejores momentos del video para un tema, solo dentro de `activityIds`
+   * (p. ej. las actividades de un curso): el mejor fragmento de cada
+   * actividad, hasta `max`.
+   */
+  async searchMomentsInActivities(
+    searchText: string,
+    activityIds: unknown[],
+    max = 2,
+  ): Promise<
+    {
+      activity_id: string;
+      name_activity?: string;
+      startTime: number;
+      score: number;
+    }[]
+  > {
+    const ranked = await this.fuseInActivities(searchText, activityIds, 40);
+    const bestByActivity = new Map<
+      string,
+      { doc: RankableSegment; score: number }
+    >();
+    for (const entry of ranked) {
+      const key = String(entry.doc.activity_id);
+      if (!bestByActivity.has(key)) bestByActivity.set(key, entry);
+    }
+    return [...bestByActivity.values()].slice(0, max).map(({ doc, score }) => ({
+      activity_id: String(doc.activity_id),
+      name_activity: doc.name_activity,
+      startTime: doc.startTime,
+      score,
+    }));
+  }
+
+  /**
+   * Candidatos para que la IA elija el momento que realmente explica un tema:
+   * los `limit` mejores fragmentos (hasta 2 por actividad) con el texto del
+   * minuto siguiente como contexto.
+   */
+  async searchCandidatesInActivities(
+    searchText: string,
+    activityIds: unknown[],
+    limit = 6,
+  ): Promise<
+    {
+      activity_id: string;
+      name_activity?: string;
+      startTime: number;
+      context: string;
+    }[]
+  > {
+    const ranked = await this.fuseInActivities(searchText, activityIds, 40);
+    const perActivity = new Map<string, number>();
+    const picked = ranked
+      .filter(({ doc }) => {
+        const key = String(doc.activity_id);
+        const n = perActivity.get(key) || 0;
+        if (n >= 2) return false;
+        perActivity.set(key, n + 1);
+        return true;
+      })
+      .slice(0, limit);
+    return Promise.all(
+      picked.map(async ({ doc }) => {
+        const window = await this.segmentModel
+          .find({
+            activity_id: doc.activity_id,
+            startTime: { $gte: doc.startTime, $lt: doc.startTime + 60 },
+          })
+          .select('text')
+          .sort({ startTime: 1 })
+          .limit(12)
+          .lean()
+          .exec();
+        return {
+          activity_id: String(doc.activity_id),
+          name_activity: doc.name_activity,
+          startTime: doc.startTime,
+          context: window
+            .map((w) => w.text)
+            .join(' ')
+            .slice(0, 450),
+        };
+      }),
+    );
   }
 
   /**
@@ -424,7 +579,10 @@ export class TranscriptSegmentsService {
     addRanked(vectorResults, 'vector');
 
     // Agrupar los segmentos fusionados por actividad.
-    const groups = new Map<string, TranscriptSearchResult & { maxScore: number }>();
+    const groups = new Map<
+      string,
+      TranscriptSearchResult & { maxScore: number }
+    >();
     for (const { doc, score, sources } of fused.values()) {
       const activityKey = String(doc.activity_id);
       let group = groups.get(activityKey);
