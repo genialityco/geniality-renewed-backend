@@ -15,8 +15,15 @@ import { SessionTokenGuard } from 'src/auth/session-token.guard';
 import { OrgAdminGuard } from 'src/auth/org-admin.guard';
 import { UsersService } from 'src/users/users.service';
 import { CourseSnapshotsService } from './course-snapshots.service';
+import { CourseUserStatus } from './schemas/course-snapshot-user.schema';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const USER_STATUSES: CourseUserStatus[] = [
+  'completed',
+  'active',
+  'inactive',
+  'never_active',
+];
 
 /**
  * Líneas base y snapshots diarios de indicadores por curso. Solo para
@@ -92,6 +99,44 @@ export class CourseSnapshotsController {
   @Post('daily/run')
   async runDaily(@Param('organizationId') organizationId: string) {
     return this.snapshotsService.runDaily(organizationId);
+  }
+
+  /**
+   * GET /course-snapshots/organization/:organizationId/daily/users
+   *   ?eventId=&status=inactive,never_active&minDaysInactive=7&reachable=true&limit=
+   *
+   * Estado de cada estudiante según el último snapshot diario: la lista de
+   * seguimiento (p. ej. "activos con 7+ días sin estudiar y alcanzables").
+   */
+  @Get('daily/users')
+  async getUserStates(
+    @Param('organizationId') organizationId: string,
+    @Query('eventId') eventId?: string,
+    @Query('status') status?: string,
+    @Query('minDaysInactive') minDaysInactive?: string,
+    @Query('reachable') reachable?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const statuses = status
+      ? status.split(',').map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    if (statuses?.some((s) => !USER_STATUSES.includes(s as CourseUserStatus))) {
+      throw new BadRequestException(
+        `"status" admite: ${USER_STATUSES.join(', ')}`,
+      );
+    }
+    const minDays =
+      minDaysInactive !== undefined ? Number(minDaysInactive) : undefined;
+    if (minDays !== undefined && !Number.isFinite(minDays)) {
+      throw new BadRequestException('"minDaysInactive" debe ser un número');
+    }
+    return this.snapshotsService.getUserStates(organizationId, {
+      eventId: eventId || undefined,
+      statuses: statuses as CourseUserStatus[] | undefined,
+      minDaysInactive: minDays,
+      reachable: reachable === 'true',
+      limit: limit ? Number(limit) || undefined : undefined,
+    });
   }
 
   @Get('daily/events/:eventId')

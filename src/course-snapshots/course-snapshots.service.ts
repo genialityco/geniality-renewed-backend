@@ -12,6 +12,8 @@ import {
   CourseSnapshotUser,
   CourseUserStatus,
 } from './schemas/course-snapshot-user.schema';
+import { CourseUserState } from './schemas/course-user-state.schema';
+import { EngagementMessage } from '../engagement/schemas/engagement-message.schema';
 import { Event } from '../events/schemas/event.schema';
 import { CourseAttendee } from '../course-attendee/schemas/course-attendee.schema';
 import { ActivityAttendee } from '../activity-attendee/schemas/activity-attendee.schema';
@@ -121,6 +123,10 @@ export class CourseSnapshotsService {
     private readonly snapshotModel: Model<CourseSnapshot>,
     @InjectModel(CourseSnapshotUser.name)
     private readonly snapshotUserModel: Model<CourseSnapshotUser>,
+    @InjectModel(CourseUserState.name)
+    private readonly userStateModel: Model<CourseUserState>,
+    @InjectModel(EngagementMessage.name)
+    private readonly engagementMessageModel: Model<EngagementMessage>,
     @InjectModel(Event.name) private readonly eventModel: Model<Event>,
     @InjectModel(CourseAttendee.name)
     private readonly courseAttendeeModel: Model<CourseAttendee>,
@@ -276,6 +282,14 @@ export class CourseSnapshotsService {
       })
       .lean()
       .exec();
+    return this.withNames(organizationId, rows);
+  }
+
+  /** Agrega nombre y correo (de la membresía o de users) a filas con user_id. */
+  private async withNames<T extends { user_id: string }>(
+    organizationId: string,
+    rows: T[],
+  ): Promise<(T & { name: string; email: string })[]> {
     if (!rows.length) return [];
 
     const userIds = rows.map((r) => r.user_id);
@@ -346,8 +360,13 @@ export class CourseSnapshotsService {
     for (const event of events) {
       try {
         const orgId = String(event.organizer_id);
-        const { metrics } = await this.computeEvent(event, orgId, takenAt);
+        const { metrics, rows } = await this.computeEvent(
+          event,
+          orgId,
+          takenAt,
+        );
         if (!metrics.enrolled) continue;
+        await this.saveUserStates(event, orgId, snapshotDate, rows);
         await this.snapshotModel.updateOne(
           {
             event_id: String(event._id),
@@ -375,6 +394,182 @@ export class CourseSnapshotsService {
     }
     this.logger.log(`Snapshots diarios ${snapshotDate}: ${courses} cursos`);
     return { courses };
+  }
+
+  /**
+   * Reemplaza el estado actual de los inscritos del curso. Quien ya no
+   * aparece en el cálculo (inscripción borrada) se elimina.
+   */
+  private async saveUserStates(
+    event: EventRef,
+    organizationId: string,
+    snapshotDate: string,
+    rows: UserRow[],
+  ): Promise<void> {
+    const eventId = String(event._id);
+    for (let i = 0; i < rows.length; i += 1000) {
+      await this.userStateModel.bulkWrite(
+        rows.slice(i, i + 1000).map((r) => ({
+          updateOne: {
+            filter: { event_id: eventId, user_id: r.user_id },
+            update: {
+              $set: {
+                ...r,
+                organization_id: organizationId,
+                event_name: event.name || '',
+                snapshot_date: snapshotDate,
+              },
+            },
+            upsert: true,
+          },
+        })),
+        { ordered: false },
+      );
+    }
+    await this.userStateModel.deleteMany({
+      event_id: eventId,
+      snapshot_date: { $ne: snapshotDate },
+    });
+  }
+
+  /**
+   * Estado actual de los estudiantes (según el último snapshot diario), con
+   * nombre y correo. Por defecto los menos activos primero, para armar la
+   * lista de seguimiento.
+   */
+  async getUserStates(
+    organizationId: string,
+    filter: {
+      eventId?: string;
+      statuses?: CourseUserStatus[];
+      minDaysInactive?: number;
+      reachable?: boolean;
+      limit?: number;
+    },
+  ) {
+    const query: Record<string, any> = { organization_id: organizationId };
+    if (filter.eventId) query.event_id = filter.eventId;
+    if (filter.statuses?.length) query.status = { $in: filter.statuses };
+    if (filter.minDaysInactive !== undefined) {
+      query.days_inactive = { $gte: filter.minDaysInactive };
+    }
+    if (filter.reachable) {
+      query.has_phone = true;
+      query.whatsapp_opt_in = true;
+    }
+
+    // Distribución por estado del curso (o de la organización), sin los
+    // demás filtros, para ubicar la lista dentro del total
+    const scope: Record<string, any> = { organization_id: organizationId };
+    if (filter.eventId) scope.event_id = filter.eventId;
+
+    const [rows, byStatus, reachable, latest, total] = await Promise.all([
+      this.userStateModel
+        .find(query)
+        .sort({ days_inactive: -1, course_progress: 1 })
+        .limit(Math.min(Math.max(filter.limit || 500, 1), 5000))
+        .lean()
+        .exec(),
+      this.userStateModel.aggregate<{ _id: CourseUserStatus; n: number }>([
+        { $match: scope },
+        { $group: { _id: '$status', n: { $sum: 1 } } },
+      ]),
+      this.userStateModel.countDocuments({
+        ...scope,
+        status: { $ne: 'completed' },
+        has_phone: true,
+        whatsapp_opt_in: true,
+      }),
+      this.userStateModel
+        .findOne(scope)
+        .sort({ snapshot_date: -1 })
+        .select('snapshot_date updated_at')
+        .lean()
+        .exec(),
+      this.userStateModel.countDocuments(query),
+    ]);
+
+    const counts: Record<CourseUserStatus, number> = {
+      completed: 0,
+      active: 0,
+      inactive: 0,
+      never_active: 0,
+    };
+    for (const s of byStatus) counts[s._id] = s.n;
+
+    const named = await this.withNames(organizationId, rows);
+    const lastMessages = await this.lastMessages(
+      organizationId,
+      named.map((r) => r.user_id),
+    );
+    return {
+      snapshot_date: latest?.snapshot_date ?? null,
+      calculated_at: (latest as any)?.updated_at ?? null,
+      counts,
+      reachable_not_completed: reachable,
+      total,
+      rows: named.map((r) => ({
+        ...r,
+        last_message: lastMessages.get(r.user_id) ?? null,
+        messages_30d: lastMessages.get(r.user_id)?.count_30d ?? 0,
+      })),
+    };
+  }
+
+  /**
+   * Último mensaje de la plataforma entregado a cada estudiante (y cuántos
+   * recibió en 30 días): para distinguir "en riesgo y nadie le ha escrito" de
+   * "ya se le escribió y no reaccionó".
+   */
+  private async lastMessages(organizationId: string, userIds: string[]) {
+    const out = new Map<
+      string,
+      {
+        kind: string;
+        at: Date;
+        status: string;
+        meta_status: string | null;
+        clicked_at: Date | null;
+        replied_at: Date | null;
+        count_30d: number;
+      }
+    >();
+    if (!userIds.length) return out;
+    const since = new Date(Date.now() - 30 * DAY_MS);
+    const rows = await this.engagementMessageModel.aggregate([
+      {
+        $match: {
+          organization_id: organizationId,
+          user_id: { $in: Array.from(new Set(userIds)) },
+          status: { $in: ['sent', 'fallback_email'] },
+        },
+      },
+      { $sort: { at: -1 } },
+      {
+        $group: {
+          _id: '$user_id',
+          kind: { $first: '$kind' },
+          at: { $first: '$at' },
+          status: { $first: '$status' },
+          meta_status: { $first: '$meta_status' },
+          clicked_at: { $first: '$clicked_at' },
+          replied_at: { $first: '$replied_at' },
+          count_30d: { $sum: { $cond: [{ $gte: ['$at', since] }, 1, 0] } },
+        },
+      },
+    ]);
+    for (const r of rows) {
+      out.set(String(r._id), {
+        kind: r.kind,
+        at: r.at,
+        status: r.status,
+        meta_status: r.meta_status ?? null,
+        clicked_at: r.clicked_at ?? null,
+        replied_at: r.replied_at ?? null,
+        count_30d: r.count_30d,
+      });
+    }
+    return out;
   }
 
   async getDaily(

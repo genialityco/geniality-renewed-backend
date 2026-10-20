@@ -11,6 +11,14 @@ import {
   CourseSnapshotUser,
   CourseSnapshotUserSchema,
 } from './schemas/course-snapshot-user.schema';
+import {
+  CourseUserState,
+  CourseUserStateSchema,
+} from './schemas/course-user-state.schema';
+import {
+  EngagementMessage,
+  EngagementMessageSchema,
+} from '../engagement/schemas/engagement-message.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import {
   CourseAttendee,
@@ -48,6 +56,9 @@ import { UsersModule } from '../users/users.module';
     MongooseModule.forFeature([
       { name: CourseSnapshot.name, schema: CourseSnapshotSchema },
       { name: CourseSnapshotUser.name, schema: CourseSnapshotUserSchema },
+      { name: CourseUserState.name, schema: CourseUserStateSchema },
+      // Último mensaje recibido por cada estudiante en la lista de seguimiento
+      { name: EngagementMessage.name, schema: EngagementMessageSchema },
       { name: Event.name, schema: EventSchema },
       { name: CourseAttendee.name, schema: CourseAttendeeSchema },
       { name: ActivityAttendee.name, schema: ActivityAttendeeSchema },

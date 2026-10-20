@@ -3,10 +3,12 @@ import { getModelToken } from '@nestjs/mongoose';
 import { NotFoundException } from '@nestjs/common';
 import { UserActivityService } from './user-activity.service';
 import { UserActivity } from './schemas/user-activity.schema';
+import { UserActivityDay } from './schemas/user-activity-day.schema';
 
 describe('UserActivityService — registro de tiempo', () => {
   let service: UserActivityService;
   const model = { updateOne: jest.fn() };
+  const dayModel = { updateOne: jest.fn() };
   const matched = (n: number) => ({ matchedCount: n });
 
   beforeEach(async () => {
@@ -15,6 +17,7 @@ describe('UserActivityService — registro de tiempo', () => {
       providers: [
         UserActivityService,
         { provide: getModelToken(UserActivity.name), useValue: model },
+        { provide: getModelToken(UserActivityDay.name), useValue: dayModel },
       ],
     }).compile();
     service = module.get(UserActivityService);
@@ -98,6 +101,44 @@ describe('UserActivityService — registro de tiempo', () => {
       15 * 60 * 1000,
     );
     expect(model.updateOne.mock.calls[1][1].$inc.total_courses_time_ms).toBe(0);
+  });
+
+  it('registra el día de uso (para saber si volvió tras un recordatorio)', async () => {
+    model.updateOne.mockResolvedValue(matched(1));
+
+    await service.updateCourseTime(
+      'u1',
+      'https://app.geniality.com.co/organization/org1',
+      'ev1',
+      'ev1',
+      30_000,
+    );
+
+    expect(dayModel.updateOne).toHaveBeenCalledTimes(1);
+    const [filter, update, options] = dayModel.updateOne.mock.calls[0];
+    expect(filter).toEqual({
+      user_id: 'u1',
+      // organization_id llega a veces como URL: se normaliza
+      organization_id: 'org1',
+      date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    });
+    expect(update).toEqual({
+      $min: { first_at: expect.any(Date) },
+      $max: { last_at: expect.any(Date) },
+    });
+    expect(options).toEqual({ upsert: true });
+  });
+
+  it('sin tiempo real no cuenta como visita, y un fallo al registrarla no afecta', async () => {
+    model.updateOne.mockResolvedValue(matched(1));
+    dayModel.updateOne.mockRejectedValue(new Error('mongo caído'));
+
+    await service.updateCourseTime('u1', 'org1', 'ev1', 'ev1', 0);
+    expect(dayModel.updateOne).not.toHaveBeenCalled();
+
+    await expect(
+      service.updateCourseTime('u1', 'org1', 'ev1', 'ev1', 1_000),
+    ).resolves.toBeUndefined();
   });
 
   it('lanza NotFound si el usuario no tiene registro en la organización', async () => {

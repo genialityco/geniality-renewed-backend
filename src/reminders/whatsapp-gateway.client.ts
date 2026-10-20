@@ -20,6 +20,17 @@ export interface SendTemplatePayload {
   fallbackHtml?: string;
 }
 
+export interface SendOutcome {
+  result: 'sent' | 'fallback_email';
+  /** wamid del mensaje en WhatsApp (null si salió por email) */
+  messageId: string | null;
+}
+
+function messageIdOf(response: { data?: any } | undefined): string | null {
+  const id = response?.data?.messageId;
+  return typeof id === 'string' && id ? id : null;
+}
+
 /**
  * Cliente del gateway externo de WhatsApp (wa-multisession-backend).
  * Compartido por los recordatorios de inactividad y el reporte semanal.
@@ -51,18 +62,26 @@ export class WhatsappGatewayClient {
   async sendTemplate(
     payload: SendTemplatePayload,
   ): Promise<'sent' | 'fallback_email'> {
+    return (await this.sendTemplateWithId(payload)).result;
+  }
+
+  /**
+   * Igual que sendTemplate, pero devuelve además el id del mensaje en
+   * WhatsApp (wamid), con el que llegan después sus estados de entrega.
+   */
+  async sendTemplateWithId(payload: SendTemplatePayload): Promise<SendOutcome> {
     try {
-      await lastValueFrom(
+      const response = await lastValueFrom(
         this.httpService.post(`${this.gatewayUrl}/api/send-template`, {
           accountId: this.accountId,
           languageCode: 'es',
           ...payload,
         }),
       );
-      return 'sent';
+      return { result: 'sent', messageId: messageIdOf(response) };
     } catch (error) {
       if ((error as any)?.response?.data?.fallbackEmailSent === true) {
-        return 'fallback_email';
+        return { result: 'fallback_email', messageId: null };
       }
       throw error;
     }
@@ -71,16 +90,18 @@ export class WhatsappGatewayClient {
   /**
    * Envía un mensaje de texto libre (Cloud API). Solo funciona dentro de la
    * ventana de 24 h desde el último mensaje del usuario, p. ej. al responder
-   * en una conversación iniciada por él.
+   * en una conversación iniciada por él. Devuelve el wamid si el gateway lo
+   * informa.
    */
-  async sendText(to: string, message: string): Promise<void> {
-    await lastValueFrom(
+  async sendText(to: string, message: string): Promise<string | null> {
+    const response = await lastValueFrom(
       this.httpService.post(`${this.gatewayUrl}/api/send-text`, {
         accountId: this.accountId,
         to,
         message,
       }),
     );
+    return messageIdOf(response);
   }
 
   /**
@@ -91,18 +112,22 @@ export class WhatsappGatewayClient {
   async sendInteractive(
     to: string,
     message: InteractiveMessage,
-  ): Promise<void> {
-    await lastValueFrom(
+  ): Promise<string | null> {
+    const response = await lastValueFrom(
       this.httpService.post(`${this.gatewayUrl}/api/send-interactive`, {
         accountId: this.accountId,
         to,
         ...message,
       }),
     );
+    return messageIdOf(response);
   }
 
   /** Envía un mensaje de texto o interactivo según su forma. */
-  async sendOutbound(to: string, message: OutboundMessage): Promise<void> {
+  async sendOutbound(
+    to: string,
+    message: OutboundMessage,
+  ): Promise<string | null> {
     if (typeof message === 'string') return this.sendText(to, message);
     if (message.buttons?.length || message.list?.sections?.length) {
       return this.sendInteractive(to, message);

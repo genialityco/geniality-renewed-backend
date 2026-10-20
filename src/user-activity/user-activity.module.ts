@@ -6,11 +6,16 @@ import {
   UserActivity,
   UserActivitySchema,
 } from './schemas/user-activity.schema';
+import {
+  UserActivityDay,
+  UserActivityDaySchema,
+} from './schemas/user-activity-day.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: UserActivity.name, schema: UserActivitySchema },
+      { name: UserActivityDay.name, schema: UserActivityDaySchema },
     ]),
   ],
   controllers: [UserActivityController],

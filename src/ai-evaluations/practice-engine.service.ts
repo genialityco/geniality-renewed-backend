@@ -50,7 +50,12 @@ const CANCEL_WORDS = new Set([
   'stop',
 ]);
 const SKIP_WORDS = new Set(['saltar', 'pasar', 'siguiente', 'skip', 'no se']);
-const OPT_OUT_WORDS = new Set(['baja', 'darme de baja', 'no mas mensajes']);
+// También las usa WhatsappInboundService para la baja fuera de un simulacro
+export const OPT_OUT_WORDS = new Set([
+  'baja',
+  'darme de baja',
+  'no mas mensajes',
+]);
 const HELP_WORDS = new Set(['ayuda', 'help', 'menu']);
 const START_WORDS = new Set([
   'empezar',
@@ -254,7 +259,7 @@ export class PracticeEngineService {
           finished_at: new Date(),
         });
       return [
-        'Listo, no te enviaremos más prácticas por WhatsApp. Puedes volver a activarlas desde tu perfil en la plataforma. 👋',
+        'Listo, no te enviaremos más prácticas ni recordatorios por WhatsApp. Puedes volver a activarlos desde tu perfil en la plataforma. 👋',
       ];
     }
 

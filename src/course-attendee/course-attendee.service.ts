@@ -119,6 +119,17 @@ export class CourseAttendeeService {
       .exec();
   }
 
+  /** Ids (string) de los cursos que el usuario ya completó (progreso >= 100). */
+  async findCompletedEventIds(userId: string): Promise<Set<string>> {
+    const rows = await this.courseAttendeeModel.collection
+      .find(
+        { user_id: { $in: this.idVariants(userId) }, progress: { $gte: 100 } },
+        { projection: { event_id: 1 } },
+      )
+      .toArray();
+    return new Set(rows.map((r) => String(r.event_id)));
+  }
+
   // "Mis Cursos" se ve siempre dentro del contexto de una organización
   // (URL /organization/:organizationId/profile), así que la lista de
   // cursos debe quedar acotada a esa organización — no mezclar cursos

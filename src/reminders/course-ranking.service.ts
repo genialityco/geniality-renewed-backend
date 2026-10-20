@@ -17,6 +17,8 @@ import {
   sanitizeOrganizationId,
 } from './contact.util';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
+import { EngagementLogService } from 'src/engagement/engagement-log.service';
+import { localWeekKey } from 'src/engagement/engagement-policy';
 
 // Con menos inscritos, "el promedio del grupo" equivale a exponer el avance
 // puntual de uno o dos compañeros — se omite el curso hasta tener cohorte.
@@ -48,6 +50,7 @@ export class CourseRankingService {
     private readonly courseAttendeeService: CourseAttendeeService,
     private readonly whatsappGateway: WhatsappGatewayClient,
     private readonly configService: ConfigService,
+    private readonly engagementLog: EngagementLogService,
   ) {
     this.baseUrl =
       this.configService.get<string>('WHATSAPP_REMINDER_BASE_URL') ||
@@ -312,31 +315,53 @@ export class CourseRankingService {
     // - ranking_comparativo_curso1: {{1}} nombre, {{2}} organización, {{3}} curso,
     //   {{4}} % avance propio, {{5}} % promedio del grupo
     const buttonUrl = `${organizationId}/course/${course.event_id}`;
-    const result = await this.whatsappGateway.sendTemplate(
-      isLeader
-        ? {
-            to: phone,
-            templateName: 'ranking_lider_curso1',
-            parameters: [userName, courseName, organization.name, `${userProgress}%`],
-            buttonUrl,
-            languageCode: 'es',
-            ...fallbackFields,
-          }
-        : {
-            to: phone,
-            templateName: 'ranking_comparativo_curso1',
-            parameters: [
-              userName,
-              organization.name,
-              courseName,
-              `${userProgress}%`,
-              `${cohort.avgProgress}%`,
-            ],
-            buttonUrl,
-            languageCode: 'es',
-            ...fallbackFields,
-          },
+    const templateName = isLeader
+      ? 'ranking_lider_curso1'
+      : 'ranking_comparativo_curso1';
+    // Una comparación por usuario y semana local, sin importar el curso
+    const result = await this.engagementLog.deliver(
+      {
+        dedupeKey: `course_ranking:${activity.user_id}:${localWeekKey(new Date())}`,
+        kind: 'course_ranking',
+        userId: String(activity.user_id),
+        organizationId,
+        eventId: course.event_id,
+        template: templateName,
+        phone,
+      },
+      (ref) =>
+        this.whatsappGateway.sendTemplateWithId(
+          isLeader
+            ? {
+                to: phone,
+                templateName,
+                parameters: [
+                  userName,
+                  courseName,
+                  organization.name,
+                  `${userProgress}%`,
+                ],
+                buttonUrl: this.engagementLog.withClickRef(buttonUrl, ref),
+                languageCode: 'es',
+                ...fallbackFields,
+              }
+            : {
+                to: phone,
+                templateName,
+                parameters: [
+                  userName,
+                  organization.name,
+                  courseName,
+                  `${userProgress}%`,
+                  `${cohort.avgProgress}%`,
+                ],
+                buttonUrl: this.engagementLog.withClickRef(buttonUrl, ref),
+                languageCode: 'es',
+                ...fallbackFields,
+              },
+        ),
     );
+    if (result !== 'sent' && result !== 'fallback_email') return 'skipped';
 
     if (result === 'fallback_email') {
       this.logger.warn(

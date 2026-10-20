@@ -7,16 +7,31 @@ import { OrganizationUsersService } from 'src/organization-users/organization-us
 import { UserActivity } from 'src/user-activity/schemas/user-activity.schema';
 import { WhatsappGatewayClient } from './whatsapp-gateway.client';
 import {
+  maskPhone,
   resolveEmail,
   resolveName,
   resolvePhone,
   sanitizeOrganizationId,
 } from './contact.util';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
+import { CourseAttendeeService } from 'src/course-attendee/course-attendee.service';
+import { EngagementLogService } from 'src/engagement/engagement-log.service';
 
 interface ReminderItem {
   name: string;
   path: string;
+  eventId: string | null;
+}
+
+export interface TestUserContact {
+  user_id: string;
+  name: string;
+  email: string;
+  has_phone: boolean;
+  phone_masked: string | null;
+  /** Consentimiento efectivo: el job real le podría escribir */
+  whatsapp_consent: boolean;
+  opted_out: boolean;
 }
 
 @Injectable()
@@ -32,10 +47,80 @@ export class RemindersService {
     private readonly organizationUsersService: OrganizationUsersService,
     private readonly whatsappGateway: WhatsappGatewayClient,
     private readonly configService: ConfigService,
+    private readonly courseAttendeeService: CourseAttendeeService,
+    private readonly engagementLog: EngagementLogService,
   ) {
     this.baseUrl =
       this.configService.get<string>('WHATSAPP_REMINDER_BASE_URL') ||
       'https://app.geniality.com.co';
+  }
+
+  /**
+   * Miembros de la organización para probar plantillas con datos reales:
+   * solo lo necesario para elegirlos (sin exponer el teléfono completo) y si
+   * el job real les podría escribir (teléfono + consentimiento).
+   */
+  async searchTestUsers(
+    organizationId: string,
+    search: string,
+  ): Promise<TestUserContact[]> {
+    const s = String(search ?? '').trim();
+    if (s.length < 2) return [];
+    const [{ results }, organization] = await Promise.all([
+      this.organizationUsersService.findByOrganizationId(
+        organizationId,
+        1,
+        10,
+        // El servicio lo usa como regex: se escapa para buscar texto literal
+        s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      ),
+      this.organizationsService.findOne(organizationId).catch(() => null),
+    ]);
+    return results.map((orgUser) =>
+      this.describeContact(
+        orgUser,
+        null,
+        organization?.whatsapp_consent_property,
+      ),
+    );
+  }
+
+  /** Contacto de un usuario de la organización (para la vista previa). */
+  async getTestUserContact(
+    organizationId: string,
+    userId: string,
+  ): Promise<TestUserContact | null> {
+    const [orgUser, user, organization] = await Promise.all([
+      this.organizationUsersService
+        .findByUserAndOrg(userId, organizationId)
+        .catch(() => null),
+      this.usersService.findById(userId).catch(() => null),
+      this.organizationsService.findOne(organizationId).catch(() => null),
+    ]);
+    if (!orgUser) return null;
+    return this.describeContact(
+      orgUser,
+      user,
+      organization?.whatsapp_consent_property,
+    );
+  }
+
+  private describeContact(
+    orgUser: any,
+    user: any,
+    consentProperty?: string | null,
+  ): TestUserContact {
+    const phone = resolvePhone(orgUser, user);
+    const userId = orgUser.user_id?._id ?? orgUser.user_id;
+    return {
+      user_id: String(userId),
+      name: resolveName(orgUser, user),
+      email: resolveEmail(orgUser, user) || '',
+      has_phone: Boolean(phone),
+      phone_masked: maskPhone(phone),
+      whatsapp_consent: hasWhatsappConsent(orgUser, consentProperty),
+      opted_out: Boolean(orgUser.whatsapp_opt_out_at),
+    };
   }
 
   /**
@@ -138,7 +223,10 @@ export class RemindersService {
       .catch(() => null);
     if (!organization) return null;
 
-    const lastItem = this.pickLastItem(activity);
+    const completed = await this.courseAttendeeService.findCompletedEventIds(
+      String(activity.user_id),
+    );
+    const lastItem = this.pickLastItem(activity, completed);
     if (!lastItem) return null;
 
     const userName = resolveName(orgUser, user);
@@ -180,7 +268,10 @@ export class RemindersService {
       return 'skipped';
     }
 
-    const lastItem = this.pickLastItem(activity);
+    const completed = await this.courseAttendeeService.findCompletedEventIds(
+      String(activity.user_id),
+    );
+    const lastItem = this.pickLastItem(activity, completed);
     if (!lastItem) return 'skipped';
 
     const itemUrl = `${this.baseUrl}/organization/${organizationId}/${lastItem.path}`;
@@ -203,14 +294,35 @@ export class RemindersService {
     // Plantilla de Meta esperada: {{1}} nombre, {{2}} organización,
     // {{3}} curso/actividad; el botón de la plantilla ya trae fijo el
     // dominio + "/organization/", buttonUrl solo lleva lo que falta.
-    const result = await this.whatsappGateway.sendTemplate({
-      to: phone,
-      templateName: 'recordatorio_inactividad_3dias',
-      parameters: [userName, organization.name, lastItem.name],
-      buttonUrl: `${organizationId}/${lastItem.path}`,
-      languageCode: 'es',
-      ...fallbackFields,
-    });
+    // Un recordatorio por episodio de inactividad: last_updated solo cambia
+    // si el usuario vuelve, así que un reenvío manual o una segunda corrida
+    // del cron no lo duplican.
+    const result = await this.engagementLog.deliver(
+      {
+        dedupeKey: `inactivity:${activity.user_id}:${organizationId}:${new Date(
+          activity.last_updated,
+        ).toISOString()}`,
+        kind: 'inactivity_reminder',
+        userId: String(activity.user_id),
+        organizationId,
+        eventId: lastItem.eventId,
+        template: 'recordatorio_inactividad_3dias',
+        phone,
+      },
+      (ref) =>
+        this.whatsappGateway.sendTemplateWithId({
+          to: phone,
+          templateName: 'recordatorio_inactividad_3dias',
+          parameters: [userName, organization.name, lastItem.name],
+          buttonUrl: this.engagementLog.withClickRef(
+            `${organizationId}/${lastItem.path}`,
+            ref,
+          ),
+          languageCode: 'es',
+          ...fallbackFields,
+        }),
+    );
+    if (result !== 'sent' && result !== 'fallback_email') return 'skipped';
 
     if (result === 'fallback_email') {
       this.logger.warn(
@@ -234,9 +346,23 @@ export class RemindersService {
     `;
   }
 
-  private pickLastItem(activity: UserActivity): ReminderItem | null {
-    const latestCourse = this.latestByLastUpdated(activity.courses || []);
-    const latestActivity = this.latestByLastUpdated(activity.activities || []);
+  /**
+   * Lo último que vio el usuario, sin contar los cursos que ya completó (a
+   * quien terminó no se le dice "te esperamos de vuelta"). Si solo le quedan
+   * cursos completados, no hay nada que recordarle.
+   */
+  private pickLastItem(
+    activity: UserActivity,
+    completedEventIds: Set<string>,
+  ): ReminderItem | null {
+    const pending = <T extends { event_id: string }>(items: T[]) =>
+      items.filter((i) => !completedEventIds.has(String(i.event_id)));
+    const latestCourse = this.latestByLastUpdated(
+      pending(activity.courses || []),
+    );
+    const latestActivity = this.latestByLastUpdated(
+      pending(activity.activities || []),
+    );
 
     if (!latestCourse && !latestActivity) return null;
 
@@ -249,12 +375,14 @@ export class RemindersService {
       return {
         name: latestCourse.course_name || 'tu curso',
         path: `course/${latestCourse.event_id}`,
+        eventId: latestCourse.event_id || null,
       };
     }
 
     return {
       name: latestActivity.activity_name || 'tu actividad',
       path: `activitydetail/${latestActivity.activity_id}`,
+      eventId: latestActivity.event_id || null,
     };
   }
 

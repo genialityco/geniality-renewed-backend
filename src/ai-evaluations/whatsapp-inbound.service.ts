@@ -10,9 +10,17 @@ import {
   AiEvaluationEngineService,
   CODE_PATTERN,
 } from './ai-evaluation-engine.service';
-import { PracticeEngineService } from './practice-engine.service';
+import {
+  OPT_OUT_WORDS,
+  PracticeEngineService,
+} from './practice-engine.service';
+import { normalizeText } from './practice-format';
+import { WhatsappOptOutService } from 'src/engagement/whatsapp-opt-out.service';
+import { EngagementLogService } from 'src/engagement/engagement-log.service';
 
 const DEDUPE_TTL_MS = 24 * 3600 * 1000;
+const OPT_OUT_REPLY =
+  'Listo, no te enviaremos más prácticas ni recordatorios por WhatsApp. Puedes volver a activarlos desde tu perfil en la plataforma. 👋';
 
 function sendErrorDetail(error: unknown): string {
   const data = (error as any)?.response?.data;
@@ -46,10 +54,13 @@ function asPlainText(message: Exclude<OutboundMessage, string>): string {
  * mensajes de cada teléfono y los enruta:
  *
  * 1. Código EV-XXXXXX → evaluación por WhatsApp (cancela simulacros activos).
- * 2. Botón de un simulacro (replyId "pq:...") o simulacro en curso → simulacro.
- * 3. Evaluación EV- en curso → evaluación.
- * 4. Simulacro invitado (esperando "Empezar") → simulacro.
- * 5. Si no, se ignora.
+ * 2. BAJA (sin evaluación EV- en curso, donde puede ser una respuesta) →
+ *    baja de todas las membresías del número; si hay simulacro, además lo
+ *    cancela el motor del simulacro.
+ * 3. Botón de un simulacro (replyId "pq:...") o simulacro en curso → simulacro.
+ * 4. Evaluación EV- en curso → evaluación.
+ * 5. Simulacro invitado (esperando "Empezar") → simulacro.
+ * 6. Si no, se ignora.
  *
  * La cola y la deduplicación viven en memoria: asume una sola instancia.
  */
@@ -65,6 +76,8 @@ export class WhatsappInboundService {
     private readonly aiEvaluation: AiEvaluationEngineService,
     private readonly practice: PracticeEngineService,
     private readonly whatsapp: WhatsappGatewayClient,
+    private readonly optOut: WhatsappOptOutService,
+    private readonly engagementLog: EngagementLogService,
   ) {}
 
   /** No bloquea: encola el mensaje del teléfono y responde cuando termina. */
@@ -118,6 +131,17 @@ export class WhatsappInboundService {
         ),
       );
 
+    // Respuesta a un mensaje de la plataforma (recordatorio, reporte...):
+    // queda en la bitácora de envíos aunque ningún motor la atienda
+    const repliedTo = await this.engagementLog
+      .markReply(phone, text)
+      .catch((e) => {
+        this.logger.warn(
+          `No se pudo registrar la respuesta de ${phone}: ${e.message}`,
+        );
+        return null;
+      });
+
     // El número también se usa para otras cosas: solo se registran en el log
     // los mensajes que le corresponden a GenCampus
     const summary = `"${text.slice(0, 60)}"${replyId ? ` (replyId ${replyId})` : ''}`;
@@ -132,7 +156,12 @@ export class WhatsappInboundService {
         'Tuve un problema procesando tu mensaje. Por favor envíalo de nuevo en un momento.',
       ];
     }
-    if (!replies?.length) return;
+    if (!replies?.length) {
+      if (repliedTo) {
+        this.logger.log(`Respuesta a ${repliedTo} de ${phone}: ${summary}`);
+      }
+      return;
+    }
     this.logger.log(`Mensaje entrante de ${phone}: ${summary}`);
 
     for (const message of replies) {
@@ -175,9 +204,27 @@ export class WhatsappInboundService {
       return this.wrap(await this.aiEvaluation.handleMessage(phone, text));
     }
 
+    // 2. Baja
+    if (
+      OPT_OUT_WORDS.has(normalizeText(text)) &&
+      !(await this.aiEvaluation.hasActiveSession(phone))
+    ) {
+      const memberships = await this.optOut.optOutByPhone(phone);
+      await this.engagementLog
+        .markOptOut(phone)
+        .catch((e) =>
+          this.logger.warn(`No se pudo marcar la baja de ${phone}: ${e.message}`),
+        );
+      if (await this.practice.findActiveSession(phone)) {
+        return this.practice.handleMessage(phone, text, replyId);
+      }
+      // Número compartido: si no es de un estudiante, no se responde
+      return memberships ? [OPT_OUT_REPLY] : null;
+    }
+
     const practiceSession = await this.practice.findActiveSession(phone);
 
-    // 2. Botón del simulacro o simulacro en curso
+    // 3. Botón del simulacro o simulacro en curso
     if (
       practiceSession &&
       (this.practice.isOwnReply(replyId) ||
@@ -186,12 +233,12 @@ export class WhatsappInboundService {
       return this.practice.handleMessage(phone, text, replyId);
     }
 
-    // 3. Evaluación EV- en curso
+    // 4. Evaluación EV- en curso
     if (await this.aiEvaluation.hasActiveSession(phone)) {
       return this.wrap(await this.aiEvaluation.handleMessage(phone, text));
     }
 
-    // 4. Invitación a simulacro pendiente (p. ej. botón "Empezar" de la plantilla)
+    // 5. Invitación a simulacro pendiente (p. ej. botón "Empezar" de la plantilla)
     if (practiceSession) {
       return this.practice.handleMessage(phone, text, replyId);
     }

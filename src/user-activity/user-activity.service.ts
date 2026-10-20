@@ -2,13 +2,42 @@ import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { UserActivity } from './schemas/user-activity.schema';
+import { UserActivityDay } from './schemas/user-activity-day.schema';
+import { sanitizeOrganizationId } from 'src/reminders/contact.util';
 
 @Injectable()
 export class UserActivityService implements OnModuleInit {
   constructor(
     @InjectModel(UserActivity.name)
     private userActivityModel: Model<UserActivity>,
+    @InjectModel(UserActivityDay.name)
+    private userActivityDayModel: Model<UserActivityDay>,
   ) {}
+
+  /**
+   * Marca que el usuario usó la plataforma hoy (primera y última hora del
+   * día). Nunca lanza: un fallo aquí no debe afectar el registro de tiempo.
+   */
+  private async recordVisit(userId: string, organizationId: string) {
+    const now = new Date();
+    try {
+      await this.userActivityDayModel.updateOne(
+        {
+          user_id: String(userId),
+          organization_id: sanitizeOrganizationId(organizationId),
+          date: new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Bogota',
+          }).format(now),
+        },
+        { $min: { first_at: now }, $max: { last_at: now } },
+        { upsert: true },
+      );
+    } catch (error) {
+      console.warn(
+        `No se pudo registrar la visita de ${userId}: ${(error as Error).message}`,
+      );
+    }
+  }
 
   /**
    * Inicializar módulo y crear índices
@@ -76,6 +105,7 @@ export class UserActivityService implements OnModuleInit {
     );
 
     console.log(`✅ Record after upsert: ${activity._id}`);
+    await this.recordVisit(userId, organizationId);
 
     // Verificar el total después
     const finalCount = await this.userActivityModel.countDocuments({
@@ -209,6 +239,7 @@ export class UserActivityService implements OnModuleInit {
     const now = new Date();
     const owner = { user_id: userId, organization_id: organizationId };
     const elemMatch = { [arrayField]: { $elemMatch: match } };
+    if (delta > 0) await this.recordVisit(userId, organizationId);
 
     const nameSet = Object.fromEntries(
       Object.entries(name).map(([k, v]) => [`${arrayField}.$.${k}`, v]),

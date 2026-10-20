@@ -29,6 +29,12 @@ export function resolvePhone(
   return userPhone || null;
 }
 
+/** "573132735116" → "••••••••5116", para mostrar en el admin sin exponerlo. */
+export function maskPhone(phone: string | null): string | null {
+  if (!phone) return null;
+  return `${'•'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-4)}`;
+}
+
 export function resolveName(
   orgUser: OrganizationUser | null,
   user: any,

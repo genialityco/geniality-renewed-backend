@@ -16,6 +16,7 @@ import { UsersModule } from 'src/users/users.module';
 import { OrganizationsModule } from 'src/organizations/organizations.module';
 import { OrganizationUsersModule } from 'src/organization-users/organization-users.module';
 import { CourseAttendeeModule } from 'src/course-attendee/course-attendee.module';
+import { EngagementModule } from 'src/engagement/engagement.module';
 import {
   Organization,
   OrganizationSchema,
@@ -39,6 +40,8 @@ import {
     OrganizationsModule,
     OrganizationUsersModule,
     CourseAttendeeModule,
+    // Bitácora de envíos: deduplicación, tope semanal y grupo de control
+    EngagementModule,
   ],
   providers: [
     RemindersService,

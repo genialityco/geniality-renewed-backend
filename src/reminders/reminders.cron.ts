@@ -1,12 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
-// Cron y CronExpression se reimportan de '@nestjs/schedule' al reactivar los jobs de abajo
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { RemindersService } from './reminders.service';
 import { WeeklyReportService } from './weekly-report.service';
 import { CourseRankingService } from './course-ranking.service';
 
+const TIMEZONE = 'America/Bogota';
+
+/**
+ * Jobs de recordatorios. Solo corren con REMINDERS_CRON_ENABLED=true, para
+ * que un backend local conectado a la base de producción no envíe mensajes
+ * reales. La bitácora de envíos (EngagementLogService) evita duplicados si
+ * además se disparan a mano desde RemindersController.
+ */
 @Injectable()
 export class RemindersCron {
   private readonly logger = new Logger(RemindersCron.name);
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly remindersService: RemindersService,
@@ -14,41 +23,43 @@ export class RemindersCron {
     private readonly courseRankingService: CourseRankingService,
   ) {}
 
-  // Desactivado temporalmente: recordatorios de inactividad pausados
-  // @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  @Cron(CronExpression.EVERY_DAY_AT_9AM, { timeZone: TIMEZONE })
   async run() {
-    this.logger.log('Iniciando job de recordatorios de inactividad (3 días)');
-    try {
-      await this.remindersService.sendInactivityReminders();
-    } catch (error) {
-      this.logger.error(
-        'Fallo el job de recordatorios de inactividad',
-        error as any,
-      );
-    }
+    await this.exclusive('recordatorios de inactividad (3 días)', () =>
+      this.remindersService.sendInactivityReminders(),
+    );
   }
 
-  // Desactivado temporalmente: reporte semanal pausado
   // Lunes 10am, una hora después del job de inactividad para no solaparse
-  // @Cron('0 10 * * 1')
+  @Cron('0 10 * * 1', { timeZone: TIMEZONE })
   async runWeeklyReport() {
-    this.logger.log('Iniciando job de reporte semanal de progreso');
-    try {
-      await this.weeklyReportService.sendWeeklyReports();
-    } catch (error) {
-      this.logger.error('Fallo el job de reporte semanal', error as any);
-    }
+    await this.exclusive('reporte semanal de progreso', () =>
+      this.weeklyReportService.sendWeeklyReports(),
+    );
   }
 
-  // Desactivado temporalmente: comparación de curso pausada
   // Martes 10am, un día después del reporte semanal para no solaparse
-  // @Cron('0 10 * * 2')
+  @Cron('0 10 * * 2', { timeZone: TIMEZONE })
   async runCourseRanking() {
-    this.logger.log('Iniciando job de comparación de curso entre compañeros');
-    try {
-      await this.courseRankingService.sendCourseRankingMessages();
-    } catch (error) {
-      this.logger.error('Fallo el job de comparación de curso', error as any);
-    }
+    await this.exclusive('comparación de curso entre compañeros', () =>
+      this.courseRankingService.sendCourseRankingMessages(),
+    );
+  }
+
+  /**
+   * Un job a la vez: si uno se demora, el siguiente espera en vez de
+   * encimarse (y en vez de perderse, que dejaría la semana sin reporte).
+   */
+  private exclusive(name: string, job: () => Promise<unknown>) {
+    if (process.env.REMINDERS_CRON_ENABLED !== 'true') return;
+    this.queue = this.queue.then(async () => {
+      this.logger.log(`Iniciando job de ${name}`);
+      try {
+        await job();
+      } catch (error) {
+        this.logger.error(`Falló el job de ${name}`, error as any);
+      }
+    });
+    return this.queue;
   }
 }

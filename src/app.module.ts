@@ -30,6 +30,7 @@ import { EventMetricsModule } from './event-metrics/event-metrics.module';
 import { AiEvaluationsModule } from './ai-evaluations/ai-evaluations.module';
 import { ProgressEventsModule } from './progress-events/progress-events.module';
 import { CourseSnapshotsModule } from './course-snapshots/course-snapshots.module';
+import { EngagementModule } from './engagement/engagement.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { CourseSnapshotsModule } from './course-snapshots/course-snapshots.modul
     AiEvaluationsModule,
     ProgressEventsModule,
     CourseSnapshotsModule,
+    EngagementModule,
   ],
   // providers: [SessionTokenGuard],
 })

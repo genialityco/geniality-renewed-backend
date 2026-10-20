@@ -97,6 +97,7 @@ import {
 } from '../organizations/schemas/organization.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { UsersModule } from '../users/users.module';
+import { EngagementModule } from '../engagement/engagement.module';
 
 @Module({
   imports: [
@@ -129,6 +130,8 @@ import { UsersModule } from '../users/users.module';
     UsersModule,
     // Búsqueda en transcripts para "dónde estudiarlo" de los casos clínicos
     TranscriptSegmentsModule,
+    // Bitácora de envíos y baja de WhatsApp por número
+    EngagementModule,
   ],
   controllers: [
     AiEvaluationsController,

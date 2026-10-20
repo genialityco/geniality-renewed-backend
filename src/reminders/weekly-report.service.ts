@@ -16,6 +16,8 @@ import {
   sanitizeOrganizationId,
 } from './contact.util';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
+import { EngagementLogService } from 'src/engagement/engagement-log.service';
+import { localWeekKey } from 'src/engagement/engagement-policy';
 
 interface DeltaItem {
   name: string;
@@ -41,6 +43,7 @@ export class WeeklyReportService {
     private readonly organizationUsersService: OrganizationUsersService,
     private readonly whatsappGateway: WhatsappGatewayClient,
     private readonly configService: ConfigService,
+    private readonly engagementLog: EngagementLogService,
   ) {
     this.baseUrl =
       this.configService.get<string>('WHATSAPP_REMINDER_BASE_URL') ||
@@ -251,14 +254,30 @@ export class WeeklyReportService {
     // {{3}} tiempo de la semana, {{4}} curso/actividad destacada; el botón
     // de la plantilla ya trae fijo el dominio + "/organization/",
     // buttonUrl solo lleva lo que falta.
-    const result = await this.whatsappGateway.sendTemplate({
-      to: phone,
-      templateName: 'reporte_semanal_progreso',
-      parameters: [userName, organization.name, timeText, featured.name],
-      buttonUrl: `${organizationId}/${featured.path}`,
-      languageCode: 'es',
-      ...fallbackFields,
-    });
+    // Un reporte por usuario, organización y semana local
+    const result = await this.engagementLog.deliver(
+      {
+        dedupeKey: `weekly_report:${activity.user_id}:${organizationId}:${localWeekKey(new Date())}`,
+        kind: 'weekly_report',
+        userId: String(activity.user_id),
+        organizationId,
+        template: 'reporte_semanal_progreso',
+        phone,
+      },
+      (ref) =>
+        this.whatsappGateway.sendTemplateWithId({
+          to: phone,
+          templateName: 'reporte_semanal_progreso',
+          parameters: [userName, organization.name, timeText, featured.name],
+          buttonUrl: this.engagementLog.withClickRef(
+            `${organizationId}/${featured.path}`,
+            ref,
+          ),
+          languageCode: 'es',
+          ...fallbackFields,
+        }),
+    );
+    if (result !== 'sent' && result !== 'fallback_email') return 'skipped';
 
     if (result === 'fallback_email') {
       this.logger.warn(

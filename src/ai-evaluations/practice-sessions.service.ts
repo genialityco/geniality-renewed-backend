@@ -27,6 +27,8 @@ import { randomQuestionCount } from './practice-format';
 import { PracticeEngineService } from './practice-engine.service';
 import { WhatsappInboundService } from './whatsapp-inbound.service';
 import { QuestionUsageService } from './question-usage.service';
+import { EngagementLogService } from 'src/engagement/engagement-log.service';
+import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 
 const MAX_NUM_QUESTIONS = 30;
 // Al empezar, el estudiante elige entre sus últimas N actividades completadas
@@ -101,6 +103,7 @@ export class PracticeSessionsService {
     private readonly inbound: WhatsappInboundService,
     private readonly whatsapp: WhatsappGatewayClient,
     private readonly usage: QuestionUsageService,
+    private readonly engagementLog: EngagementLogService,
   ) {}
 
   // ─── Opt-in (estudiante) ───────────────────────────────────────────────
@@ -109,7 +112,9 @@ export class PracticeSessionsService {
     const { user, orgUser } = await this.myMembership(uid, organizationId);
     const phone = resolvePhone(orgUser, user);
     return {
-      opt_in: Boolean(orgUser.whatsapp_opt_in),
+      // Consentimiento efectivo (incluye el valor por defecto): es lo que
+      // decide si le llegan mensajes, así que es lo que muestra el perfil
+      opt_in: await this.hasConsent(organizationId, orgUser),
       opt_in_at: orgUser.whatsapp_opt_in_at || null,
       has_phone: Boolean(phone),
       phone_masked: maskPhone(phone),
@@ -131,6 +136,23 @@ export class PracticeSessionsService {
       )
       .exec();
     return this.getOptIn(uid, organizationId);
+  }
+
+  /** Misma regla que los recordatorios (common/whatsapp-consent). */
+  private async hasConsent(
+    organizationId: string,
+    orgUser: OrganizationUser,
+  ): Promise<boolean> {
+    const organization = await this.organizationModel
+      .findById(organizationId)
+      .select('whatsapp_consent_property')
+      .lean()
+      .exec()
+      .catch(() => null);
+    return hasWhatsappConsent(
+      orgUser,
+      (organization as any)?.whatsapp_consent_property,
+    );
   }
 
   private async myMembership(uid: string, organizationId: string) {
@@ -217,7 +239,7 @@ export class PracticeSessionsService {
         email: student.email,
         has_phone: Boolean(student.phone),
         phone_masked: maskPhone(student.phone),
-        opt_in: Boolean(student.orgUser.whatsapp_opt_in),
+        opt_in: await this.hasConsent(organizationId, student.orgUser),
       },
       min_progress: minProgress,
       courses: material.courses,
@@ -235,9 +257,9 @@ export class PracticeSessionsService {
   /** Crea el simulacro y envía la invitación por WhatsApp (admin). */
   async send(organizationId: string, body: PracticeSendBody, adminUid: string) {
     const student = await this.resolveStudent(organizationId, body.email);
-    if (!student.orgUser.whatsapp_opt_in) {
+    if (!(await this.hasConsent(organizationId, student.orgUser))) {
       throw new BadRequestException(
-        'El estudiante no ha autorizado recibir prácticas por WhatsApp (debe activarlo en su perfil).',
+        'El estudiante no ha autorizado recibir prácticas por WhatsApp (se dio de baja o debe activarlo en su perfil).',
       );
     }
     if (!student.phone) {
@@ -309,7 +331,7 @@ export class PracticeSessionsService {
     const { organizationId, userId, eventId, materialUntil } = params;
     const student = await this.resolveStudentById(organizationId, userId);
     if (!student) return { sent: false, reason: 'no_member' };
-    if (!student.orgUser.whatsapp_opt_in)
+    if (!(await this.hasConsent(organizationId, student.orgUser)))
       return { sent: false, reason: 'no_opt_in' };
     if (!student.phone) return { sent: false, reason: 'no_phone' };
 
@@ -408,6 +430,21 @@ export class PracticeSessionsService {
     // Dentro de la ventana de 24 h se puede invitar con botones (sin
     // plantilla); fuera de ella, solo con la plantilla aprobada.
     const windowOpen = await this.inbound.isWindowOpen(phone);
+    // Registro en la bitácora de envíos: cuenta para el tope semanal de los
+    // recordatorios, pero el repaso no se bloquea por él.
+    const logEntry = {
+      dedupeKey: `practice:${String(session._id)}`,
+      kind: (trigger === 'auto' ? 'practice_review' : 'practice_invite') as
+        | 'practice_review'
+        | 'practice_invite',
+      userId: String(student.user._id),
+      organizationId,
+      eventId: String(course._id),
+      template: windowOpen ? null : INVITE_TEMPLATE,
+      phone,
+    };
+    // wamid del mensaje: con él llegan después sus estados de entrega
+    let wamid: string | null = null;
     try {
       if (windowOpen) {
         const sid = String(session._id);
@@ -415,17 +452,19 @@ export class PracticeSessionsService {
           trigger === 'auto'
             ? `Hola ${firstName} 👋 ¡Hora de repasar! Preparamos un *simulacro de práctica* de ${num} preguntas sobre lo que viste en *${course.name}* (${orgName}).\n`
             : `Hola ${firstName} 👋 Preparamos un *simulacro de práctica* de ${num} preguntas del curso *${course.name}* en ${orgName}.\n`;
-        await this.whatsapp.sendOutbound(phone, {
+        wamid = await this.whatsapp.sendOutbound(phone, {
           body: intro + 'Es solo práctica: no afecta tus notas.',
           buttons: this.practiceEngine.inviteButtons(sid),
         });
       } else {
-        await this.whatsapp.sendTemplate({
-          to: phone,
-          templateName: INVITE_TEMPLATE,
-          languageCode: INVITE_TEMPLATE_LANG,
-          parameters: [firstName, String(num), course.name, orgName],
-        });
+        wamid = (
+          await this.whatsapp.sendTemplateWithId({
+            to: phone,
+            templateName: INVITE_TEMPLATE,
+            languageCode: INVITE_TEMPLATE_LANG,
+            parameters: [firstName, String(num), course.name, orgName],
+          })
+        ).messageId;
       }
     } catch (error) {
       const detail =
@@ -433,6 +472,7 @@ export class PracticeSessionsService {
       this.logger.error(
         `No se pudo enviar la invitación (${trigger}) a ${phone}: ${detail}`,
       );
+      await this.engagementLog.record(logEntry, 'failed', String(detail));
       await this.sessionModel
         .updateOne(
           { _id: session._id },
@@ -445,6 +485,7 @@ export class PracticeSessionsService {
           : `No se pudo enviar la plantilla "${INVITE_TEMPLATE}" (¿está aprobada en Meta?): ${detail}`,
       );
     }
+    await this.engagementLog.record(logEntry, 'sent', undefined, wamid);
     await this.sessionModel
       .updateOne(
         { _id: session._id },

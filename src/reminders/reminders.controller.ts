@@ -77,6 +77,39 @@ export class RemindersController {
     return TEMPLATE_NAMES;
   }
 
+  // Busca miembros de la organización (nombre, correo, documento o teléfono)
+  // para probar las plantillas con sus datos reales.
+  @Get('test-users')
+  async searchTestUsers(
+    @Param('organizationId') organizationId: string,
+    @Query('search') search?: string,
+  ) {
+    return this.remindersService.searchTestUsers(organizationId, search || '');
+  }
+
+  // Arma la plantilla con los datos reales del usuario, sin enviarla.
+  @Post('test-template/preview')
+  async previewTemplate(
+    @Param('organizationId') organizationId: string,
+    @Body('userId') userId?: string,
+    @Body('templateName') templateName?: string,
+  ) {
+    this.validateTemplateName(templateName);
+    const contact = await this.requireMember(organizationId, userId);
+    const built = await this.buildParams(
+      contact.user_id,
+      templateName as TemplateName,
+      organizationId,
+    );
+    return {
+      templateName,
+      contact,
+      // null: el usuario no tiene actividad suficiente para esta plantilla
+      parameters: built?.parameters ?? null,
+      buttonUrl: built?.buttonUrl ?? null,
+    };
+  }
+
   // Envía una plantilla a un teléfono de prueba, completando el mensaje
   // con los datos reales del usuario (nombre, organización, último
   // curso/actividad, progreso, etc. según la plantilla elegida). No exige
@@ -89,25 +122,24 @@ export class RemindersController {
     @Body('userId') userId?: string,
     @Body('templateName') templateName?: string,
     @Body('to') to?: string,
+    // Agrega ?ref=test al enlace del botón: sirve para comprobar que el
+    // enlace con seguimiento de clics abre bien antes de activar
+    // ENGAGEMENT_CLICK_REF en los envíos reales.
+    @Body('trackClick') trackClick?: boolean,
   ) {
-    if (!userId) {
-      throw new BadRequestException('El campo "userId" es requerido');
-    }
     if (!to) {
       throw new BadRequestException(
         'El campo "to" (teléfono en formato internacional) es requerido',
       );
     }
-    if (!TEMPLATE_NAMES.includes(templateName as TemplateName)) {
-      throw new BadRequestException(
-        `"templateName" inválido. Valores permitidos: ${TEMPLATE_NAMES.join(', ')}`,
-      );
-    }
+    this.validateTemplateName(templateName);
     if (!this.whatsappGateway.isConfigured) {
       throw new BadRequestException(
         'WHATSAPP_GATEWAY_URL no está configurado en este ambiente',
       );
     }
+    // El admin puede elegir a cualquier usuario: debe ser de esta organización
+    await this.requireMember(organizationId, userId);
 
     const built = await this.buildParams(
       userId,
@@ -120,11 +152,13 @@ export class RemindersController {
       );
     }
 
+    const buttonUrl =
+      trackClick === true ? `${built.buttonUrl}?ref=test` : built.buttonUrl;
     const result = await this.whatsappGateway.sendTemplate({
       to,
       templateName,
       parameters: built.parameters,
-      buttonUrl: built.buttonUrl,
+      buttonUrl,
       languageCode: 'es',
       ...(built.fallbackEmail
         ? {
@@ -135,7 +169,31 @@ export class RemindersController {
         : {}),
     });
 
-    return { result, templateName, parameters: built.parameters };
+    return { result, templateName, parameters: built.parameters, buttonUrl };
+  }
+
+  private validateTemplateName(templateName?: string) {
+    if (!TEMPLATE_NAMES.includes(templateName as TemplateName)) {
+      throw new BadRequestException(
+        `"templateName" inválido. Valores permitidos: ${TEMPLATE_NAMES.join(', ')}`,
+      );
+    }
+  }
+
+  private async requireMember(organizationId: string, userId?: string) {
+    if (!userId) {
+      throw new BadRequestException('El campo "userId" es requerido');
+    }
+    const contact = await this.remindersService.getTestUserContact(
+      organizationId,
+      userId,
+    );
+    if (!contact) {
+      throw new NotFoundException(
+        'El usuario no pertenece a esta organización',
+      );
+    }
+    return contact;
   }
 
   private async buildParams(
