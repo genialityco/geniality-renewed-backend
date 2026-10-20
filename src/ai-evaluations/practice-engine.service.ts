@@ -237,7 +237,13 @@ export class PracticeEngineService {
             user_id: session.user_id,
             organization_id: session.organization_id,
           },
-          { $set: { whatsapp_opt_in: false, whatsapp_opt_in_at: null } },
+          {
+            $set: {
+              whatsapp_opt_in: false,
+              whatsapp_opt_in_at: null,
+              whatsapp_opt_out_at: new Date(),
+            },
+          },
         )
         .exec();
       if (session.status === 'in_progress')

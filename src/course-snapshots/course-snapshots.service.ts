@@ -19,6 +19,8 @@ import { Activity } from '../activities/schemas/activity.schema';
 import { UserActivity } from '../user-activity/schemas/user-activity.schema';
 import { Certificate } from '../certificates/schemas/certificate.schema';
 import { OrganizationUser } from '../organization-users/schemas/organization-user.schema';
+import { Organization } from '../organizations/schemas/organization.schema';
+import { hasWhatsappConsent } from '../common/whatsapp-consent';
 import { User } from '../users/schemas/user.schema';
 import {
   resolveEmail,
@@ -43,6 +45,8 @@ interface UserRow {
   completed_at: Date | null;
   completed_at_source: CompletedAtSource;
   has_phone: boolean;
+  // Consentimiento efectivo (opt-in, o campo de consentimiento de la
+  // organización, sin baja); ver common/whatsapp-consent.ts
   whatsapp_opt_in: boolean;
 }
 
@@ -130,6 +134,8 @@ export class CourseSnapshotsService {
     @InjectModel(OrganizationUser.name)
     private readonly organizationUserModel: Model<OrganizationUser>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(Organization.name)
+    private readonly organizationModel: Model<Organization>,
   ) {}
 
   // ───────────────────────── Líneas base ─────────────────────────
@@ -557,7 +563,20 @@ export class CourseSnapshotsService {
       certificates.map((r: any) => [String(r._id), r.at as Date]),
     );
 
-    // Contacto (teléfono + opt-in) desde la membresía de la organización
+    // Contacto (teléfono + consentimiento) desde la membresía de la
+    // organización. El campo de consentimiento solo puede ser un nombre
+    // simple: va interpolado en la proyección.
+    const org = Types.ObjectId.isValid(organizationId)
+      ? await this.organizationModel.collection.findOne(
+          { _id: new Types.ObjectId(organizationId) },
+          { projection: { whatsapp_consent_property: 1 } },
+        )
+      : null;
+    const consentProperty = /^\w+$/.test(
+      String(org?.whatsapp_consent_property || ''),
+    )
+      ? String(org!.whatsapp_consent_property)
+      : null;
     const userVals = attendees.flatMap((a: any) => idVariants(String(a._id)));
     const orgUsers = userVals.length
       ? await this.organizationUserModel.collection
@@ -570,8 +589,12 @@ export class CourseSnapshotsService {
               projection: {
                 user_id: 1,
                 whatsapp_opt_in: 1,
+                whatsapp_opt_out_at: 1,
                 'properties.phone': 1,
                 'properties.indicativodepais': 1,
+                ...(consentProperty
+                  ? { [`properties.${consentProperty}`]: 1 }
+                  : {}),
               },
             },
           )
@@ -630,7 +653,7 @@ export class CourseSnapshotsService {
         completed_at: completedAt,
         completed_at_source: completedAtSource,
         has_phone: Boolean(orgUser && resolvePhone(orgUser, null)),
-        whatsapp_opt_in: Boolean(orgUser?.whatsapp_opt_in),
+        whatsapp_opt_in: hasWhatsappConsent(orgUser, consentProperty),
       };
     });
 
@@ -714,6 +737,7 @@ export class CourseSnapshotsService {
       days_to_complete_median: median === null ? null : round1(median),
       days_to_complete_sample: durations.length,
       with_phone: rows.filter((r) => r.has_phone).length,
+      not_completed_with_phone: notCompleted.filter((r) => r.has_phone).length,
       with_whatsapp_opt_in: rows.filter((r) => r.whatsapp_opt_in).length,
       reachable_not_completed: notCompleted.filter(
         (r) => r.has_phone && r.whatsapp_opt_in,
