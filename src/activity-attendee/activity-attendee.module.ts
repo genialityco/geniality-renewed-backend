@@ -14,6 +14,7 @@ import {
   CourseAttendee,
   CourseAttendeeSchema,
 } from '../course-attendee/schemas/course-attendee.schema';
+import { ProgressEventsModule } from '../progress-events/progress-events.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import {
       { name: Activity.name, schema: ActivitySchema },
       { name: CourseAttendee.name, schema: CourseAttendeeSchema },
     ]),
+    ProgressEventsModule,
   ],
   controllers: [ActivityAttendeeController],
   providers: [ActivityAttendeeService],

@@ -4,11 +4,13 @@ import {
   Controller,
   Get,
   NotFoundException,
+  Param,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { SessionTokenGuard } from '../auth/session-token.guard';
+import { OrgAdminGuard } from '../auth/org-admin.guard';
 import { RemindersService } from './reminders.service';
 import { WeeklyReportService } from './weekly-report.service';
 import { CourseRankingService } from './course-ranking.service';
@@ -23,8 +25,11 @@ const TEMPLATE_NAMES = [
 type TemplateName = (typeof TEMPLATE_NAMES)[number];
 
 // Endpoints para disparar los jobs manualmente (el cron llama a los
-// servicios directamente, sin pasar por aquí).
-@Controller('reminders')
+// servicios directamente, sin pasar por aquí). Solo administradores y
+// siempre acotados a la organización de la ruta: antes bastaba cualquier
+// sesión para disparar envíos masivos de todas las organizaciones.
+@UseGuards(SessionTokenGuard, OrgAdminGuard)
+@Controller('reminders/organization/:organizationId')
 export class RemindersController {
   constructor(
     private readonly remindersService: RemindersService,
@@ -33,11 +38,10 @@ export class RemindersController {
     private readonly whatsappGateway: WhatsappGatewayClient,
   ) {}
 
-  @UseGuards(SessionTokenGuard)
   @Post('inactivity/run')
   async runInactivityCheck(
+    @Param('organizationId') organizationId: string,
     @Query('userId') userId?: string,
-    @Query('organizationId') organizationId?: string,
   ) {
     return this.remindersService.sendInactivityReminders({
       userId,
@@ -45,11 +49,10 @@ export class RemindersController {
     });
   }
 
-  @UseGuards(SessionTokenGuard)
   @Post('weekly-report/run')
   async runWeeklyReport(
+    @Param('organizationId') organizationId: string,
     @Query('userId') userId?: string,
-    @Query('organizationId') organizationId?: string,
   ) {
     return this.weeklyReportService.sendWeeklyReports({
       userId,
@@ -57,11 +60,10 @@ export class RemindersController {
     });
   }
 
-  @UseGuards(SessionTokenGuard)
   @Post('course-ranking/run')
   async runCourseRanking(
+    @Param('organizationId') organizationId: string,
     @Query('userId') userId?: string,
-    @Query('organizationId') organizationId?: string,
   ) {
     return this.courseRankingService.sendCourseRankingMessages({
       userId,
@@ -70,7 +72,6 @@ export class RemindersController {
   }
 
   // Lista los nombres de plantilla válidos para /test-template.
-  @UseGuards(SessionTokenGuard)
   @Get('templates')
   async listTemplates() {
     return TEMPLATE_NAMES;
@@ -82,9 +83,9 @@ export class RemindersController {
   // que el usuario cumpla las condiciones del job real (3 días de
   // inactividad, ser líder del curso, etc): arma el mensaje con lo que
   // encuentre y, para las de ranking, deja elegir la variante a previsualizar.
-  @UseGuards(SessionTokenGuard)
   @Post('test-template')
   async testTemplate(
+    @Param('organizationId') organizationId: string,
     @Body('userId') userId?: string,
     @Body('templateName') templateName?: string,
     @Body('to') to?: string,
@@ -108,7 +109,11 @@ export class RemindersController {
       );
     }
 
-    const built = await this.buildParams(userId, templateName as TemplateName);
+    const built = await this.buildParams(
+      userId,
+      templateName as TemplateName,
+      organizationId,
+    );
     if (!built) {
       throw new NotFoundException(
         'No se encontró suficiente información de actividad del usuario para armar esta plantilla',
@@ -136,6 +141,7 @@ export class RemindersController {
   private async buildParams(
     userId: string,
     templateName: TemplateName,
+    organizationId: string,
   ): Promise<{
     parameters: string[];
     buttonUrl: string;
@@ -143,14 +149,21 @@ export class RemindersController {
   } | null> {
     switch (templateName) {
       case 'recordatorio_inactividad_3dias':
-        return this.remindersService.buildInactivityReminderParams(userId);
+        return this.remindersService.buildInactivityReminderParams(
+          userId,
+          organizationId,
+        );
       case 'reporte_semanal_progreso':
-        return this.weeklyReportService.buildWeeklyReportParams(userId);
+        return this.weeklyReportService.buildWeeklyReportParams(
+          userId,
+          organizationId,
+        );
       case 'ranking_lider_curso1':
       case 'ranking_comparativo_curso1':
         return this.courseRankingService.buildRankingParams(
           userId,
           templateName,
+          organizationId,
         );
     }
   }

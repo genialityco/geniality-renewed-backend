@@ -58,6 +58,10 @@ export interface EventMetrics {
     completed: number;
     inProgress: number;
     notStarted: number;
+    /** Inscritos con registro en la primera actividad (aunque sea en 0%). */
+    openedFirstActivity: number;
+    /** Inscritos con avance > 0 en la primera actividad ("empezaron su estudio"). */
+    startedFirstActivity: number;
     avgProgress: number;
     byMonth: { month: string; count: number }[];
   };
@@ -223,14 +227,18 @@ export class EventMetricsService {
         const eventObjectId = new Types.ObjectId(eventId);
         const eventVals = this.idVariants(eventId);
 
-        const [enrollment, time, activities, quizzes, certificates] =
+        const [enrollmentData, activities, quizzes, certificates] =
           await Promise.all([
             this.getEnrollmentMetrics(eventVals),
-            this.getCourseTimeMetrics(eventId),
             this.getActivityMetrics(eventVals),
             this.getQuizMetrics(eventObjectId, eventVals),
             this.getCertificateMetrics(eventVals),
           ]);
+        // El tiempo promedio se calcula sobre quienes empezaron su estudio,
+        // así que depende del resultado de la inscripción. `startedUserIds`
+        // es interno y no viaja al cliente.
+        const { startedUserIds, ...enrollment } = enrollmentData;
+        const time = await this.getCourseTimeMetrics(eventId, startedUserIds);
 
         return { enrollment, time, activities, quizzes, certificates };
       });
@@ -288,28 +296,34 @@ export class EventMetricsService {
   // Puede haber inscripciones duplicadas para un mismo usuario con ids en
   // distinto tipo (el índice único user_id+event_id no cruza string/ObjectId),
   // así que se agrupa por usuario (normalizado a string) antes de contar.
+  //
+  // CourseAttendee.progress solo cuenta actividades terminadas al 100% (ver
+  // ActivityAttendeeService.syncCourseProgress).
+  //   - inProgress: inscritos con progreso del curso > 0 y < 100, es decir,
+  //     que terminaron al menos una actividad pero no todo el curso.
+  //   - notStarted: el resto de inscritos que no completaron.
+  //   - openedFirstActivity: inscritos con registro en la primera actividad
+  //     (se crea en 0% apenas entran).
+  //   - startedFirstActivity: de esos, los que tienen avance > 0 en la
+  //     primera actividad, es decir, que sí empezaron a verla. Sus ids se
+  //     devuelven en startedUserIds para el tiempo promedio.
+  //   - avgProgress: de esos inscritos que entraron a la primera actividad
+  //     (incluidos los que completaron el curso), el promedio de su avance
+  //     real en todas las actividades, de la primera a la última. Usa el
+  //     progreso de activityattendees, así que una actividad vista al 25% o
+  //     50% también suma; la que nunca abrieron cuenta como 0.
   private async getEnrollmentMetrics(eventVals: any[]) {
-    const [stats] = await this.courseAttendeeModel.aggregate([
-      { $match: { event_id: { $in: eventVals } } },
-      {
-        $group: {
-          _id: { $toString: '$user_id' },
-          progress: { $max: { $ifNull: ['$progress', 0] } },
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-          completed: {
-            $sum: { $cond: [{ $gte: ['$progress', 100] }, 1, 0] },
+    const [perUser, activityProgress] = await Promise.all([
+      this.courseAttendeeModel.aggregate([
+        { $match: { event_id: { $in: eventVals } } },
+        {
+          $group: {
+            _id: { $toString: '$user_id' },
+            progress: { $max: { $ifNull: ['$progress', 0] } },
           },
-          notStarted: {
-            $sum: { $cond: [{ $lte: ['$progress', 0] }, 1, 0] },
-          },
-          avgProgress: { $avg: '$progress' },
         },
-      },
+      ]),
+      this.getActivityProgressByUser(eventVals),
     ]);
 
     const byMonth = await this.courseAttendeeModel.aggregate([
@@ -329,44 +343,127 @@ export class EventMetricsService {
       { $sort: { _id: 1 } },
     ]);
 
-    const total = stats?.total ?? 0;
-    const completed = stats?.completed ?? 0;
-    const notStarted = stats?.notStarted ?? 0;
+    const { firstActivityId, activityCount, byUser } = activityProgress;
+    const total = perUser.length;
+    let completed = 0;
+    let inProgress = 0;
+    let openedFirstActivity = 0;
+    const startedUserIds: string[] = [];
+    let openedProgressSum = 0;
+
+    for (const u of perUser) {
+      if (u.progress >= 100) completed++;
+      else if (u.progress > 0) inProgress++;
+      const progressByActivity = byUser.get(String(u._id));
+      if (!firstActivityId || !progressByActivity?.has(firstActivityId)) {
+        continue;
+      }
+      openedFirstActivity++;
+      if ((progressByActivity.get(firstActivityId) ?? 0) > 0) {
+        startedUserIds.push(String(u._id));
+      }
+      let sum = 0;
+      for (const p of progressByActivity.values()) sum += p;
+      openedProgressSum += sum / activityCount;
+    }
+
+    const avgProgress =
+      openedFirstActivity > 0 ? openedProgressSum / openedFirstActivity : 0;
 
     return {
       total,
       completed,
-      notStarted,
-      inProgress: Math.max(total - completed - notStarted, 0),
-      avgProgress: Math.round((stats?.avgProgress ?? 0) * 10) / 10,
+      notStarted: Math.max(total - completed - inProgress, 0),
+      inProgress,
+      openedFirstActivity,
+      startedFirstActivity: startedUserIds.length,
+      startedUserIds,
+      avgProgress: Math.round(avgProgress * 10) / 10,
       byMonth: byMonth.map((m) => ({ month: m._id, count: m.count })),
+    };
+  }
+
+  /**
+   * Avance de cada usuario (id normalizado a string) en cada actividad del
+   * curso según activityattendees, más cuál es la primera actividad en el
+   * mismo orden que ve el alumno (ver compareActivityOrder). El registro de
+   * una actividad se crea en 0% apenas el usuario entra a ella.
+   */
+  private async getActivityProgressByUser(eventVals: any[]): Promise<{
+    firstActivityId: string | null;
+    activityCount: number;
+    byUser: Map<string, Map<string, number>>;
+  }> {
+    const { activities, moduleById, activityVals } =
+      await this.loadActivitiesWithModules(eventVals);
+    if (!activities.length) {
+      return { firstActivityId: null, activityCount: 0, byUser: new Map() };
+    }
+
+    const [first] = activities
+      .map((activity: any) => ({
+        activity,
+        name: activity.name ?? '',
+        moduleOrder: activity.module_id
+          ? (moduleById.get(String(activity.module_id))?.order ?? null)
+          : null,
+        createdAtMs: this.createdAtMs(activity),
+      }))
+      .sort((a, b) => this.compareActivityOrder(a, b));
+
+    // Solo actividades vigentes del curso: un registro de una actividad
+    // borrada no debe inflar el promedio.
+    const rows = await this.activityAttendeeModel.aggregate([
+      { $match: { activity_id: { $in: activityVals } } },
+      {
+        $group: {
+          _id: {
+            user: { $toString: '$user_id' },
+            activity: { $toString: '$activity_id' },
+          },
+          progress: { $max: { $ifNull: ['$progress', 0] } },
+        },
+      },
+    ]);
+
+    const byUser = new Map<string, Map<string, number>>();
+    for (const r of rows) {
+      const user = String(r._id.user);
+      if (!byUser.has(user)) byUser.set(user, new Map());
+      // Hay registros históricos por encima de 100%.
+      byUser.get(user)!.set(String(r._id.activity), Math.min(r.progress, 100));
+    }
+
+    return {
+      firstActivityId: String(first.activity._id),
+      activityCount: activities.length,
+      byUser,
     };
   }
 
   // UserActivity guarda event_id como string dentro de los arrays courses[]
   // y activities[], por eso aquí se filtra con el id en texto plano.
-  private async getCourseTimeMetrics(eventId: string) {
+  //
+  // El tiempo se mide solo sobre `userIds` (los que empezaron su estudio, ver
+  // getEnrollmentMetrics) y el promedio se divide entre todos ellos, aunque
+  // alguno no tenga tiempo registrado; así la tarjeta habla de las mismas
+  // personas que "Empezaron su estudio".
+  private async getCourseTimeMetrics(eventId: string, userIds: string[]) {
+    const userVals = userIds.flatMap((id) => this.idVariants(id));
     const [stats] = await this.userActivityModel.aggregate([
-      { $match: { 'courses.event_id': eventId } },
+      { $match: { 'courses.event_id': eventId, user_id: { $in: userVals } } },
       { $unwind: '$courses' },
       { $match: { 'courses.event_id': eventId } },
       {
         $group: {
-          _id: '$user_id',
-          timeMs: { $sum: '$courses.time_spent_ms' },
-        },
-      },
-      {
-        $group: {
           _id: null,
-          totalMs: { $sum: '$timeMs' },
-          usersWithTime: { $sum: 1 },
+          totalMs: { $sum: '$courses.time_spent_ms' },
         },
       },
     ]);
 
     const totalMs = stats?.totalMs ?? 0;
-    const usersWithTime = stats?.usersWithTime ?? 0;
+    const usersWithTime = userIds.length;
     return {
       totalMs,
       usersWithTime,
@@ -482,6 +579,10 @@ export class EventMetricsService {
             progress: { $max: { $ifNull: ['$progress', 0] } },
           },
         },
+        // "Iniciaron" = avance > 0. El registro se crea en 0% apenas el
+        // usuario entra a la actividad, aunque nunca la reproduzca; esos no
+        // cuentan como iniciados.
+        { $match: { progress: { $gt: 0 } } },
         {
           $group: {
             _id: '$_id.activity',
@@ -690,10 +791,40 @@ export class EventMetricsService {
     };
   }
 
+  /**
+   * Certificados por PERSONA, no por documento: cada descarga genera un
+   * documento nuevo, así que quien descargó varias veces se contaba varias
+   * veces (p. ej. 191 "exitosos" para 148 personas). Cada usuario cuenta una
+   * sola vez con su mejor estado: COMPLETED si tiene al menos uno exitoso,
+   * si no PENDING, y si no FAILED. Un certificado sin userId cuenta solo.
+   */
   private async getCertificateMetrics(eventVals: any[]) {
     const byStatus = await this.certificateModel.aggregate([
       { $match: { eventId: { $in: eventVals } } },
-      { $group: { _id: '$status', count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: { $ifNull: [{ $toString: '$userId' }, { $toString: '$_id' }] },
+          statuses: { $addToSet: '$status' },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $in: ['COMPLETED', '$statuses'] },
+              'COMPLETED',
+              {
+                $cond: [
+                  { $in: ['PENDING', '$statuses'] },
+                  'PENDING',
+                  'FAILED',
+                ],
+              },
+            ],
+          },
+          count: { $sum: 1 },
+        },
+      },
     ]);
 
     const counts = new Map(byStatus.map((s: any) => [s._id, s.count]));
@@ -1008,6 +1139,11 @@ export class EventMetricsService {
           (userExists || fallback ? 'Usuario sin nombre' : 'Cuenta eliminada');
 
         const courseProgress = Math.round(m.progress ?? 0);
+        // Mismo criterio que getEnrollmentMetrics: ver parte de una actividad
+        // ya cuenta como "en progreso" aunque el avance del curso siga en 0.
+        const hasStarted =
+          courseProgress > 0 ||
+          memberActivities.some((a) => a.progress > 0 || a.timeSpentMs > 0);
         return {
           userId: m._id,
           name: name_,
@@ -1016,7 +1152,7 @@ export class EventMetricsService {
           status:
             courseProgress >= 100
               ? 'completed'
-              : courseProgress > 0
+              : hasStarted
                 ? 'in_progress'
                 : 'not_started',
           certificateStatus:

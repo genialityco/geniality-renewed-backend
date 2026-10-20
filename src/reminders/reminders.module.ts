@@ -16,12 +16,23 @@ import { UsersModule } from 'src/users/users.module';
 import { OrganizationsModule } from 'src/organizations/organizations.module';
 import { OrganizationUsersModule } from 'src/organization-users/organization-users.module';
 import { CourseAttendeeModule } from 'src/course-attendee/course-attendee.module';
+import {
+  Organization,
+  OrganizationSchema,
+} from 'src/organizations/schemas/organization.schema';
+import {
+  OrganizationUser,
+  OrganizationUserSchema,
+} from 'src/organization-users/schemas/organization-user.schema';
 
 @Module({
   imports: [
     HttpModule,
     MongooseModule.forFeature([
       { name: UserActivitySnapshot.name, schema: UserActivitySnapshotSchema },
+      // Para OrgAdminGuard
+      { name: Organization.name, schema: OrganizationSchema },
+      { name: OrganizationUser.name, schema: OrganizationUserSchema },
     ]),
     UserActivityModule,
     UsersModule,

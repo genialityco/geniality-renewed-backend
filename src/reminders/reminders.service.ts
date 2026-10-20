@@ -68,7 +68,8 @@ export class RemindersService {
     }
     if (filter?.organizationId) {
       staleActivities = staleActivities.filter(
-        (a) => String(a.organization_id) === filter.organizationId,
+        (a) =>
+          sanitizeOrganizationId(a.organization_id) === filter.organizationId,
       );
     }
     this.logger.log(
@@ -104,17 +105,21 @@ export class RemindersService {
 
   /**
    * Arma los parámetros de "recordatorio_inactividad_3dias" con los datos
-   * reales del usuario (su actividad más reciente en cualquier
-   * organización), sin enviar nada. Lo usa el endpoint de prueba de
+   * reales del usuario (su actividad más reciente en scopeOrganizationId, o en
+   * cualquier organización si no se indica), sin enviar nada. Lo usa el endpoint de prueba de
    * plantillas para previsualizar el mensaje a partir de un userId.
    */
-  async buildInactivityReminderParams(userId: string): Promise<{
+  async buildInactivityReminderParams(
+    userId: string,
+    scopeOrganizationId?: string,
+  ): Promise<{
     parameters: string[];
     buttonUrl: string;
     fallbackEmail?: string;
   } | null> {
     const activity = await this.userActivityService.findLatestByUserId(
       userId,
+      scopeOrganizationId,
     );
     if (!activity) return null;
 
@@ -158,6 +163,9 @@ export class RemindersService {
         .findByUserAndOrg(activity.user_id, organizationId)
         .catch(() => null),
     ]);
+
+    // Meta exige consentimiento para mensajes iniciados por la plataforma
+    if (!orgUser?.whatsapp_opt_in) return 'skipped';
 
     const phone = resolvePhone(orgUser, user);
     if (!phone) return 'skipped';

@@ -20,6 +20,12 @@ export class CourseAttendee extends Document {
 
   @Prop({ default: 0 })
   progress: number;
+
+  // Momento en que el progreso cruzó al 100% (lo fija ProgressEventsService).
+  // null en quienes terminaron antes de existir este campo: su fecha se
+  // estima aparte en los snapshots de línea base.
+  @Prop({ type: Date, default: null })
+  completed_at: Date | null;
 }
 
 export const CourseAttendeeSchema =

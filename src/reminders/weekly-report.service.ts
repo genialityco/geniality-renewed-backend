@@ -79,7 +79,8 @@ export class WeeklyReportService {
     }
     if (filter?.organizationId) {
       recentActivities = recentActivities.filter(
-        (a) => String(a.organization_id) === filter.organizationId,
+        (a) =>
+          sanitizeOrganizationId(a.organization_id) === filter.organizationId,
       );
     }
     this.logger.log(
@@ -115,17 +116,21 @@ export class WeeklyReportService {
 
   /**
    * Arma los parámetros de "reporte_semanal_progreso" con los datos reales
-   * del usuario (su actividad más reciente en cualquier organización), sin
-   * enviar nada ni guardar snapshot. Lo usa el endpoint de prueba de
+   * del usuario (su actividad más reciente en scopeOrganizationId, o en cualquier
+   * organización si no se indica), sin enviar nada ni guardar snapshot. Lo usa el endpoint de prueba de
    * plantillas para previsualizar el mensaje a partir de un userId.
    */
-  async buildWeeklyReportParams(userId: string): Promise<{
+  async buildWeeklyReportParams(
+    userId: string,
+    scopeOrganizationId?: string,
+  ): Promise<{
     parameters: string[];
     buttonUrl: string;
     fallbackEmail?: string;
   } | null> {
     const activity = await this.userActivityService.findLatestByUserId(
       userId,
+      scopeOrganizationId,
     );
     if (!activity) return null;
 
@@ -203,6 +208,9 @@ export class WeeklyReportService {
         .findByUserAndOrg(activity.user_id, organizationId)
         .catch(() => null),
     ]);
+
+    // Meta exige consentimiento para mensajes iniciados por la plataforma
+    if (!orgUser?.whatsapp_opt_in) return 'skipped';
 
     const phone = resolvePhone(orgUser, user);
     if (!phone) return 'skipped';

@@ -93,7 +93,8 @@ export class CourseRankingService {
     }
     if (filter?.organizationId) {
       recentActivities = recentActivities.filter(
-        (a) => String(a.organization_id) === filter.organizationId,
+        (a) =>
+          sanitizeOrganizationId(a.organization_id) === filter.organizationId,
       );
     }
 
@@ -177,15 +178,17 @@ export class CourseRankingService {
   }
 
   /**
-   * Arma los parámetros de "ranking_lider_curso" o "ranking_comparativo_curso"
-   * con los datos reales del usuario (su curso más reciente esta semana en
-   * cualquier organización), sin enviar nada. templateName decide qué
+   * Arma los parámetros de "ranking_lider_curso1" o "ranking_comparativo_curso1"
+   * con los datos reales del usuario (su curso más reciente en
+   * scopeOrganizationId, o en cualquier organización si no se indica), sin
+   * enviar nada. templateName decide qué
    * variante armar, independiente de si el usuario realmente lidera o no,
    * para poder previsualizar cualquiera de las dos a partir de un userId.
    */
   async buildRankingParams(
     userId: string,
     templateName: 'ranking_lider_curso1' | 'ranking_comparativo_curso1',
+    scopeOrganizationId?: string,
   ): Promise<{
     parameters: string[];
     buttonUrl: string;
@@ -193,6 +196,7 @@ export class CourseRankingService {
   } | null> {
     const activity = await this.userActivityService.findLatestByUserId(
       userId,
+      scopeOrganizationId,
     );
     if (!activity) return null;
 
@@ -261,6 +265,9 @@ export class CourseRankingService {
         .findByUserAndOrg(activity.user_id, organizationId)
         .catch(() => null),
     ]);
+
+    // Meta exige consentimiento para mensajes iniciados por la plataforma
+    if (!orgUser?.whatsapp_opt_in) return 'skipped';
 
     const phone = resolvePhone(orgUser, user);
     if (!phone) return 'skipped';

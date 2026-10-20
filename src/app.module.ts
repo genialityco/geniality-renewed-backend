@@ -28,6 +28,8 @@ import { CertificatesModule } from './certificates/certificates.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { EventMetricsModule } from './event-metrics/event-metrics.module';
 import { AiEvaluationsModule } from './ai-evaluations/ai-evaluations.module';
+import { ProgressEventsModule } from './progress-events/progress-events.module';
+import { CourseSnapshotsModule } from './course-snapshots/course-snapshots.module';
 
 @Module({
   imports: [
@@ -59,6 +61,8 @@ import { AiEvaluationsModule } from './ai-evaluations/ai-evaluations.module';
     RemindersModule,
     EventMetricsModule,
     AiEvaluationsModule,
+    ProgressEventsModule,
+    CourseSnapshotsModule,
   ],
   // providers: [SessionTokenGuard],
 })

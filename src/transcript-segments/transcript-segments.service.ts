@@ -17,6 +17,15 @@ import { EmbeddingService } from './embedding.service';
 const VECTOR_SEARCH_INDEX =
   process.env.MONGO_VECTOR_SEARCH_INDEX || 'vector_index';
 
+// Segmentos sin embedding (campo ausente o vacío). Va en $expr a propósito:
+// un filtro directo sobre `embedding` hizo que Atlas autocreara un índice
+// B-tree sobre el arreglo de 3072 números (una entrada por número, ~3,6 GB)
+// que llenó la cuota del cluster y bloqueó las escrituras. $expr no sugiere
+// ese índice; el backfill es una acción de admin y el escaneo es aceptable.
+const WITHOUT_EMBEDDING = {
+  $eq: [{ $size: { $ifNull: ['$embedding', []] } }, 0],
+};
+
 // Cuántos candidatos se piden a cada motor (texto y vector) antes de
 // fusionarlos. Más alto = mejor recall, más lento.
 const CANDIDATE_LIMIT = 300;
@@ -188,12 +197,7 @@ export class TranscriptSegmentsService {
   ): Promise<{ total: number; updated: number }> {
     const activityObjectId = new Types.ObjectId(activityId);
     const filter: Record<string, any> = { activity_id: activityObjectId };
-    if (!force) {
-      filter.$or = [
-        { embedding: { $exists: false } },
-        { embedding: { $size: 0 } },
-      ];
-    }
+    if (!force) filter.$expr = WITHOUT_EMBEDDING;
 
     const segments = await this.segmentModel.find(filter);
     if (!segments.length) {
@@ -214,9 +218,7 @@ export class TranscriptSegmentsService {
   async generateMissingEmbeddings(
     limit = 200,
   ): Promise<{ updated: number; remaining: number }> {
-    const filter = {
-      $or: [{ embedding: { $exists: false } }, { embedding: { $size: 0 } }],
-    };
+    const filter = { $expr: WITHOUT_EMBEDDING };
 
     const segments = await this.segmentModel.find(filter).limit(limit);
     if (!segments.length) {
