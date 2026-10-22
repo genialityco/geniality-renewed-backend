@@ -9,6 +9,7 @@ import {
   EngagementStatus,
 } from './schemas/engagement-message.schema';
 import { isInHoldout } from './engagement-policy';
+import { CourseAttendee } from '../course-attendee/schemas/course-attendee.schema';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Un mensaje entrante cuenta como respuesta al último envío de este plazo
@@ -37,12 +38,19 @@ export interface EngagementEntry {
   programId?: string | null;
   segment?: string | null;
   step?: string | null;
+  /** Avance del curso (%) al enviar; si no viene, se lee de la inscripción */
+  progress?: number | null;
+  completedActivities?: number | null;
+  /** Texto enviado (con las variables ya reemplazadas) */
+  text?: string | null;
   /** Tope de 7 días propio del envío (si no, ENGAGEMENT_WEEKLY_CAP) */
   weeklyCap?: number;
   /** Grupo de control decidido por quien envía (si no, ENGAGEMENT_HOLDOUT_PERCENT) */
   holdout?: boolean;
   /** Simulación: se registra como 'planned' y no se envía */
   dryRun?: boolean;
+  /** Hora del registro si no es ahora (simulación planeada por adelantado) */
+  at?: Date;
 }
 
 export type DeliveryResult =
@@ -79,6 +87,9 @@ export class EngagementLogService {
     @InjectModel(EngagementMessage.name)
     private readonly messageModel: Model<EngagementMessage>,
     configService: ConfigService,
+    // Avance al enviar cuando quien envía no lo trae
+    @InjectModel(CourseAttendee.name)
+    private readonly courseAttendeeModel?: Model<CourseAttendee>,
   ) {
     const cap = Number(configService.get('ENGAGEMENT_WEEKLY_CAP'));
     this.weeklyCap = Number.isFinite(cap) && cap > 0 ? cap : 3;
@@ -133,7 +144,7 @@ export class EngagementLogService {
   ): Promise<void> {
     try {
       await this.messageModel.create({
-        ...this.toDoc(entry),
+        ...(await this.toDoc(entry)),
         status,
         error: error?.slice(0, 500) || null,
         wamid: wamid || null,
@@ -284,7 +295,7 @@ export class EngagementLogService {
       status = 'planned';
     }
 
-    const doc = { ...this.toDoc(entry), status, error: null };
+    const doc = { ...(await this.toDoc(entry)), status, error: null };
     let id: unknown;
     try {
       if (existing) {
@@ -351,10 +362,50 @@ export class EngagementLogService {
       .exec();
   }
 
-  private toDoc(
+  /** Envíos a una persona en una organización, del más antiguo al más nuevo. */
+  async historyFor(userId: string, organizationId: string, limit = 500) {
+    return this.messageModel
+      .find({ user_id: String(userId), organization_id: String(organizationId) })
+      .sort({ at: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+  }
+
+  /**
+   * Avance de la persona al enviar: el que trae el envío o, si no, el de su
+   * inscripción al curso. Si no se puede leer, el envío sigue sin él.
+   */
+  private async progressOf(
+    entry: Omit<EngagementEntry, 'dedupeKey'>,
+  ): Promise<number | null> {
+    if (entry.progress !== undefined && entry.progress !== null) {
+      return Math.round(Number(entry.progress));
+    }
+    if (!entry.eventId || !this.courseAttendeeModel) return null;
+    try {
+      const variants = (id: string) =>
+        Types.ObjectId.isValid(id) ? [id, new Types.ObjectId(id)] : [id];
+      const row: any = await this.courseAttendeeModel.collection.findOne(
+        {
+          user_id: { $in: variants(String(entry.userId)) },
+          event_id: { $in: variants(String(entry.eventId)) },
+        },
+        { projection: { progress: 1 } },
+      );
+      return row ? Math.round(Number(row.progress) || 0) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async toDoc(
     entry: Omit<EngagementEntry, 'dedupeKey'> & { dedupeKey?: string | null },
   ) {
     return {
+      progress: await this.progressOf(entry),
+      completed_activities: entry.completedActivities ?? null,
+      text: entry.text ? String(entry.text).slice(0, 1500) : null,
       dedupe_key: entry.dedupeKey || null,
       kind: entry.kind,
       user_id: String(entry.userId),
@@ -367,7 +418,7 @@ export class EngagementLogService {
       step: entry.step || null,
       phone: entry.phone || null,
       phone_tail: phoneTail(entry.phone),
-      at: new Date(),
+      at: entry.at || new Date(),
     };
   }
 }

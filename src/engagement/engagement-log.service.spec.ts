@@ -189,6 +189,35 @@ describe('EngagementLogService.deliver', () => {
     expect(send).toHaveBeenCalledWith('new-id');
   });
 
+  it('guarda el avance, las actividades y el texto que trae el envío', async () => {
+    const model = createModel();
+    const service = createService(model);
+    await service.deliver(
+      { ...ENTRY, eventId: 'ev1', progress: 37.5, completedActivities: 3, text: 'Hola, Ana.' },
+      async () => ({ result: 'sent', messageId: null }),
+    );
+    expect(model.create).toHaveBeenCalledWith(
+      expect.objectContaining({ progress: 38, completed_activities: 3, text: 'Hola, Ana.' }),
+    );
+  });
+
+  it('si el envío no trae el avance, lo lee de la inscripción al curso', async () => {
+    const model = createModel();
+    const findOne = jest.fn().mockResolvedValue({ progress: 25 });
+    const config = { get: () => undefined } as unknown as ConfigService;
+    const service = new EngagementLogService(model as any, config, {
+      collection: { findOne },
+    } as any);
+    await service.deliver({ ...ENTRY, eventId: 'ev1' }, async () => ({
+      result: 'sent',
+      messageId: null,
+    }));
+    expect(findOne).toHaveBeenCalled();
+    expect(model.create).toHaveBeenCalledWith(
+      expect.objectContaining({ progress: 25, completed_activities: null, text: null }),
+    );
+  });
+
   it('con ENGAGEMENT_CLICK_REF agrega ?ref= al enlace y lo marca medible', async () => {
     const model = createModel();
     const service = createService(model, { ENGAGEMENT_CLICK_REF: 'true' });

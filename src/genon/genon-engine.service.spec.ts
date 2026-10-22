@@ -195,6 +195,23 @@ describe('GenOnEngineService: despacho', () => {
     expect(engagementLog.deliver.mock.calls[0][0].template).toBe('genon_social_week_v1');
   });
 
+  it('en simulación planea lo de más tarde hoy y lo registra a la hora de su franja', async () => {
+    const later = new Date(NOW.getTime() + 6.5 * 3600 * 1000); // 19:00 en Bogotá
+    const { service, program, enrollmentModel, engagementLog } = setup({
+      mode: 'dry_run',
+      enrollment: { next_step_at: later, slot: '19:00' },
+    });
+
+    await service.runProgram(program, NOW, {
+      planUntil: new Date(NOW.getTime() + 10 * 3600 * 1000),
+    });
+
+    expect((enrollmentModel.find.mock.calls as any[][])[0][0]).toMatchObject({
+      next_step_at: { $lte: new Date(NOW.getTime() + 10 * 3600 * 1000) },
+    });
+    expect(engagementLog.deliver.mock.calls[0][0]).toMatchObject({ dryRun: true, at: later });
+  });
+
   it('con dos variantes posibles asigna la menos usada y la guarda', async () => {
     const { service, program, enrollmentModel, engagementLog } = setup({
       enrollment: { next_step_key: '1.2', last_step_key: '1.1', last_step_day: 0 },

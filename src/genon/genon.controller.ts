@@ -19,9 +19,11 @@ import { GenOnProgramsService } from './genon-programs.service';
 import { GenOnTemplatesService } from './genon-templates.service';
 import { GenOnEngineService } from './genon-engine.service';
 import { GenOnTriggersService, TRIGGER_STEP } from './genon-triggers.service';
+import { GenOnHistoryService } from './genon-history.service';
 import { GenOnTriggerKey } from './schemas/genon-program.schema';
 import { GenOnFeedback } from './schemas/genon-feedback.schema';
 import { GENON_VARIABLES, validateTemplate } from './genon-variables';
+import { localDate, zonedTime } from './genon-schedule';
 
 /**
  * Administración de Gen.ON. Un programa solo lo ve y edita quien administra
@@ -36,6 +38,7 @@ export class GenOnController {
     private readonly templates: GenOnTemplatesService,
     private readonly engine: GenOnEngineService,
     private readonly triggers: GenOnTriggersService,
+    private readonly historyService: GenOnHistoryService,
     @InjectModel(GenOnFeedback.name)
     private readonly feedbackModel: Model<GenOnFeedback>,
   ) {}
@@ -142,6 +145,17 @@ export class GenOnController {
     });
   }
 
+  /** Historial de una persona: mensajes, avance, retos y lo que escribió. */
+  @Get('programs/:id/enrollments/:enrollmentId/history')
+  async history(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Param('enrollmentId') enrollmentId: string,
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    return this.historyService.history(program, enrollmentId);
+  }
+
   @Get('programs/:id/feedback')
   async feedback(@Req() req: any, @Param('id') id: string) {
     const program = await this.programs.get(req.auth.uid, id);
@@ -220,8 +234,10 @@ export class GenOnController {
   }
 
   /**
-   * Segmenta y despacha ya, en simulación (nada se envía). No se permite con
-   * el programa activo: ahí los envíos son reales y los hace el cron.
+   * Segmenta y despacha ya, en simulación (nada se envía). Planea también lo
+   * programado para el resto del día, registrado a la hora en que saldría,
+   * para ver los datos sin esperar a cada franja. No se permite con el
+   * programa activo: ahí los envíos son reales y los hace el cron.
    */
   @Post('programs/:id/run')
   async run(@Req() req: any, @Param('id') id: string) {
@@ -231,11 +247,14 @@ export class GenOnController {
         'El programa está activo: los envíos los hace el cron. Pásalo a simulación para probar.',
       );
     }
-    const { segmentation, detected, outcomes } = await this.triggers.run(
-      program,
-      new Date(),
-      { forceSegment: true, dryRun: true, budget: 500 },
-    );
+    const now = new Date();
+    const endOfDay = zonedTime(localDate(now, program.timezone), '23:59', program.timezone);
+    const { segmentation, detected, outcomes } = await this.triggers.run(program, now, {
+      forceSegment: true,
+      dryRun: true,
+      budget: 500,
+      planUntil: endOfDay,
+    });
     const byResult: Record<string, number> = {};
     for (const o of outcomes) byResult[o.result] = (byResult[o.result] || 0) + 1;
     return {

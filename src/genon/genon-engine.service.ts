@@ -160,7 +160,13 @@ export class GenOnEngineService {
   async runProgram(
     program: GenOnProgram,
     now: Date,
-    opts: { forceSegment?: boolean; dryRun?: boolean; budget?: number } = {},
+    opts: {
+      forceSegment?: boolean;
+      dryRun?: boolean;
+      budget?: number;
+      /** Solo en simulación: también planea lo programado hasta esta hora */
+      planUntil?: Date;
+    } = {},
   ) {
     const dryRun = opts.dryRun || program.mode === 'dry_run';
     const today = localDate(now, program.timezone);
@@ -183,6 +189,7 @@ export class GenOnEngineService {
       now,
       dryRun,
       opts.budget ?? MAX_SENDS_PER_RUN,
+      dryRun ? opts.planUntil : undefined,
     );
     return { segmentation, outcomes };
   }
@@ -468,6 +475,7 @@ export class GenOnEngineService {
     now: Date,
     dryRun: boolean,
     budget: number,
+    planUntil?: Date,
   ): Promise<DispatchOutcome[]> {
     const due = await this.enrollmentModel
       .find({
@@ -476,7 +484,7 @@ export class GenOnEngineService {
         exited: false,
         paused: false,
         segment: { $in: FLOW_SEGMENTS },
-        next_step_at: { $ne: null, $lte: now },
+        next_step_at: { $ne: null, $lte: planUntil && planUntil > now ? planUntil : now },
       })
       .sort({ next_step_at: 1 })
       .limit(budget)
@@ -496,7 +504,10 @@ export class GenOnEngineService {
           outcomes.push(this.outcome(e, null, 'skipped', 'curso no encontrado'));
           continue;
         }
-        outcomes.push(await this.dispatchOne(program, e, entry, counts, dryRun, now));
+        // Lo planeado por adelantado queda registrado a la hora en que saldría
+        const at =
+          e.next_step_at && new Date(e.next_step_at) > now ? new Date(e.next_step_at) : now;
+        outcomes.push(await this.dispatchOne(program, e, entry, counts, dryRun, at));
       } catch (error) {
         const reason = (error as Error).message;
         await this.retryTomorrow(program, e, now, reason);
@@ -582,6 +593,7 @@ export class GenOnEngineService {
       step: step.key,
       holdout: e.holdout,
       dryRun,
+      at: now,
     });
 
     if (delivery.result === 'not_approved') {
@@ -621,6 +633,8 @@ export class GenOnEngineService {
       dryRun: boolean;
       /** Datos de los botones (p. ej. id del video del reto) */
       actionData?: Record<string, string>;
+      /** Hora del registro (en simulación, la hora en que saldría) */
+      at?: Date;
     },
   ): Promise<{
     result: DeliveryResult | 'not_approved' | 'missing_data';
@@ -659,9 +673,13 @@ export class GenOnEngineService {
         programId: String(program._id),
         segment: params.segment,
         step: params.step,
+        progress: e.progress ?? null,
+        completedActivities: e.completed_activities ?? null,
+        text: renderText(version.body, params.values),
         weeklyCap: program.weekly_cap,
         holdout: params.holdout,
         dryRun: params.dryRun,
+        at: params.at,
       },
       (ref) =>
         this.gateway.sendTemplateComponents({

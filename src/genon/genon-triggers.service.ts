@@ -108,7 +108,13 @@ export class GenOnTriggersService {
   async run(
     program: GenOnProgram,
     now: Date,
-    opts: { forceSegment?: boolean; dryRun?: boolean; budget?: number } = {},
+    opts: {
+      forceSegment?: boolean;
+      dryRun?: boolean;
+      budget?: number;
+      /** Solo en simulación: también planea lo programado hasta esta hora */
+      planUntil?: Date;
+    } = {},
   ) {
     const dryRun = opts.dryRun || program.mode === 'dry_run';
     const budget = opts.budget ?? 40;
@@ -137,7 +143,15 @@ export class GenOnTriggersService {
     }
     const left = Math.max(0, budget - outcomes.length);
     const triggered = left
-      ? await this.dispatchQueue(program, cfg, now, dryRun, left, cache)
+      ? await this.dispatchQueue(
+          program,
+          cfg,
+          now,
+          dryRun,
+          left,
+          cache,
+          dryRun ? opts.planUntil : undefined,
+        )
       : [];
     return { segmentation, detected, outcomes: [...outcomes, ...triggered] };
   }
@@ -669,13 +683,15 @@ export class GenOnTriggersService {
     dryRun: boolean,
     budget: number,
     cache: (eventId: string) => Promise<CourseCache | null>,
+    planUntil?: Date,
   ): Promise<DispatchOutcome[]> {
+    const until = planUntil && planUntil > now ? planUntil : now;
     const due = await this.enrollmentModel
       .find({
         program_id: String(program._id),
         test: false,
         exited: false,
-        'queue.due_at': { $lte: now },
+        'queue.due_at': { $lte: until },
       })
       .limit(budget)
       .exec();
@@ -692,7 +708,7 @@ export class GenOnTriggersService {
           (!ACTIVE_ONLY.includes(q.key) || e.segment === 'active'),
       );
       const ready = live
-        .filter((q) => new Date(q.due_at).getTime() <= now.getTime())
+        .filter((q) => new Date(q.due_at).getTime() <= until.getTime())
         .sort((a, b) => priority(a.key) - priority(b.key));
       const item = ready[0];
       if (!item) {
@@ -700,7 +716,9 @@ export class GenOnTriggersService {
         continue;
       }
       try {
-        const outcome = await this.sendQueued(program, e, item, now, dryRun, cache);
+        // Lo planeado por adelantado queda registrado a la hora en que saldría
+        const at = new Date(Math.max(now.getTime(), new Date(item.due_at).getTime()));
+        const outcome = await this.sendQueued(program, e, item, at, dryRun, cache);
         outcomes.push(outcome);
         let rest = live.filter((q) => q !== item);
         if (outcome.result === 'capped') {
@@ -765,6 +783,7 @@ export class GenOnTriggersService {
       holdout: e.holdout,
       dryRun,
       actionData: video_id ? { video_id } : undefined,
+      at: now,
     });
     if (delivery.result === 'not_approved' || delivery.result === 'missing_data') {
       return this.outcome(e, item, 'skipped', delivery.reason);

@@ -26,6 +26,10 @@ import {
   PracticeSessionSchema,
 } from '../ai-evaluations/schemas/practice-session.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import {
+  CourseAttendee,
+  CourseAttendeeSchema,
+} from '../course-attendee/schemas/course-attendee.schema';
 import { UsersModule } from '../users/users.module';
 import { EngagementLogService } from './engagement-log.service';
 import { EngagementReportService } from './engagement-report.service';
@@ -47,6 +51,8 @@ import { WhatsappOptOutService } from './whatsapp-opt-out.service';
       { name: Event.name, schema: EventSchema },
       { name: UserActivityDay.name, schema: UserActivityDaySchema },
       { name: PracticeSession.name, schema: PracticeSessionSchema },
+      // Avance del curso al momento de cada envío
+      { name: CourseAttendee.name, schema: CourseAttendeeSchema },
     ]),
     // Provee UsersService para SessionTokenGuard y OrgAdminGuard.
     UsersModule,

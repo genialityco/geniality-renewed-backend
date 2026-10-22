@@ -55,6 +55,11 @@ export class EngagementMessage extends Document {
   @Prop({ type: String, default: null }) segment: string | null;
   @Prop({ type: String, default: null }) step: string | null;
   @Prop({ type: String, default: null }) phone: string | null;
+  // Estado de la persona al enviar: avance del curso (%) y actividades
+  // terminadas (null si no se conoce), y el texto que se le envió
+  @Prop({ type: Number, default: null }) progress: number | null;
+  @Prop({ type: Number, default: null }) completed_activities: number | null;
+  @Prop({ type: String, default: null }) text: string | null;
   // Últimos 10 dígitos: así se asocian las respuestas aunque Meta reporte
   // el número con otro prefijo de país
   @Prop({ type: String, default: null }) phone_tail: string | null;

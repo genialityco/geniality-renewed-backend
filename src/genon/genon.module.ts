@@ -56,6 +56,7 @@ import { GenOnContextService } from './genon-context.service';
 import { GenOnEngineService } from './genon-engine.service';
 import { GenOnConversationService } from './genon-conversation.service';
 import { GenOnTriggersService } from './genon-triggers.service';
+import { GenOnHistoryService } from './genon-history.service';
 import { GenOnController } from './genon.controller';
 import { GenOnCron } from './genon.cron';
 
@@ -102,6 +103,7 @@ import { GenOnCron } from './genon.cron';
     GenOnEngineService,
     GenOnTriggersService,
     GenOnConversationService,
+    GenOnHistoryService,
     GenOnCron,
   ],
   exports: [GenOnProgramsService],
