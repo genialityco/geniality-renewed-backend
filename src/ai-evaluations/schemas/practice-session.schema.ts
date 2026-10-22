@@ -95,10 +95,25 @@ export class PracticeSession extends Document {
   triggered_by: Types.ObjectId | null;
   // manual: lo envió un admin · auto: repaso automático (PracticeReviewCron)
   // · student: el estudiante la inició desde la actividad (channel "web")
+  // · genon: reto de conocimiento de Gen.ON (ver `genon`)
   @Prop({ type: String, default: 'manual' }) trigger:
     | 'manual'
     | 'auto'
-    | 'student';
+    | 'student'
+    | 'genon';
+  // Reto de Gen.ON: a qué inscripción y paso pertenece, qué actividad marca
+  // si se aprueba y con qué porcentaje. test: envío de prueba (no marca nada)
+  @Prop({ type: MongooseSchema.Types.Mixed, default: null })
+  genon: {
+    program_id: string;
+    enrollment_id: string;
+    step: string | null;
+    activity_id: string;
+    pass_percent: number;
+    test: boolean;
+    // advance: marca la actividad · review: repaso (racha) · video: salta el video
+    kind?: 'advance' | 'review' | 'video';
+  } | null;
   // whatsapp: simulacro conversacional · web: práctica dentro de la plataforma
   @Prop({ type: String, default: 'whatsapp' }) channel: 'whatsapp' | 'web';
   // Curso del que salen las preguntas

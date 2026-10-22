@@ -76,5 +76,7 @@ import { UsersModule } from '../users/users.module';
   ],
   controllers: [CourseSnapshotsController],
   providers: [CourseSnapshotsService, CourseSnapshotsCron],
+  // Gen.ON clasifica a los inscritos con computeEvent
+  exports: [CourseSnapshotsService],
 })
 export class CourseSnapshotsModule {}

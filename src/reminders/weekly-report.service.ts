@@ -17,6 +17,7 @@ import {
 } from './contact.util';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 import { EngagementLogService } from 'src/engagement/engagement-log.service';
+import { GenOnProgramsService } from 'src/genon/genon-programs.service';
 import { localWeekKey } from 'src/engagement/engagement-policy';
 
 interface DeltaItem {
@@ -44,6 +45,7 @@ export class WeeklyReportService {
     private readonly whatsappGateway: WhatsappGatewayClient,
     private readonly configService: ConfigService,
     private readonly engagementLog: EngagementLogService,
+    private readonly genonPrograms: GenOnProgramsService,
   ) {
     this.baseUrl =
       this.configService.get<string>('WHATSAPP_REMINDER_BASE_URL') ||
@@ -185,6 +187,10 @@ export class WeeklyReportService {
     activity: UserActivity,
   ): Promise<'sent' | 'fallback_email' | 'skipped'> {
     const organizationId = sanitizeOrganizationId(activity.organization_id);
+    // Las organizaciones con Gen.ON activo reciben sus mensajes, no estos
+    if ((await this.genonPrograms.managedOrganizationIds()).has(organizationId)) {
+      return 'skipped';
+    }
 
     const snapshot = await this.snapshotModel
       .findOne({

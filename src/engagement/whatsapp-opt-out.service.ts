@@ -48,6 +48,31 @@ export class WhatsappOptOutService {
     return ids.length;
   }
 
+  /**
+   * Revierte la baja (VOLVER): quita whatsapp_opt_out_at y deja el opt-in
+   * explícito en todas las membresías del número. Devuelve cuántas cambió.
+   */
+  async optInByPhone(phone: string): Promise<number> {
+    const digits = String(phone ?? '').replace(/\D/g, '');
+    if (digits.length < 7) return 0;
+
+    const ids = await this.findMembershipIds(digits);
+    if (!ids.length) return 0;
+
+    await this.organizationUserModel.collection.updateMany(
+      { _id: { $in: ids } },
+      {
+        $set: {
+          whatsapp_opt_in: true,
+          whatsapp_opt_in_at: new Date(),
+          whatsapp_opt_out_at: null,
+        },
+      },
+    );
+    this.logger.log(`Reactivación de WhatsApp de ${phone}: ${ids.length} membresías`);
+    return ids.length;
+  }
+
   private async findMembershipIds(digits: string): Promise<Types.ObjectId[]> {
     // Se filtra en BD por los últimos 7 dígitos y se confirma con
     // resolvePhone (que antepone el indicativo de país).

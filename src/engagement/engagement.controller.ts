@@ -21,8 +21,10 @@ const KINDS: EngagementKind[] = [
   'course_ranking',
   'practice_review',
   'practice_invite',
+  'genon',
 ];
 const STATUSES: EngagementStatus[] = [
+  'planned',
   'pending',
   'sent',
   'fallback_email',

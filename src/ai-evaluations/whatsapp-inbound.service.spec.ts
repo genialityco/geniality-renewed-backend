@@ -31,6 +31,7 @@ function createService(overrides: {
   };
   const optOut = {
     optOutByPhone: jest.fn().mockResolvedValue(overrides.memberships ?? 0),
+    optInByPhone: jest.fn().mockResolvedValue(overrides.memberships ?? 0),
   };
   const engagementLog = {
     markReply: jest.fn().mockResolvedValue(overrides.repliedTo ?? null),
@@ -151,5 +152,54 @@ describe('WhatsappInboundService: respuestas a mensajes de la plataforma', () =>
       PHONE,
       'mi respuesta',
     );
+  });
+});
+
+describe('WhatsappInboundService: VOLVER y manejadores registrados', () => {
+  it('VOLVER revierte la baja y confirma', async () => {
+    const { service, optOut, whatsapp } = createService({ memberships: 1 });
+
+    await receive(service, 'Volver');
+
+    expect(optOut.optInByPhone).toHaveBeenCalledWith(PHONE);
+    expect(whatsapp.sendOutbound).toHaveBeenCalledWith(
+      PHONE,
+      expect.stringContaining('Bienvenido de vuelta'),
+    );
+  });
+
+  it('un manejador registrado atiende su mensaje antes que el simulacro', async () => {
+    const { service, practice, whatsapp } = createService({
+      practiceSession: { _id: 's1', status: 'in_progress' },
+    });
+    const handler = {
+      name: 'genon',
+      matches: jest.fn(async (_p: string, _t: string, replyId?: string) =>
+        Boolean(replyId?.startsWith('gn:')),
+      ),
+      handle: jest.fn().mockResolvedValue(['respuesta gen.on']),
+    };
+    service.registerHandler(handler);
+
+    await (service as any).process(PHONE, 'Lo retomo pronto', 'gn:e1:reply:soon');
+
+    expect(handler.handle).toHaveBeenCalledWith(PHONE, 'Lo retomo pronto', 'gn:e1:reply:soon');
+    expect(practice.handleMessage).not.toHaveBeenCalled();
+    expect(whatsapp.sendOutbound).toHaveBeenCalledWith(PHONE, 'respuesta gen.on');
+  });
+
+  it('si no le corresponde, sigue el ruteo normal', async () => {
+    const { service, practice } = createService({
+      practiceSession: { _id: 's1', status: 'in_progress' },
+    });
+    service.registerHandler({
+      name: 'genon',
+      matches: jest.fn().mockResolvedValue(false),
+      handle: jest.fn(),
+    });
+
+    await receive(service, 'b');
+
+    expect(practice.handleMessage).toHaveBeenCalled();
   });
 });

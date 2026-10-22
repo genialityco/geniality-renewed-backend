@@ -43,7 +43,7 @@ export class VimeoResolverService {
       const response$ = this.httpService.get(
         `https://api.vimeo.com/videos/${videoId}`,
         {
-          params: { fields: 'play,files' },
+          params: { fields: 'play,files,user.name' },
           headers: { Authorization: `Bearer ${token}` },
         },
       );
@@ -87,7 +87,7 @@ export class VimeoResolverService {
     }
 
     throw new BadRequestException(
-      `El video de Vimeo "${videoId}" no tiene links de reproducción disponibles (¿aún procesando, o falta el scope "Video Files" en el token?). Respuesta: ${JSON.stringify(data).substring(0, 500)}`,
+      `El video de Vimeo "${videoId}" no tiene links de reproducción disponibles. Vimeo solo entrega los archivos al dueño del video (cuenta "${data?.user?.name ?? 'desconocida'}"): verifica que el token de la organización sea de esa cuenta y tenga el scope "Video Files", o que el video no siga procesándose. Respuesta: ${JSON.stringify(data).substring(0, 500)}`,
     );
   }
 

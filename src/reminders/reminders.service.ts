@@ -16,6 +16,7 @@ import {
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 import { CourseAttendeeService } from 'src/course-attendee/course-attendee.service';
 import { EngagementLogService } from 'src/engagement/engagement-log.service';
+import { GenOnProgramsService } from 'src/genon/genon-programs.service';
 
 interface ReminderItem {
   name: string;
@@ -49,6 +50,7 @@ export class RemindersService {
     private readonly configService: ConfigService,
     private readonly courseAttendeeService: CourseAttendeeService,
     private readonly engagementLog: EngagementLogService,
+    private readonly genonPrograms: GenOnProgramsService,
   ) {
     this.baseUrl =
       this.configService.get<string>('WHATSAPP_REMINDER_BASE_URL') ||
@@ -245,6 +247,10 @@ export class RemindersService {
     activity: UserActivity,
   ): Promise<'sent' | 'fallback_email' | 'skipped'> {
     const organizationId = sanitizeOrganizationId(activity.organization_id);
+    // Las organizaciones con Gen.ON activo reciben sus mensajes, no estos
+    if ((await this.genonPrograms.managedOrganizationIds()).has(organizationId)) {
+      return 'skipped';
+    }
 
     const [user, orgUser] = await Promise.all([
       this.usersService.findById(activity.user_id).catch(() => null),

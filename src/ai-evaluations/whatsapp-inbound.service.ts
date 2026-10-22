@@ -20,7 +20,25 @@ import { EngagementLogService } from 'src/engagement/engagement-log.service';
 
 const DEDUPE_TTL_MS = 24 * 3600 * 1000;
 const OPT_OUT_REPLY =
-  'Listo, no te enviaremos más prácticas ni recordatorios por WhatsApp. Puedes volver a activarlos desde tu perfil en la plataforma. 👋';
+  'Listo, no te enviaremos más prácticas ni recordatorios por WhatsApp. Si cambias de opinión, responde VOLVER o actívalo desde tu perfil en la plataforma. 👋';
+const OPT_IN_WORDS = new Set(['volver']);
+const OPT_IN_REPLY =
+  '¡Bienvenido de vuelta! 🙌 Volverás a recibir nuestros mensajes por WhatsApp. Si quieres dejar de recibirlos, responde BAJA.';
+
+/**
+ * Conversación de otro módulo (p. ej. Gen.ON) que se atiende antes que los
+ * simulacros: `matches` decide si el mensaje le corresponde (un botón suyo o
+ * una conversación suya pendiente para ese teléfono).
+ */
+export interface InboundHandler {
+  name: string;
+  matches(phone: string, text: string, replyId?: string): Promise<boolean>;
+  handle(
+    phone: string,
+    text: string,
+    replyId?: string,
+  ): Promise<OutboundMessage[] | null>;
+}
 
 function sendErrorDetail(error: unknown): string {
   const data = (error as any)?.response?.data;
@@ -54,13 +72,14 @@ function asPlainText(message: Exclude<OutboundMessage, string>): string {
  * mensajes de cada teléfono y los enruta:
  *
  * 1. Código EV-XXXXXX → evaluación por WhatsApp (cancela simulacros activos).
- * 2. BAJA (sin evaluación EV- en curso, donde puede ser una respuesta) →
- *    baja de todas las membresías del número; si hay simulacro, además lo
- *    cancela el motor del simulacro.
- * 3. Botón de un simulacro (replyId "pq:...") o simulacro en curso → simulacro.
- * 4. Evaluación EV- en curso → evaluación.
- * 5. Simulacro invitado (esperando "Empezar") → simulacro.
- * 6. Si no, se ignora.
+ * 2. BAJA / VOLVER (sin evaluación EV- en curso, donde pueden ser una
+ *    respuesta) → baja o reactivación de todas las membresías del número;
+ *    con BAJA y simulacro activo, además lo cancela el motor del simulacro.
+ * 3. Manejadores registrados (Gen.ON: sus botones "gn:..." y conversaciones).
+ * 4. Botón de un simulacro (replyId "pq:...") o simulacro en curso → simulacro.
+ * 5. Evaluación EV- en curso → evaluación.
+ * 6. Simulacro invitado (esperando "Empezar") → simulacro.
+ * 7. Si no, se ignora.
  *
  * La cola y la deduplicación viven en memoria: asume una sola instancia.
  */
@@ -69,6 +88,14 @@ export class WhatsappInboundService {
   private readonly logger = new Logger(WhatsappInboundService.name);
   private readonly phoneQueues = new Map<string, Promise<unknown>>();
   private readonly seenMessages = new Map<string, number>();
+  private readonly handlers: InboundHandler[] = [];
+
+  /** Lo llaman otros módulos al iniciar (así ai-evaluations no depende de ellos). */
+  registerHandler(handler: InboundHandler): void {
+    if (!this.handlers.some((h) => h.name === handler.name)) {
+      this.handlers.push(handler);
+    }
+  }
 
   constructor(
     @InjectModel(WhatsappContact.name)
@@ -222,9 +249,25 @@ export class WhatsappInboundService {
       return memberships ? [OPT_OUT_REPLY] : null;
     }
 
+    // 2b. Reactivación (revierte la baja)
+    if (
+      OPT_IN_WORDS.has(normalizeText(text)) &&
+      !(await this.aiEvaluation.hasActiveSession(phone))
+    ) {
+      const memberships = await this.optOut.optInByPhone(phone);
+      return memberships ? [OPT_IN_REPLY] : null;
+    }
+
+    // 3. Conversaciones de otros módulos (Gen.ON)
+    for (const handler of this.handlers) {
+      if (await handler.matches(phone, text, replyId)) {
+        return handler.handle(phone, text, replyId);
+      }
+    }
+
     const practiceSession = await this.practice.findActiveSession(phone);
 
-    // 3. Botón del simulacro o simulacro en curso
+    // 4. Botón del simulacro o simulacro en curso
     if (
       practiceSession &&
       (this.practice.isOwnReply(replyId) ||
@@ -233,12 +276,12 @@ export class WhatsappInboundService {
       return this.practice.handleMessage(phone, text, replyId);
     }
 
-    // 4. Evaluación EV- en curso
+    // 5. Evaluación EV- en curso
     if (await this.aiEvaluation.hasActiveSession(phone)) {
       return this.wrap(await this.aiEvaluation.handleMessage(phone, text));
     }
 
-    // 5. Invitación a simulacro pendiente (p. ej. botón "Empezar" de la plantilla)
+    // 6. Invitación a simulacro pendiente (p. ej. botón "Empezar" de la plantilla)
     if (practiceSession) {
       return this.practice.handleMessage(phone, text, replyId);
     }

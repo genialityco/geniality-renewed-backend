@@ -61,6 +61,11 @@ export interface Lift {
 
 export interface KindSummary {
   kind: EngagementKind | 'all';
+  /** Gen.ON: paso ("1.1") y segmento; null en los demás tipos */
+  step: string | null;
+  segment: string | null;
+  /** Gen.ON en simulación: habrían salido */
+  planned: number;
   total: number;
   sent: number;
   fallback_email: number;
@@ -152,6 +157,8 @@ const DELIVERED: EngagementStatus[] = ['sent', 'fallback_email'];
 type MessageDoc = {
   _id: unknown;
   kind: EngagementKind;
+  step?: string | null;
+  segment?: string | null;
   status: string;
   user_id: string;
   at: Date;
@@ -202,11 +209,13 @@ export class EngagementReportService {
       windowHours,
     );
 
-    const byKind = new Map<EngagementKind, MessageDoc[]>();
+    // Los toques de Gen.ON se agrupan por paso (1.1, 1.2…), no por tipo
+    const groups = new Map<string, MessageDoc[]>();
     for (const m of messages) {
-      const list = byKind.get(m.kind) || [];
+      const key = m.step ? `${m.kind}:${m.step}` : m.kind;
+      const list = groups.get(key) || [];
       list.push(m);
-      byKind.set(m.kind, list);
+      groups.set(key, list);
     }
 
     return {
@@ -216,9 +225,13 @@ export class EngagementReportService {
       min_sample: MIN_SAMPLE,
       truncated: messages.length >= MAX_MESSAGES,
       totals: this.summarize('all', messages, outcomes, practice),
-      kinds: Array.from(byKind.entries())
-        .map(([kind, list]) => this.summarize(kind, list, outcomes, practice))
-        .sort((a, b) => b.total - a.total),
+      kinds: Array.from(groups.values())
+        .map((list) => this.summarize(list[0].kind, list, outcomes, practice))
+        .sort((a, b) =>
+          a.step && b.step
+            ? a.step.localeCompare(b.step, undefined, { numeric: true })
+            : b.total - a.total,
+        ),
     };
   }
 
@@ -247,6 +260,8 @@ export class EngagementReportService {
       return {
         _id: id,
         kind: m.kind,
+        step: m.step ?? null,
+        segment: m.segment ?? null,
         status: m.status,
         at: m.at,
         user_id: m.user_id,
@@ -522,8 +537,12 @@ export class EngagementReportService {
       .filter((s): s is number => s !== null);
     const hasPractice = practiceRows.length > 0;
 
+    const first = messages[0];
     return {
       kind,
+      step: kind === 'all' ? null : (first?.step ?? null),
+      segment: kind === 'all' ? null : (first?.segment ?? null),
+      planned: count('planned'),
       total: messages.length,
       sent: count('sent'),
       fallback_email: count('fallback_email'),

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { OutboundMessage } from 'src/reminders/whatsapp-gateway.client';
 import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema';
 import {
@@ -21,6 +21,7 @@ import {
 import { GeminiTextClient } from './gemini-text.client';
 import {
   REPLY_PREFIX,
+  activityLink,
   correctAnswerText,
   formatQuestion,
   formatTime,
@@ -80,6 +81,20 @@ const DECLINE_WORDS = new Set([
 
 type Session = PracticeSession;
 
+export interface PracticeFinishResult {
+  status: PracticeSessionStatus;
+  answered: number;
+  correct: number;
+  total: number;
+  score: number;
+}
+
+/** Cierre propio de las sesiones de un trigger; texto = reemplaza el resumen. */
+export type PracticeFinishHook = (
+  session: PracticeSession,
+  result: PracticeFinishResult,
+) => Promise<string | null>;
+
 /**
  * Filtro por teléfono tolerante al formato: el guardado en la sesión puede
  * venir sin indicativo o con una variante distinta a la que reporta Meta en
@@ -130,6 +145,80 @@ export class PracticeEngineService {
     private readonly gemini: GeminiTextClient,
     private readonly usage: QuestionUsageService,
   ) {}
+
+  // ─── Retos de otros módulos (Gen.ON) ───────────────────────────────────
+
+  private readonly finishHooks = new Map<string, PracticeFinishHook>();
+
+  /**
+   * Permite a otro módulo cerrar a su manera las sesiones con su `trigger`
+   * (p. ej. Gen.ON marca la actividad si se aprueba el reto). Si el hook
+   * devuelve texto, reemplaza el resumen del simulacro. Se registra al
+   * iniciar ese módulo, así ai-evaluations no depende de él.
+   */
+  registerFinishHook(trigger: string, hook: PracticeFinishHook): void {
+    this.finishHooks.set(trigger, hook);
+  }
+
+  /**
+   * Arranca un reto ya armado (actividad y preguntas elegidas por quien lo
+   * crea), sin invitación ni elección de actividad: la persona ya aceptó.
+   * Cierra cualquier otra conversación activa del teléfono. Devuelve la
+   * introducción y la primera pregunta.
+   */
+  async startChallenge(params: {
+    userId: Types.ObjectId | string;
+    userName: string;
+    email: string;
+    phone: string;
+    organizationId: string;
+    eventId: string;
+    eventName: string;
+    activityId: string;
+    activityName: string;
+    questions: ActivityQuestion[];
+    trigger: 'genon';
+    genon: NonNullable<PracticeSession['genon']>;
+    intro: string;
+  }): Promise<OutboundMessage[]> {
+    await this.cancelActive(params.phone);
+    await this.aiEvalSessionModel
+      .updateMany(
+        {
+          phone: params.phone,
+          status: { $in: AI_EVAL_ACTIVE_STATUSES },
+        },
+        { $set: { status: 'cancelled', finished_at: new Date() } },
+      )
+      .exec();
+
+    const questions = params.questions.map((q) =>
+      toPracticeQuestion(q, params.activityName, params.eventName),
+    );
+    const now = new Date();
+    const session = await this.sessionModel.create({
+      user_id: new Types.ObjectId(String(params.userId)),
+      user_name: params.userName,
+      email: params.email,
+      phone: params.phone,
+      organization_id: new Types.ObjectId(params.organizationId),
+      event_id: new Types.ObjectId(params.eventId),
+      triggered_by: null,
+      trigger: params.trigger,
+      genon: params.genon,
+      status: 'in_progress',
+      activity_options: [],
+      num_questions: questions.length,
+      chosen_activity_id: new Types.ObjectId(params.activityId),
+      questions,
+      current_question: 0,
+      invited_at: now,
+      started_at: now,
+    });
+    const replies: OutboundMessage[] = [params.intro, this.currentQuestion(session)];
+    await this.log(session, 'assistant', replies);
+    return replies;
+  }
 
   // ─── Estado ────────────────────────────────────────────────────────────
 
@@ -628,7 +717,9 @@ export class PracticeEngineService {
       skipped: skip,
     });
 
-    const replies: OutboundMessage[] = [this.feedbackMessage(q, response)];
+    const replies: OutboundMessage[] = [
+      this.feedbackMessage(session, q, response),
+    ];
     if (idx + 1 < session.questions.length) {
       replies.push(this.currentQuestion(session));
     } else {
@@ -657,7 +748,11 @@ export class PracticeEngineService {
     return [`🤔 No entendí tu respuesta. ${hint}${extra}`];
   }
 
-  private feedbackMessage(q: PracticeQuestion, r: PracticeResponse): string {
+  private feedbackMessage(
+    session: Session,
+    q: PracticeQuestion,
+    r: PracticeResponse,
+  ): string {
     const lines: string[] = [];
     if (r.skipped) lines.push('⏭️ Pregunta saltada.');
     else if (r.correct) lines.push('✅ ¡Correcto!');
@@ -670,10 +765,18 @@ export class PracticeEngineService {
       lines.push('', `*Respuesta correcta:*\n${correctAnswerText(q)}`);
     }
     if (q.explanation) lines.push('', `💡 ${q.explanation}`);
-    if (!r.correct && q.start_time !== null && q.start_time !== undefined) {
+    if (!r.correct) {
+      // Enlace a la actividad en el minuto donde se explica el tema
+      const link = activityLink(
+        session.organization_id,
+        q.activity_id,
+        q.start_time,
+      );
       lines.push(
         '',
-        `📺 Repasa _${q.activity_name}_ en el minuto ${formatTime(q.start_time)}.`,
+        q.start_time !== null && q.start_time !== undefined
+          ? `📺 Repasa _${q.activity_name}_ en el minuto ${formatTime(q.start_time)}: ${link}`
+          : `📺 Repasa _${q.activity_name}_: ${link}`,
       );
     }
     return lines.join('\n');
@@ -799,6 +902,24 @@ Responde SOLO con JSON: {"is_answer": true, "score": 0, "feedback": "..."}`,
       finished_at: new Date(),
     });
 
+    const hook = this.finishHooks.get(session.trigger);
+    if (hook) {
+      try {
+        const custom = await hook(session, {
+          status,
+          answered: answered.length,
+          correct,
+          total: session.questions.length,
+          score,
+        });
+        if (custom) return custom;
+      } catch (error) {
+        this.logger.error(
+          `Cierre de ${session.trigger} falló para ${String(session._id)}: ${(error as Error).message}`,
+        );
+      }
+    }
+
     if (!answered.length) {
       return 'Simulacro cancelado. ¡Cuando quieras volvemos a practicar! 👋';
     }
@@ -835,6 +956,7 @@ Responde SOLO con JSON: {"is_answer": true, "score": 0, "feedback": "..."}`,
             : '';
         lines.push(
           `• ${q.activity_name}${q.topic ? ` — ${q.topic}` : ''}${minute}`,
+          `  ${activityLink(session.organization_id, q.activity_id, q.start_time)}`,
         );
       }
     } else {

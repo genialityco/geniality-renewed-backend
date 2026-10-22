@@ -35,7 +35,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const INACTIVE_DAYS = 15;
 const TIMEZONE = 'America/Bogota';
 
-interface UserRow {
+export interface UserRow {
   user_id: string;
   enrolled_at: Date | null;
   course_progress: number;

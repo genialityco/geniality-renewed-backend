@@ -6,7 +6,9 @@ export type EngagementKind =
   | 'weekly_report'
   | 'course_ranking'
   | 'practice_review'
-  | 'practice_invite';
+  | 'practice_invite'
+  // Toques de Gen.ON (el paso concreto va en `step`)
+  | 'genon';
 
 /**
  * - pending: reservado, enviándose (si queda así, el proceso cayó a mitad
@@ -15,8 +17,10 @@ export type EngagementKind =
  * - failed: el gateway lo rechazó; la misma clave se puede reintentar.
  * - holdout: no se envió porque el estudiante está en el grupo de control.
  * - capped: no se envió por el tope semanal de mensajes del estudiante.
+ * - planned: programa en simulación; habría salido pero no se envió.
  */
 export type EngagementStatus =
+  | 'planned'
   | 'pending'
   | 'sent'
   | 'fallback_email'
@@ -46,6 +50,10 @@ export class EngagementMessage extends Document {
   @Prop({ type: String, default: null }) event_id: string | null;
   @Prop({ default: 'whatsapp' }) channel: string;
   @Prop({ type: String, default: null }) template: string | null;
+  // Gen.ON: programa, segmento (abandon | inactive | active) y paso ("1.1")
+  @Prop({ type: String, default: null }) program_id: string | null;
+  @Prop({ type: String, default: null }) segment: string | null;
+  @Prop({ type: String, default: null }) step: string | null;
   @Prop({ type: String, default: null }) phone: string | null;
   // Últimos 10 dígitos: así se asocian las respuestas aunque Meta reporte
   // el número con otro prefijo de país

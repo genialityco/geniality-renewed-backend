@@ -120,6 +120,25 @@ export function buildShuffle(
 }
 
 /** "12:30" a partir de segundos */
+/**
+ * Enlace a una actividad de la plataforma, en el segundo del video donde se
+ * explica el tema si se conoce (la página de la actividad lee ?t=).
+ */
+export function activityLink(
+  organizationId: unknown,
+  activityId: unknown,
+  startTime?: number | null,
+): string {
+  const base = (
+    process.env.WHATSAPP_REMINDER_BASE_URL || 'https://app.geniality.com.co'
+  ).replace(/\/+$/, '');
+  const t =
+    startTime !== null && startTime !== undefined && startTime >= 0
+      ? `?t=${Math.floor(startTime)}`
+      : '';
+  return `${base}/organization/${String(organizationId)}/activitydetail/${String(activityId)}${t}`;
+}
+
 export function formatTime(seconds: number | null): string {
   if (seconds === null || seconds === undefined) return '';
   const s = Math.max(0, Math.floor(seconds));

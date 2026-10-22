@@ -20,6 +20,15 @@ export interface SendTemplatePayload {
   fallbackHtml?: string;
 }
 
+export interface MetaTemplate {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
+  category: string;
+  rejected_reason?: string;
+}
+
 export interface SendOutcome {
   result: 'sent' | 'fallback_email';
   /** wamid del mensaje en WhatsApp (null si salió por email) */
@@ -39,6 +48,9 @@ function messageIdOf(response: { data?: any } | undefined): string | null {
 export class WhatsappGatewayClient {
   private readonly gatewayUrl: string;
   private readonly accountId: string;
+  // CAMPAIGN_API_KEY del gateway: lo exigen los endpoints de plantillas y el
+  // envío con componentes (Gen.ON)
+  private readonly apiKey: string;
 
   constructor(
     private readonly httpService: HttpService,
@@ -48,10 +60,69 @@ export class WhatsappGatewayClient {
     this.accountId =
       this.configService.get<string>('WHATSAPP_GATEWAY_ACCOUNT_ID') ||
       'gencampus';
+    this.apiKey =
+      this.configService.get<string>('WHATSAPP_GATEWAY_API_KEY') || '';
   }
 
   get isConfigured(): boolean {
     return Boolean(this.gatewayUrl);
+  }
+
+  /** Plantillas y envío con componentes requieren además la API key. */
+  get hasTemplateApi(): boolean {
+    return Boolean(this.gatewayUrl && this.apiKey);
+  }
+
+  private get apiKeyHeaders() {
+    return { headers: { 'x-api-key': this.apiKey } };
+  }
+
+  /**
+   * Envía una plantilla con los componentes ya armados (cuerpo, botones URL
+   * y quick replies con payload). Devuelve el wamid. Lanza si Meta rechaza.
+   */
+  async sendTemplateComponents(payload: {
+    to: string;
+    templateName: string;
+    languageCode: string;
+    components: unknown[];
+  }): Promise<SendOutcome> {
+    const response = await lastValueFrom(
+      this.httpService.post(
+        `${this.gatewayUrl}/api/campaign/send`,
+        payload,
+        this.apiKeyHeaders,
+      ),
+    );
+    return { result: 'sent', messageId: messageIdOf(response) };
+  }
+
+  /** Crea una plantilla en Meta (queda en revisión). */
+  async createTemplate(template: {
+    name: string;
+    language: string;
+    category: string;
+    components: unknown[];
+  }): Promise<{ id?: string; status?: string; category?: string }> {
+    const response = await lastValueFrom(
+      this.httpService.post(
+        `${this.gatewayUrl}/api/templates`,
+        template,
+        this.apiKeyHeaders,
+      ),
+    );
+    return response.data || {};
+  }
+
+  /** Todas las plantillas de la cuenta con su estado en Meta. */
+  async listTemplates(): Promise<MetaTemplate[]> {
+    const response = await lastValueFrom(
+      this.httpService.get(`${this.gatewayUrl}/api/templates`, {
+        ...this.apiKeyHeaders,
+        params: { status: 'all' },
+      }),
+    );
+    return response.data?.templates || [];
   }
 
   /**

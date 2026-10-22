@@ -33,6 +33,16 @@ export interface EngagementEntry {
   eventId?: string | null;
   template?: string | null;
   phone?: string | null;
+  // Gen.ON
+  programId?: string | null;
+  segment?: string | null;
+  step?: string | null;
+  /** Tope de 7 días propio del envío (si no, ENGAGEMENT_WEEKLY_CAP) */
+  weeklyCap?: number;
+  /** Grupo de control decidido por quien envía (si no, ENGAGEMENT_HOLDOUT_PERCENT) */
+  holdout?: boolean;
+  /** Simulación: se registra como 'planned' y no se envía */
+  dryRun?: boolean;
 }
 
 export type DeliveryResult =
@@ -40,7 +50,8 @@ export type DeliveryResult =
   | 'fallback_email'
   | 'duplicate'
   | 'holdout'
-  | 'capped';
+  | 'capped'
+  | 'planned';
 
 /**
  * Punto único por el que pasan los mensajes que inicia la plataforma:
@@ -247,7 +258,7 @@ export class EngagementLogService {
     entry: EngagementEntry,
   ): Promise<
     | { decision: 'send'; id: unknown }
-    | { decision: 'duplicate' | 'holdout' | 'capped' }
+    | { decision: 'duplicate' | 'holdout' | 'capped' | 'planned' }
   > {
     const existing = await this.messageModel
       .findOne({ dedupe_key: entry.dedupeKey })
@@ -259,11 +270,18 @@ export class EngagementLogService {
       return { decision: 'duplicate' };
     }
 
+    const holdout =
+      entry.holdout ?? isInHoldout(entry.userId, this.holdoutPercent);
+    const cap = entry.weeklyCap ?? this.weeklyCap;
     let status: EngagementStatus = 'pending';
-    if (isInHoldout(entry.userId, this.holdoutPercent)) {
+    if (holdout) {
       status = 'holdout';
-    } else if ((await this.countRecent(entry.userId)) >= this.weeklyCap) {
+    } else if (
+      (await this.countRecent(entry.userId, Boolean(entry.dryRun))) >= cap
+    ) {
       status = 'capped';
+    } else if (entry.dryRun) {
+      status = 'planned';
     }
 
     const doc = { ...this.toDoc(entry), status, error: null };
@@ -289,7 +307,7 @@ export class EngagementLogService {
     }
 
     if (status === 'pending') return { decision: 'send', id };
-    return { decision: status as 'holdout' | 'capped' };
+    return { decision: status as 'holdout' | 'capped' | 'planned' };
   }
 
   private async finish(
@@ -320,11 +338,14 @@ export class EngagementLogService {
       );
   }
 
-  private async countRecent(userId: string): Promise<number> {
+  /** En simulación también cuentan los envíos planeados, para que el tope se vea igual. */
+  private async countRecent(userId: string, dryRun = false): Promise<number> {
     return this.messageModel
       .countDocuments({
         user_id: String(userId),
-        status: { $in: COUNTED_STATUSES },
+        status: {
+          $in: dryRun ? [...COUNTED_STATUSES, 'planned'] : COUNTED_STATUSES,
+        },
         at: { $gte: new Date(Date.now() - 7 * DAY_MS) },
       })
       .exec();
@@ -341,6 +362,9 @@ export class EngagementLogService {
       event_id: entry.eventId ? String(entry.eventId) : null,
       channel: 'whatsapp',
       template: entry.template || null,
+      program_id: entry.programId || null,
+      segment: entry.segment || null,
+      step: entry.step || null,
       phone: entry.phone || null,
       phone_tail: phoneTail(entry.phone),
       at: new Date(),

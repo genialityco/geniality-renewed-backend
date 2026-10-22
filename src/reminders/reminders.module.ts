@@ -17,6 +17,7 @@ import { OrganizationsModule } from 'src/organizations/organizations.module';
 import { OrganizationUsersModule } from 'src/organization-users/organization-users.module';
 import { CourseAttendeeModule } from 'src/course-attendee/course-attendee.module';
 import { EngagementModule } from 'src/engagement/engagement.module';
+import { GenOnModule } from 'src/genon/genon.module';
 import {
   Organization,
   OrganizationSchema,
@@ -42,6 +43,8 @@ import {
     CourseAttendeeModule,
     // Bitácora de envíos: deduplicación, tope semanal y grupo de control
     EngagementModule,
+    // Organizaciones con Gen.ON activo: ahí no salen estos recordatorios
+    GenOnModule,
   ],
   providers: [
     RemindersService,

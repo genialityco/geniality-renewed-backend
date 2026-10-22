@@ -162,5 +162,13 @@ import { EngagementModule } from '../engagement/engagement.module';
     ClinicalCaseResourcesService,
     OrgAdminGuard,
   ],
+  // Gen.ON registra su conversación en la entrada de WhatsApp y su cierre de
+  // retos en el motor de simulacros
+  exports: [
+    WhatsappInboundService,
+    PracticeEngineService,
+    QuestionUsageService,
+    WhatsappGatewayClient,
+  ],
 })
 export class AiEvaluationsModule {}

@@ -18,6 +18,7 @@ import {
 } from './contact.util';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 import { EngagementLogService } from 'src/engagement/engagement-log.service';
+import { GenOnProgramsService } from 'src/genon/genon-programs.service';
 import { localWeekKey } from 'src/engagement/engagement-policy';
 
 // Con menos inscritos, "el promedio del grupo" equivale a exponer el avance
@@ -51,6 +52,7 @@ export class CourseRankingService {
     private readonly whatsappGateway: WhatsappGatewayClient,
     private readonly configService: ConfigService,
     private readonly engagementLog: EngagementLogService,
+    private readonly genonPrograms: GenOnProgramsService,
   ) {
     this.baseUrl =
       this.configService.get<string>('WHATSAPP_REMINDER_BASE_URL') ||
@@ -262,6 +264,10 @@ export class CourseRankingService {
     if (userProgress === undefined) return 'skipped';
 
     const organizationId = sanitizeOrganizationId(activity.organization_id);
+    // Las organizaciones con Gen.ON activo reciben sus mensajes, no estos
+    if ((await this.genonPrograms.managedOrganizationIds()).has(organizationId)) {
+      return 'skipped';
+    }
 
     const [user, orgUser] = await Promise.all([
       this.usersService.findById(activity.user_id).catch(() => null),
