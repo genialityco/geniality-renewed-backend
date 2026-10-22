@@ -35,6 +35,14 @@ export interface GenOnStreak {
   updated_on: string | null;
 }
 
+/** Variante asignada a una persona en un toque con varias. */
+export interface GenOnVariantPick {
+  template_key: string;
+  /** true si podía recibir más de una (cuenta para repartirlas por igual) */
+  free: boolean;
+  at: Date;
+}
+
 /**
  * Estado de una persona en un curso dentro de un programa Gen.ON: su
  * segmento, en qué toque va y cuándo sale el siguiente. Lo actualiza la
@@ -63,6 +71,9 @@ export class GenOnEnrollment extends Document {
   // Franja de envío asignada (HH:mm)
   @Prop({ type: String, default: null }) slot: string | null;
   @Prop({ default: false }) holdout: boolean;
+  // Variante asignada por toque ("1.2" → plantilla); se mantiene mientras cumpla
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  variant_picks: Record<string, GenOnVariantPick>;
 
   // Pausa: terminó la secuencia sin responder (o recibió el cierre)
   @Prop({ default: false }) paused: boolean;

@@ -37,6 +37,7 @@ function setup(opts: {
   metrics?: Record<string, number>;
   phone?: string | null;
   deliverResult?: string;
+  variantCounts?: { _id: string; n: number }[];
 } = {}) {
   const program: any = {
     _id: 'p1',
@@ -72,6 +73,7 @@ function setup(opts: {
       select: () => ({ lean: () => exec([{ user_id: 'u1', progress: 0 }]) }),
     })),
     updateOne: jest.fn((..._args: any[]) => exec({})),
+    aggregate: jest.fn((..._args: any[]) => exec(opts.variantCounts || [])),
   };
   const templates = {
     byKey: jest.fn(async (key: string) => template(key, opts.approved ?? true)),
@@ -191,6 +193,44 @@ describe('GenOnEngineService: despacho', () => {
     await service.runProgram(program, NOW);
 
     expect(engagementLog.deliver.mock.calls[0][0].template).toBe('genon_social_week_v1');
+  });
+
+  it('con dos variantes posibles asigna la menos usada y la guarda', async () => {
+    const { service, program, enrollmentModel, engagementLog } = setup({
+      enrollment: { next_step_key: '1.2', last_step_key: '1.1', last_step_day: 0 },
+      variantCounts: [
+        { _id: 'social_graduates', n: 4 },
+        { _id: 'social_week', n: 2 },
+      ],
+    });
+
+    await service.runProgram(program, NOW);
+
+    expect(engagementLog.deliver.mock.calls[0][0].template).toBe('genon_social_week_v1');
+    const pick = enrollmentModel.updateOne.mock.calls.find(
+      (c: any[]) => c[1].$set?.['variant_picks.1_2'],
+    );
+    expect(pick?.[1].$set['variant_picks.1_2']).toMatchObject({
+      template_key: 'social_week',
+      free: true,
+    });
+  });
+
+  it('conserva la variante ya asignada mientras cumpla', async () => {
+    const { service, program, enrollmentModel, engagementLog } = setup({
+      enrollment: {
+        next_step_key: '1.2',
+        last_step_key: '1.1',
+        last_step_day: 0,
+        variant_picks: { '1_2': { template_key: 'social_graduates', free: true } },
+      },
+      variantCounts: [{ _id: 'social_graduates', n: 9 }],
+    });
+
+    await service.runProgram(program, NOW);
+
+    expect(engagementLog.deliver.mock.calls[0][0].template).toBe('genon_social_graduates_v1');
+    expect(enrollmentModel.aggregate).not.toHaveBeenCalled();
   });
 
   it('en activo no envía una plantilla sin aprobar y reintenta mañana', async () => {

@@ -3,7 +3,9 @@ import {
   isHoldout,
   localDate,
   nextStep,
+  pickVariant,
   slotFor,
+  spreadSlots,
   stepSendTime,
   zonedTime,
 } from './genon-schedule';
@@ -157,5 +159,42 @@ describe('franja y grupo de control', () => {
     expect(holdout).toBeGreaterThan(330);
     expect(holdout).toBeLessThan(470);
     expect(isHoldout('p1', 'u1', 'abandon', 0)).toBe(false);
+  });
+
+  it('al reasignar reparte las franjas por igual y una por persona', () => {
+    const ids = Array.from({ length: 101 }, (_, i) => `u${i}`);
+    const spread = spreadSlots('p1', [...ids, 'u1', 'u2'], ['12:30', '19:00', 'mal']);
+    expect(spread.size).toBe(101);
+    const counts: Record<string, number> = {};
+    for (const slot of spread.values()) counts[slot] = (counts[slot] || 0) + 1;
+    expect(Object.values(counts).sort()).toEqual([50, 51]);
+    expect(Object.keys(counts).sort()).toEqual(['12:30', '19:00']);
+  });
+});
+
+describe('reparto de variantes', () => {
+  const variants = [{ template_key: 'a' }, { template_key: 'b' }, { template_key: 'c' }];
+
+  it('elige la menos asignada', () => {
+    expect(pickVariant(variants, 'u1', { a: 3, b: 1, c: 2 })?.template_key).toBe('b');
+  });
+
+  it('en empate sortea estable por persona', () => {
+    const first = pickVariant(variants, 'p1:u7:1.2');
+    expect(pickVariant(variants, 'p1:u7:1.2')).toBe(first);
+  });
+
+  it('reparte por igual aunque el sorteo se cargue a un lado', () => {
+    const counts: Record<string, number> = {};
+    for (let i = 0; i < 10; i++) {
+      const v = pickVariant(variants, `p1:u${i}:1.2`, counts)!;
+      counts[v.template_key] = (counts[v.template_key] || 0) + 1;
+    }
+    const n = Object.values(counts).sort();
+    expect(n).toEqual([3, 3, 4]);
+  });
+
+  it('sin variantes que cumplan devuelve null', () => {
+    expect(pickVariant([], 'u1')).toBeNull();
   });
 });

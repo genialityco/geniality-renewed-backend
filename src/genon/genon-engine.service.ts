@@ -45,8 +45,11 @@ import {
   localDate,
   nextStep,
   orderedSteps,
+  pickVariant,
   slotFor,
+  spreadSlots,
   stepSendTime,
+  validSlots,
 } from './genon-schedule';
 import {
   buildSendComponents,
@@ -58,6 +61,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const FLOW_SEGMENTS: GenOnFlowSegment[] = ['abandon', 'inactive'];
 const NO_CHALLENGE_REASON =
   'Este usuario no tiene una actividad para el reto: ya completó las habilitadas o no tienen preguntas suficientes. El envío real omitiría este toque; habilita más actividades en Cursos y retos.';
+/** Asignaciones por variante en esta pasada, por toque y grupo ("1.2:envio") */
+type VariantCounts = Map<string, Record<string, number>>;
+
+/** Clave del toque en `variant_picks` ("1.2" → "1_2": el punto anida en Mongo). */
+const pickKey = (stepKey: string) => stepKey.replace(/\./g, '_');
+
 // Envíos máximos por programa en cada ejecución del cron (cada 15 min)
 export const MAX_SENDS_PER_RUN = 40;
 
@@ -269,7 +278,11 @@ export class GenOnEngineService {
         last_activity_at: row.last_activity_at,
         enrolled_at: row.enrolled_at,
       };
-      const slot = e?.slot || slotFor(String(program._id), row.user_id, program.send_slots);
+      // Si la franja ya no está en el programa, se sortea otra
+      const slot =
+        e?.slot && validSlots(program.send_slots).includes(e.slot)
+          ? e.slot
+          : slotFor(String(program._id), row.user_id, program.send_slots);
       let state: Record<string, any>;
       if (!e || e.segment !== segment) {
         // Entra a un segmento nuevo: la secuencia empieza de cero
@@ -361,6 +374,53 @@ export class GenOnEngineService {
     };
   }
 
+  /**
+   * Reparte de nuevo a todos los inscritos por igual entre las franjas
+   * actuales y borra las variantes asignadas (el próximo envío de cada toque
+   * las vuelve a repartir). La hora del próximo toque se recalcula con la
+   * franja nueva.
+   */
+  async reassign(program: GenOnProgram, now: Date) {
+    const all = await this.enrollmentModel
+      .find({ program_id: String(program._id), test: false })
+      .select(
+        'user_id segment segment_since last_step_key last_step_day paused exited variant_picks',
+      )
+      .lean()
+      .exec();
+    const slots = spreadSlots(
+      String(program._id),
+      all.map((e) => e.user_id),
+      program.send_slots,
+    );
+
+    const bySlot: Record<string, number> = {};
+    let variantsCleared = 0;
+    const ops = all.map((e) => {
+      const slot = slots.get(e.user_id)!;
+      bySlot[slot] = (bySlot[slot] || 0) + 1;
+      if (Object.keys(e.variant_picks || {}).length) variantsCleared++;
+      // Pausados y retirados conservan su estado; solo cambia la franja
+      const schedule =
+        !e.exited && !e.paused ? this.schedule(program, e as any, slot, now) : {};
+      return {
+        updateOne: {
+          filter: { _id: e._id },
+          update: { $set: { slot, variant_picks: {}, ...schedule } },
+        },
+      };
+    });
+    for (let i = 0; i < ops.length; i += 500) {
+      await this.enrollmentModel.bulkWrite(ops.slice(i, i + 500), { ordered: false });
+    }
+    return {
+      enrollments: all.length,
+      people: slots.size,
+      by_slot: bySlot,
+      variants_cleared: variantsCleared,
+    };
+  }
+
   /** Quien respondió VOLVER (o reactivó WhatsApp) vuelve a su secuencia. */
   private async reactivateOptedIn(program: GenOnProgram) {
     const exited = await this.enrollmentModel
@@ -423,6 +483,7 @@ export class GenOnEngineService {
       .exec();
 
     const cache = new Map<string, CourseCache | null>();
+    const counts: VariantCounts = new Map();
     const outcomes: DispatchOutcome[] = [];
     for (const e of due) {
       try {
@@ -435,7 +496,7 @@ export class GenOnEngineService {
           outcomes.push(this.outcome(e, null, 'skipped', 'curso no encontrado'));
           continue;
         }
-        outcomes.push(await this.dispatchOne(program, e, entry, dryRun, now));
+        outcomes.push(await this.dispatchOne(program, e, entry, counts, dryRun, now));
       } catch (error) {
         const reason = (error as Error).message;
         await this.retryTomorrow(program, e, now, reason);
@@ -467,6 +528,7 @@ export class GenOnEngineService {
     program: GenOnProgram,
     e: GenOnEnrollment,
     { course, stats }: CourseCache,
+    counts: VariantCounts,
     dryRun: boolean,
     now: Date,
   ): Promise<DispatchOutcome> {
@@ -499,7 +561,7 @@ export class GenOnEngineService {
       },
       segment,
     );
-    const variant = this.chooseVariant(step, ctx);
+    const variant = await this.assignVariant(program, e, step, ctx, counts);
     if (!variant) {
       await this.advance(program, e, step, now, 'dato social bajo el umbral');
       return this.outcome(e, step.key, 'skipped', 'dato social bajo el umbral');
@@ -619,15 +681,123 @@ export class GenOnEngineService {
     return { result };
   }
 
-  /** Primera variante cuyas condiciones se cumplen (null = se omite). */
-  chooseVariant(step: GenOnStep, ctx: PersonContext): GenOnVariant | null {
-    return (
-      (step.variants || []).find((v) =>
-        (v.conditions || []).every(
-          (c) => (ctx.metrics[c.metric] ?? 0) >= Number(c.min),
-        ),
-      ) || null
+  /** Variantes cuyas condiciones se cumplen todas (ninguna = se omite). */
+  eligibleVariants(step: GenOnStep, ctx: PersonContext): GenOnVariant[] {
+    return (step.variants || []).filter((v) =>
+      (v.conditions || []).every(
+        (c) => (ctx.metrics[c.metric] ?? 0) >= Number(c.min),
+      ),
     );
+  }
+
+  /**
+   * Variante que recibiría la persona, sin guardar nada (vista previa y
+   * pruebas): la que ya tiene asignada si sigue cumpliendo; si no, la de su
+   * sorteo.
+   */
+  chooseVariant(
+    program: GenOnProgram,
+    step: GenOnStep,
+    ctx: PersonContext,
+    userId: string,
+    picks?: GenOnEnrollment['variant_picks'] | null,
+  ): GenOnVariant | null {
+    const eligible = this.eligibleVariants(step, ctx);
+    const stored = picks?.[pickKey(step.key)]?.template_key;
+    return (
+      eligible.find((v) => v.template_key === stored) ||
+      pickVariant(eligible, `${String(program._id)}:${userId}:${step.key}`)
+    );
+  }
+
+  /**
+   * Asigna la variante del toque y la guarda. Si la persona puede recibir
+   * varias, le toca la menos asignada en el programa (dentro de su grupo:
+   * control o no), así quedan repartidas por igual; la conserva mientras
+   * siga cumpliendo sus condiciones.
+   */
+  private async assignVariant(
+    program: GenOnProgram,
+    e: GenOnEnrollment,
+    step: GenOnStep,
+    ctx: PersonContext,
+    counts: VariantCounts,
+  ): Promise<GenOnVariant | null> {
+    const eligible = this.eligibleVariants(step, ctx);
+    const key = pickKey(step.key);
+    const stored = e.variant_picks?.[key];
+    const kept = eligible.find((v) => v.template_key === stored?.template_key);
+    if (kept) return kept;
+
+    const free = eligible.length > 1;
+    const countKey = `${step.key}:${e.holdout ? 'control' : 'envio'}`;
+    let tally = counts.get(countKey);
+    if (free && !tally) {
+      tally = await this.variantCounts(program, key, e.holdout);
+      counts.set(countKey, tally);
+    }
+    const variant = pickVariant(
+      eligible,
+      `${String(program._id)}:${e.user_id}:${step.key}`,
+      tally,
+    );
+    if (!variant) return null;
+
+    // La asignación anterior (ya no cumple) deja de contar
+    if (tally && stored?.free) {
+      tally[stored.template_key] = Math.max(0, (tally[stored.template_key] || 0) - 1);
+    }
+    if (tally && free) {
+      tally[variant.template_key] = (tally[variant.template_key] || 0) + 1;
+    }
+    await this.enrollmentModel
+      .updateOne(
+        { _id: e._id },
+        {
+          $set: {
+            [`variant_picks.${key}`]: {
+              template_key: variant.template_key,
+              free,
+              at: new Date(),
+            },
+          },
+        },
+      )
+      .exec();
+    return variant;
+  }
+
+  /** Variantes ya asignadas a la persona (su inscripción real, no la de prueba). */
+  private async storedPicks(program: GenOnProgram, eventId: string, userId: string) {
+    const e = await this.enrollmentModel
+      .findOne({ program_id: String(program._id), event_id: eventId, user_id: userId, test: false })
+      .select('variant_picks')
+      .lean()
+      .exec();
+    return e?.variant_picks || null;
+  }
+
+  /** Asignaciones libres de cada variante de un toque en el programa. */
+  private async variantCounts(
+    program: GenOnProgram,
+    key: string,
+    holdout: boolean,
+  ): Promise<Record<string, number>> {
+    const path = `variant_picks.${key}`;
+    const rows = await this.enrollmentModel
+      .aggregate([
+        {
+          $match: {
+            program_id: String(program._id),
+            test: false,
+            holdout: holdout ? true : { $ne: true },
+            [`${path}.free`]: true,
+          },
+        },
+        { $group: { _id: `$${path}.template_key`, n: { $sum: 1 } } },
+      ])
+      .exec();
+    return Object.fromEntries(rows.map((r: any) => [String(r._id), r.n]));
   }
 
   /**
@@ -1009,7 +1179,8 @@ export class GenOnEngineService {
       { userId, fullName: person.name, email: person.email, progress: row.course_progress },
       segment,
     );
-    const chosen = this.chooseVariant(step, ctx);
+    const picks = await this.storedPicks(program, eventId, userId);
+    const chosen = this.chooseVariant(program, step, ctx, userId, picks);
     const variant =
       variantIndex !== undefined && step.variants[variantIndex]
         ? step.variants[variantIndex]
@@ -1079,7 +1250,9 @@ export class GenOnEngineService {
     if (step.mechanic === 'challenge_invite' && !ctx.challengeActivity) {
       throw new BadRequestException(NO_CHALLENGE_REASON);
     }
-    const variant = this.chooseVariant(step, ctx) || step.variants[0];
+    const picks = await this.storedPicks(program, eventId, userId);
+    const variant =
+      this.chooseVariant(program, step, ctx, userId, picks) || step.variants[0];
     return this.sendTestTemplate(program, {
       userId,
       eventId,

@@ -246,6 +246,16 @@ export class GenOnController {
     };
   }
 
+  /**
+   * Reparte de nuevo las franjas por igual y borra las variantes asignadas.
+   * Vale también con el programa activo: no envía nada.
+   */
+  @Post('programs/:id/reassign')
+  async reassign(@Req() req: any, @Param('id') id: string) {
+    const program = await this.programs.get(req.auth.uid, id);
+    return this.engine.reassign(program, new Date());
+  }
+
   // ── Disparadores (segmento 3, examen, certificado) ──
 
   @Post('programs/:id/test/triggers')

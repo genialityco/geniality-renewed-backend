@@ -59,15 +59,54 @@ function bucket(seed: string): number {
   return createHash('sha256').update(seed).digest().readUInt32BE(0);
 }
 
+/** Franjas del programa con formato válido (HH:MM). */
+export function validSlots(slots: string[] | null | undefined): string[] {
+  return (slots || []).filter((s) => /^\d{1,2}:\d{2}$/.test(s));
+}
+
 /** Franja estable de la persona (sorteada una vez, igual en cada cálculo). */
 export function slotFor(
   programId: string,
   userId: string,
   slots: string[],
 ): string {
-  const valid = slots.filter((s) => /^\d{1,2}:\d{2}$/.test(s));
+  const valid = validSlots(slots);
   if (!valid.length) return '12:00';
   return valid[bucket(`slot:${programId}:${userId}`) % valid.length];
+}
+
+/**
+ * Reparte a las personas por igual entre las franjas: las ordena por sorteo
+ * estable y las asigna por turnos (las franjas difieren a lo más en una
+ * persona). La misma persona en varios cursos queda en una sola franja.
+ */
+export function spreadSlots(
+  programId: string,
+  userIds: string[],
+  slots: string[],
+): Map<string, string> {
+  const valid = validSlots(slots);
+  const options = valid.length ? valid : ['12:00'];
+  const ordered = [...new Set(userIds)]
+    .map((id) => ({ id, rank: bucket(`slot:${programId}:${id}`) }))
+    .sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id));
+  return new Map(ordered.map(({ id }, i) => [id, options[i % options.length]]));
+}
+
+/**
+ * Variante para una persona entre las que cumplen sus condiciones: la que
+ * menos se ha asignado (así quedan repartidas por igual) y, si empatan, una
+ * sorteada estable por persona.
+ */
+export function pickVariant<T extends { template_key: string }>(
+  eligible: T[],
+  seed: string,
+  counts: Record<string, number> = {},
+): T | null {
+  if (!eligible.length) return null;
+  const min = Math.min(...eligible.map((v) => counts[v.template_key] || 0));
+  const tied = eligible.filter((v) => (counts[v.template_key] || 0) === min);
+  return tied[bucket(`variant:${seed}`) % tied.length];
 }
 
 /** Grupo de control estable por programa, persona y segmento. */

@@ -34,9 +34,10 @@ export interface GenOnCondition {
 }
 
 /**
- * Variante de un toque: se envía la primera cuyas condiciones se cumplen
- * todas. Sin variantes que se cumplan, el toque se omite (p. ej. el dato
- * social bajo, que normaliza el abandono).
+ * Variante de un toque. Entre las que cumplen todas sus condiciones, a cada
+ * persona se le asigna una al azar, repartidas por igual. Sin variantes que
+ * se cumplan, el toque se omite (p. ej. el dato social bajo, que normaliza
+ * el abandono).
  */
 export interface GenOnVariant {
   template_key: string;
