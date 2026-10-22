@@ -392,7 +392,7 @@ export function defaultChallenge(): GenOnChallengeConfig {
     pass_percent: 100,
     retry_after_days: 1,
     intro_text:
-      '¡Vamos con el reto! 💪 Son {{num_preguntas}} preguntas sobre {{tema_actividad}}. Responde con los botones.',
+      '¡Vamos con el reto! 💪 Son {{num_preguntas}} preguntas sobre {{tema_actividad}}. Responde cada una como se indica.',
     pass_text:
       'Excelente, {{nombre}}. Acertaste {{aciertos}} de {{total}}: marcamos {{actividad_reto}} como terminada. 🎉 Sigue con {{actividad_siguiente}}: {{link_siguiente}}',
     fail_text:

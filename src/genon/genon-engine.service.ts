@@ -56,6 +56,8 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FLOW_SEGMENTS: GenOnFlowSegment[] = ['abandon', 'inactive'];
+const NO_CHALLENGE_REASON =
+  'Este usuario no tiene una actividad para el reto: ya completó las habilitadas o no tienen preguntas suficientes. El envío real omitiría este toque; habilita más actividades en Cursos y retos.';
 // Envíos máximos por programa en cada ejecución del cron (cada 15 min)
 export const MAX_SENDS_PER_RUN = 40;
 
@@ -1020,6 +1022,14 @@ export class GenOnEngineService {
         metrics: ctx.metrics,
       };
     }
+    if (step.mechanic === 'challenge_invite' && !ctx.challengeActivity) {
+      return {
+        step: step.key,
+        skipped: true,
+        reason: NO_CHALLENGE_REASON,
+        metrics: ctx.metrics,
+      };
+    }
     const template = await this.templates.byKey(variant.template_key);
     if (!template) throw new NotFoundException(`No existe la plantilla "${variant.template_key}"`);
     const body = template.approved?.body || template.body;
@@ -1066,6 +1076,9 @@ export class GenOnEngineService {
       { userId, fullName: person.name, email: person.email, progress: row.course_progress },
       segment,
     );
+    if (step.mechanic === 'challenge_invite' && !ctx.challengeActivity) {
+      throw new BadRequestException(NO_CHALLENGE_REASON);
+    }
     const variant = this.chooseVariant(step, ctx) || step.variants[0];
     return this.sendTestTemplate(program, {
       userId,
@@ -1146,17 +1159,26 @@ export class GenOnEngineService {
       )
       .exec();
 
-    const outcome = await this.gateway.sendTemplateComponents({
-      to: phone,
-      templateName: version.meta_name,
-      languageCode: version.language,
-      components: buildSendComponents({
+    let components: ReturnType<typeof buildSendComponents>;
+    try {
+      components = buildSendComponents({
         variables: version.variables,
         values: params.values,
         buttons: version.buttons,
         urlSuffix: params.urlSuffix,
         payloadFor: (b) => buttonPayload(String(test._id), b.action, params.actionData),
-      }),
+      });
+    } catch (error) {
+      // El envío real omite el toque; en la prueba se explica por qué
+      throw new BadRequestException(
+        `${(error as Error).message}. Con este usuario el envío real omitiría este mensaje.`,
+      );
+    }
+    const outcome = await this.gateway.sendTemplateComponents({
+      to: phone,
+      templateName: version.meta_name,
+      languageCode: version.language,
+      components,
     });
     return {
       sent: true,

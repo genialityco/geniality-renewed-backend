@@ -78,21 +78,21 @@ export interface PersonContext {
 }
 
 /**
- * Pregunta apta para un reto por WhatsApp: opción única con 2 o 3 opciones
- * (caben como botones) y una sola correcta, o verdadero/falso.
+ * Pregunta apta para un reto por WhatsApp (se califica sin IA):
+ * verdadero/falso, opción única (botones hasta 3 opciones, lista hasta 10)
+ * o selección múltiple (responde con letras).
  */
 export function isChallengeQuestion(q: {
   type: string;
   options?: { correct: boolean }[];
 }): boolean {
   if (q.type === 'true_false') return true;
-  if (q.type !== 'single_choice') return false;
   const options = q.options || [];
-  return (
-    options.length >= 2 &&
-    options.length <= 3 &&
-    options.filter((o) => o.correct).length === 1
-  );
+  const correct = options.filter((o) => o.correct).length;
+  if (options.length < 2 || options.length > 10) return false;
+  if (q.type === 'single_choice') return correct === 1;
+  if (q.type === 'multiple_choice') return correct >= 1 && correct < options.length;
+  return false;
 }
 
 /**
