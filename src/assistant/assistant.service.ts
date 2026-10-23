@@ -22,15 +22,25 @@ export const DEFAULT_DAILY_LIMIT = 30;
 const MEMORY_MS = 30 * 60 * 1000;
 const MEMORY_TURNS = 10;
 const MAX_REPLY_CHARS = 3500;
+// Botón de la lista de cuentas: as:org:<organización>:<usuario>
 const CHOICE_PREFIX = 'as:org:';
 const SWITCH_WORDS = new Set([
   'organizacion',
   'cambiar organizacion',
   'cambiar de organizacion',
+  'cambiar',
+  'cambiar cuenta',
+  'cambiar de cuenta',
+  'cambiar usuario',
+  'cambiar de usuario',
 ]);
+// Filas que admite una lista de WhatsApp
+const MAX_CHOICES = 10;
 
+/** Una cuenta del número: una persona en una organización con el asistente. */
 interface EnabledMembership extends AssistantOrgOption {
   personName: string;
+  email: string;
   instructions: string;
   dailyLimit: number;
   /** Los enlaces de las respuestas entran con la sesión iniciada */
@@ -39,6 +49,23 @@ interface EnabledMembership extends AssistantOrgOption {
 
 const localDate = (date: Date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(date);
+
+/** Identifica el conjunto de cuentas del número (orden estable). */
+const optionsKey = (options: EnabledMembership[]) =>
+  options
+    .map((o) => `${o.organization_id}:${o.user_id}`)
+    .sort()
+    .join('|');
+
+/** "laura@prueba.com" → "la***@prueba.com" (para distinguir cuentas sin mostrarlas). */
+const maskEmail = (email: string) => {
+  const [user, domain] = String(email || '').split('@');
+  if (!user || !domain) return '';
+  return `${user.slice(0, 2)}***@${domain}`;
+};
+
+const clip = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
 /**
  * Asistente por WhatsApp: responde lo que ningún otro motor atendió, solo a
@@ -95,12 +122,22 @@ export class AssistantService implements OnModuleInit {
       .exec();
 
     let question = String(text || '').trim();
-    let current = options.find((o) => o.organization_id === conv.organization_id) || null;
+    const key = optionsKey(options);
+    let current =
+      options.find(
+        (o) => o.organization_id === conv.organization_id && o.user_id === conv.user_id,
+      ) || null;
+    // La elección vale mientras las cuentas del número sean las mismas: si
+    // apareció otra (p. ej. otra organización activó el asistente), se pregunta
+    if (current && options.length > 1 && conv.options_key !== key) current = null;
 
-    // Eligió organización con el botón
+    // Eligió cuenta con el botón
     if (replyId?.startsWith(CHOICE_PREFIX)) {
-      const chosen = options.find((o) => o.organization_id === replyId.slice(CHOICE_PREFIX.length));
-      if (!chosen) return ['Esa organización ya no tiene el asistente disponible.'];
+      const [orgId, userId] = replyId.slice(CHOICE_PREFIX.length).split(':');
+      const chosen = options.find(
+        (o) => o.organization_id === orgId && (!userId || o.user_id === userId),
+      );
+      if (!chosen) return ['Esa cuenta ya no tiene el asistente disponible.'];
       current = chosen;
       await this.conversationModel
         .updateOne(
@@ -109,6 +146,7 @@ export class AssistantService implements OnModuleInit {
             $set: {
               organization_id: chosen.organization_id,
               user_id: chosen.user_id,
+              options_key: key,
               choosing: null,
               pending_question: null,
             },
@@ -116,14 +154,15 @@ export class AssistantService implements OnModuleInit {
         )
         .exec();
       if (!conv.pending_question) {
-        return [`Listo, te ayudo con *${chosen.name}*. ¿Qué necesitas?`];
+        const who = chosen.personName ? `${chosen.personName}, ` : '';
+        return [`Listo, ${who}te ayudo con *${chosen.name}*. ¿Qué necesitas?`];
       }
       question = conv.pending_question;
     } else if (options.length > 1 && SWITCH_WORDS.has(normalizeText(question))) {
-      return [await this.askOrganization(conv, options, null)];
+      return [await this.askAccount(conv, options, null)];
     } else if (!current) {
       if (options.length === 1) current = options[0];
-      else return [await this.askOrganization(conv, options, question)];
+      else return [await this.askAccount(conv, options, question)];
     }
 
     // Tope diario por persona
@@ -190,6 +229,7 @@ export class AssistantService implements OnModuleInit {
           $set: {
             organization_id: current.organization_id,
             user_id: current.user_id,
+            options_key: key,
             choosing: null,
             pending_question: null,
             day: today,
@@ -211,7 +251,10 @@ export class AssistantService implements OnModuleInit {
     );
   }
 
-  /** Membresías del número en organizaciones con el asistente habilitado. */
+  /**
+   * Cuentas del número en organizaciones con el asistente habilitado: una por
+   * persona y organización (varias personas pueden compartir un número).
+   */
   private async enabledMemberships(phone: string): Promise<EnabledMembership[]> {
     const memberships = await this.optOut.membershipsByPhone(phone);
     if (!memberships.length) return [];
@@ -228,13 +271,19 @@ export class AssistantService implements OnModuleInit {
     const out: EnabledMembership[] = [];
     for (const m of memberships) {
       const org: any = orgById.get(m.organization_id);
-      if (!org || out.some((o) => o.organization_id === m.organization_id)) continue;
+      if (
+        !org ||
+        out.some((o) => o.organization_id === m.organization_id && o.user_id === m.user_id)
+      ) {
+        continue;
+      }
       const props = m.properties || {};
       out.push({
         organization_id: m.organization_id,
         user_id: m.user_id,
         name: String(org.name || 'tu organización'),
         personName: String(props.nombres || props.names || '').trim().split(/\s+/)[0] || '',
+        email: String(props.email || ''),
         instructions: String(org.assistant?.instructions || '').trim(),
         dailyLimit: Number(org.assistant?.daily_limit) > 0 ? Number(org.assistant.daily_limit) : DEFAULT_DAILY_LIMIT,
         autoLogin: org.assistant?.auto_login_links !== false,
@@ -243,13 +292,17 @@ export class AssistantService implements OnModuleInit {
     return out;
   }
 
-  /** Pregunta de qué organización quiere hablar (lista de WhatsApp). */
-  private async askOrganization(
+  /**
+   * Pregunta con qué cuenta quiere hablar (lista de WhatsApp): por
+   * organización y, si varias personas comparten el número, por persona.
+   */
+  private async askAccount(
     conv: AssistantConversation,
     options: EnabledMembership[],
     question: string | null,
   ): Promise<OutboundMessage> {
-    const choosing = options.slice(0, 10).map((o) => ({
+    const shown = options.slice(0, MAX_CHOICES);
+    const choosing = shown.map((o) => ({
       organization_id: o.organization_id,
       user_id: o.user_id,
       name: o.name,
@@ -260,21 +313,30 @@ export class AssistantService implements OnModuleInit {
         { $set: { choosing, pending_question: question || null } },
       )
       .exec();
+    const orgs = new Set(options.map((o) => o.organization_id));
+    // Con una persona por organización basta el nombre de la organización
+    const onePerOrg = orgs.size === options.length;
+    const rows = shown.map((o) => {
+      const email = maskEmail(o.email);
+      return onePerOrg
+        ? {
+            id: `${CHOICE_PREFIX}${o.organization_id}:${o.user_id}`,
+            title: clip(o.name, 24),
+            description: clip([o.personName, email].filter(Boolean).join(' · '), 72) || undefined,
+          }
+        : {
+            id: `${CHOICE_PREFIX}${o.organization_id}:${o.user_id}`,
+            title: clip(o.personName || email || 'Cuenta', 24),
+            description: clip([o.name, email].filter(Boolean).join(' · '), 72),
+          };
+    });
     return {
-      body: 'Perteneces a varias organizaciones. ¿Sobre cuál quieres hablar?',
-      footer: 'Para cambiar después, escribe ORGANIZACIÓN',
-      list: {
-        button: 'Elegir',
-        sections: [
-          {
-            rows: choosing.map((o) => ({
-              id: `${CHOICE_PREFIX}${o.organization_id}`,
-              title: o.name.slice(0, 24),
-              description: o.name.length > 24 ? o.name.slice(0, 72) : undefined,
-            })),
-          },
-        ],
-      },
+      body:
+        orgs.size > 1 && onePerOrg
+          ? 'Tu número está en varias organizaciones. ¿Sobre cuál quieres hablar?'
+          : 'Tu número está registrado en varias cuentas. ¿Con cuál quieres hablar?',
+      footer: 'Para cambiar después, escribe CAMBIAR',
+      list: { button: 'Elegir', sections: [{ rows }] },
     };
   }
 

@@ -122,8 +122,8 @@ describe('AssistantService', () => {
     });
     const [message] = (await service.reply(PHONE, '¿qué me falta?'))!;
     expect((message as any).list.sections[0].rows.map((r: any) => r.id)).toEqual([
-      `as:org:${ORG_A}`,
-      `as:org:${ORG_B}`,
+      `as:org:${ORG_A}:u1`,
+      `as:org:${ORG_B}:u2`,
     ]);
     expect(gemini.chat).not.toHaveBeenCalled();
     expect(conversationModel.updateOne.mock.calls[0][1].$set.pending_question).toBe('¿qué me falta?');
@@ -141,7 +141,7 @@ describe('AssistantService', () => {
       ],
       conversation: { pending_question: '¿qué me falta?' },
     });
-    await service.reply(PHONE, 'ACE', `as:org:${ORG_B}`);
+    await service.reply(PHONE, 'ACE', `as:org:${ORG_B}:u2`);
     expect(gemini.chat.mock.calls[0][0].message).toBe('¿qué me falta?');
     await gemini.chat.mock.calls[0][0].runTool('estado_curso', {});
     expect(tools.run.mock.calls[0][0]).toEqual({ userId: 'u2', organizationId: ORG_B });
@@ -201,5 +201,65 @@ describe('AssistantService: enlaces con acceso directo', () => {
 
     await expect(service.reply(PHONE, '¿dónde?')).resolves.toEqual([`Repasa aquí: ${LINK}`]);
     expect(links.addToMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe('AssistantService: varias cuentas con el mismo número', () => {
+  const twoOrgs = {
+    memberships: [
+      { organization_id: ORG_A, user_id: 'u1' },
+      { organization_id: ORG_B, user_id: 'u2' },
+    ],
+    enabledOrgs: [
+      { _id: ORG_A, name: '[PRUEBA] Gen.ON', assistant: { enabled: true } },
+      { _id: ORG_B, name: 'EndoCampus', assistant: { enabled: true } },
+    ],
+  };
+
+  it('si varias personas comparten el número en una organización, pregunta quién es', async () => {
+    const { service, gemini } = setup({
+      memberships: [
+        { organization_id: ORG_A, user_id: 'u1' },
+        { organization_id: ORG_A, user_id: 'u3' },
+      ],
+    });
+    const [message] = (await service.reply(PHONE, 'hola'))!;
+    const rows = (message as any).list.sections[0].rows;
+    expect(rows.map((r: any) => r.id)).toEqual([`as:org:${ORG_A}:u1`, `as:org:${ORG_A}:u3`]);
+    expect(rows[0].description).toContain('[PRUEBA] Gen.ON');
+    expect(gemini.chat).not.toHaveBeenCalled();
+  });
+
+  it('vuelve a preguntar si aparece otra cuenta después de haber elegido', async () => {
+    // Eligió (o se asignó sola) cuando solo existía la cuenta de ORG_A
+    const { service, gemini } = setup({
+      ...twoOrgs,
+      conversation: { organization_id: ORG_A, user_id: 'u1', options_key: `${ORG_A}:u1` },
+    });
+    const [message] = (await service.reply(PHONE, 'hola'))!;
+    expect((message as any).list).toBeDefined();
+    expect(gemini.chat).not.toHaveBeenCalled();
+  });
+
+  it('con la misma elección y las mismas cuentas no vuelve a preguntar', async () => {
+    const key = [`${ORG_A}:u1`, `${ORG_B}:u2`].sort().join('|');
+    const { service, gemini } = setup({
+      ...twoOrgs,
+      conversation: { organization_id: ORG_B, user_id: 'u2', options_key: key },
+    });
+    await service.reply(PHONE, '¿qué me falta?');
+    await gemini.chat.mock.calls[0][0].runTool('estado_curso', {});
+    expect(gemini.chat).toHaveBeenCalled();
+  });
+
+  it('CAMBIAR muestra otra vez las cuentas', async () => {
+    const key = [`${ORG_A}:u1`, `${ORG_B}:u2`].sort().join('|');
+    const { service, gemini } = setup({
+      ...twoOrgs,
+      conversation: { organization_id: ORG_B, user_id: 'u2', options_key: key },
+    });
+    const [message] = (await service.reply(PHONE, 'Cambiar'))!;
+    expect((message as any).list).toBeDefined();
+    expect(gemini.chat).not.toHaveBeenCalled();
   });
 });

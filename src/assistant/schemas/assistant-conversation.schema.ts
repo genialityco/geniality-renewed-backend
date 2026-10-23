@@ -36,6 +36,9 @@ export class AssistantConversation extends Document {
   @Prop({ required: true }) phone: string;
   @Prop({ type: String, default: null }) organization_id: string | null;
   @Prop({ type: String, default: null }) user_id: string | null;
+  // Cuentas del número cuando eligió: si cambian (otra organización activó el
+  // asistente, otra persona con el mismo número), se vuelve a preguntar
+  @Prop({ type: String, default: null }) options_key: string | null;
   // Esperando que elija organización: opciones y la pregunta que hizo
   @Prop({ type: [MongooseSchema.Types.Mixed], default: null })
   choosing: AssistantOrgOption[] | null;
