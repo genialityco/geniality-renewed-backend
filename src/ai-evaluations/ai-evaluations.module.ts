@@ -99,6 +99,10 @@ import { User, UserSchema } from '../users/schemas/user.schema';
 import { UsersModule } from '../users/users.module';
 import { EngagementModule } from '../engagement/engagement.module';
 
+import {
+  WhatsappInboundMessage,
+  WhatsappInboundMessageSchema,
+} from './schemas/whatsapp-inbound-message.schema';
 import { AuthLinksModule } from 'src/auth-links/auth-links.module';
 
 @Module({
@@ -112,6 +116,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
       { name: PracticeSession.name, schema: PracticeSessionSchema },
       { name: QuestionAttempt.name, schema: QuestionAttemptSchema },
       { name: WhatsappContact.name, schema: WhatsappContactSchema },
+      { name: WhatsappInboundMessage.name, schema: WhatsappInboundMessageSchema },
       { name: ClinicalCase.name, schema: ClinicalCaseSchema },
       { name: ClinicalCaseSession.name, schema: ClinicalCaseSessionSchema },
       { name: ActivityAttendee.name, schema: ActivityAttendeeSchema },

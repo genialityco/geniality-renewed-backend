@@ -57,7 +57,7 @@ export class AiEvaluationsWebhookController {
     const text = String(body?.text || '').trim();
     if (phone && text) {
       const replyId = body.replyId ? String(body.replyId) : undefined;
-      this.inboundService.enqueue(phone, text, replyId, body.wamid);
+      this.inboundService.enqueue(phone, text, replyId, body.wamid, body.timestamp);
     }
     return { status: 'accepted' };
   }

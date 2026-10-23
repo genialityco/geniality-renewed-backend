@@ -14,6 +14,7 @@ import {
 } from './schemas/assistant-conversation.schema';
 import { GeminiChatClient } from './gemini-chat.client';
 import { ASSISTANT_TOOLS, AssistantToolsService } from './assistant-tools.service';
+import { AuthLinksService } from 'src/auth-links/auth-links.service';
 
 const TIME_ZONE = 'America/Bogota';
 export const DEFAULT_DAILY_LIMIT = 30;
@@ -32,6 +33,8 @@ interface EnabledMembership extends AssistantOrgOption {
   personName: string;
   instructions: string;
   dailyLimit: number;
+  /** Los enlaces de las respuestas entran con la sesión iniciada */
+  autoLogin: boolean;
 }
 
 const localDate = (date: Date) =>
@@ -57,6 +60,7 @@ export class AssistantService implements OnModuleInit {
     private readonly inbound: WhatsappInboundService,
     private readonly gemini: GeminiChatClient,
     private readonly tools: AssistantToolsService,
+    private readonly authLinks?: AuthLinksService,
   ) {}
 
   onModuleInit() {
@@ -196,7 +200,15 @@ export class AssistantService implements OnModuleInit {
         },
       )
       .exec();
-    return [answer];
+    // La conversación guardada (que vuelve a Gemini como historial) queda sin
+    // el token; solo el mensaje que sale lleva el acceso directo
+    if (!current.autoLogin || !this.authLinks) return [answer];
+    return this.authLinks.addToMessages(
+      [answer],
+      current.user_id,
+      current.organization_id,
+      'assistant',
+    );
   }
 
   /** Membresías del número en organizaciones con el asistente habilitado. */
@@ -225,6 +237,7 @@ export class AssistantService implements OnModuleInit {
         personName: String(props.nombres || props.names || '').trim().split(/\s+/)[0] || '',
         instructions: String(org.assistant?.instructions || '').trim(),
         dailyLimit: Number(org.assistant?.daily_limit) > 0 ? Number(org.assistant.daily_limit) : DEFAULT_DAILY_LIMIT,
+        autoLogin: org.assistant?.auto_login_links !== false,
       });
     }
     return out;

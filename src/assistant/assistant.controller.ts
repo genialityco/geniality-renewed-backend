@@ -25,19 +25,28 @@ export class AssistantController {
       enabled: Boolean(org?.assistant?.enabled),
       instructions: org?.assistant?.instructions || '',
       daily_limit: Number(org?.assistant?.daily_limit) || DEFAULT_DAILY_LIMIT,
+      // Activo salvo que se apague: los enlaces de las respuestas entran con la sesión iniciada
+      auto_login_links: org?.assistant?.auto_login_links !== false,
     };
   }
 
   @Put('config')
   async update(
     @Param('organizationId') organizationId: string,
-    @Body() body: { enabled?: boolean; instructions?: string; daily_limit?: number },
+    @Body()
+    body: {
+      enabled?: boolean;
+      instructions?: string;
+      daily_limit?: number;
+      auto_login_links?: boolean;
+    },
   ) {
     const limit = Math.round(Number(body?.daily_limit));
     const assistant = {
       enabled: body?.enabled === true,
       instructions: String(body?.instructions || '').slice(0, 2000),
       daily_limit: limit >= 1 && limit <= 500 ? limit : DEFAULT_DAILY_LIMIT,
+      auto_login_links: body?.auto_login_links !== false,
     };
     await this.organizationModel.collection.updateOne(
       { _id: new Types.ObjectId(organizationId) },

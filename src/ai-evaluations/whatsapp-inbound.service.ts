@@ -6,6 +6,7 @@ import {
   WhatsappGatewayClient,
 } from 'src/reminders/whatsapp-gateway.client';
 import { WhatsappContact } from './schemas/whatsapp-contact.schema';
+import { WhatsappInboundMessage } from './schemas/whatsapp-inbound-message.schema';
 import {
   AiEvaluationEngineService,
   CODE_PATTERN,
@@ -19,6 +20,9 @@ import { WhatsappOptOutService } from 'src/engagement/whatsapp-opt-out.service';
 import { EngagementLogService } from 'src/engagement/engagement-log.service';
 
 const DEDUPE_TTL_MS = 24 * 3600 * 1000;
+// Un mensaje que Meta entrega con más antigüedad es un reintento tardío del
+// webhook: responderlo ahora sería contestar algo que la persona ya no espera
+const MAX_MESSAGE_AGE_MS = 10 * 60 * 1000;
 const OPT_OUT_REPLY =
   'Listo, no te enviaremos más prácticas ni recordatorios por WhatsApp. Si cambias de opinión, responde VOLVER o actívalo desde tu perfil en la plataforma. 👋';
 const OPT_IN_WORDS = new Set(['volver']);
@@ -117,16 +121,39 @@ export class WhatsappInboundService {
     private readonly whatsapp: WhatsappGatewayClient,
     private readonly optOut: WhatsappOptOutService,
     private readonly engagementLog: EngagementLogService,
+    @InjectModel(WhatsappInboundMessage.name)
+    private readonly inboundMessageModel?: Model<WhatsappInboundMessage>,
   ) {}
 
-  /** No bloquea: encola el mensaje del teléfono y responde cuando termina. */
-  enqueue(phone: string, text: string, replyId?: string, wamid?: string): void {
+  /**
+   * No bloquea: encola el mensaje del teléfono y responde cuando termina.
+   * Un mismo mensaje (wamid) se responde una sola vez, aunque Meta lo
+   * reintente o el backend se haya reiniciado; los reintentos tardíos
+   * (`timestamp` de Meta, en segundos) se ignoran.
+   */
+  enqueue(
+    phone: string,
+    text: string,
+    replyId?: string,
+    wamid?: string,
+    timestamp?: string | number,
+  ): void {
+    const sentAt = Number(timestamp) * 1000;
+    if (Number.isFinite(sentAt) && sentAt > 0 && Date.now() - sentAt > MAX_MESSAGE_AGE_MS) {
+      this.logger.warn(
+        `Mensaje de ${phone} ignorado: llegó ${Math.round((Date.now() - sentAt) / 60000)} min tarde (reintento de Meta)`,
+      );
+      return;
+    }
     if (wamid && this.isDuplicate(wamid)) return;
 
     const previous = this.phoneQueues.get(phone) || Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(() => this.process(phone, text, replyId));
+      .then(async () => {
+        if (wamid && !(await this.claim(wamid, phone))) return;
+        return this.process(phone, text, replyId);
+      });
     this.phoneQueues.set(phone, next);
     void next.finally(() => {
       if (this.phoneQueues.get(phone) === next) this.phoneQueues.delete(phone);
@@ -139,6 +166,26 @@ export class WhatsappInboundService {
     const last = contact?.last_inbound_at?.getTime() || 0;
     // Margen de 1 h para no enviar justo cuando la ventana se cierra
     return Date.now() - last < 23 * 3600 * 1000;
+  }
+
+  /**
+   * Registra el mensaje como procesado. false si ya lo estaba (lo procesó
+   * otra ejecución o una instancia anterior del backend). Si la base falla,
+   * se procesa: es preferible responder dos veces que no responder.
+   */
+  private async claim(wamid: string, phone: string): Promise<boolean> {
+    if (!this.inboundMessageModel) return true;
+    try {
+      await this.inboundMessageModel.create({ wamid, phone, received_at: new Date() });
+      return true;
+    } catch (error) {
+      if ((error as any)?.code === 11000) {
+        this.logger.warn(`Mensaje ${wamid} de ${phone} ya procesado: se ignora el reintento`);
+        return false;
+      }
+      this.logger.warn(`No se pudo registrar el mensaje ${wamid}: ${(error as Error).message}`);
+      return true;
+    }
   }
 
   private isDuplicate(wamid: string): boolean {

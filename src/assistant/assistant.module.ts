@@ -42,6 +42,8 @@ import { AssistantController } from './assistant.controller';
  * habilitan: responde lo que ningún otro motor atendió, con herramientas de
  * solo lectura sobre sus cursos, avance y el contenido de los videos.
  */
+import { AuthLinksModule } from 'src/auth-links/auth-links.module';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -61,6 +63,8 @@ import { AssistantController } from './assistant.controller';
     EngagementModule,
     TranscriptSegmentsModule,
     GenOnModule,
+    // Acceso directo en los enlaces de las respuestas
+    AuthLinksModule,
   ],
   controllers: [AssistantController],
   providers: [GeminiChatClient, AssistantToolsService, AssistantService],

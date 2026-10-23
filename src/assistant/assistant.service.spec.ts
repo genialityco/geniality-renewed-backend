@@ -11,6 +11,7 @@ function setup(opts: {
   enabledOrgs?: { _id: string; name: string; assistant?: any }[];
   conversation?: Record<string, any>;
   answer?: string;
+  authLinks?: Record<string, any>;
 } = {}) {
   const conversation = {
     _id: 'c1',
@@ -59,6 +60,7 @@ function setup(opts: {
     inbound as any,
     gemini as any,
     tools as any,
+    opts.authLinks as any,
   );
   return { service, conversationModel, gemini, tools, inbound };
 }
@@ -168,5 +170,36 @@ describe('AssistantService', () => {
     const [msg] = (await service.reply(PHONE, 'hola'))!;
     expect(msg).toContain('problema');
     expect(conversationModel.updateOne).toHaveBeenCalled();
+  });
+});
+
+describe('AssistantService: enlaces con acceso directo', () => {
+  const LINK = 'https://app.geniality.com.co/organization/6ada6d2ab4d306c546cb8e38/activitydetail/a1?t=90';
+  const authLinks = () => ({
+    addToMessages: jest.fn(async (msgs: string[]) => msgs.map((m) => m.replace(LINK, `${LINK}&login=tk`))),
+  });
+
+  it('la respuesta lleva el acceso directo; la conversación guardada no', async () => {
+    const links = authLinks();
+    const { service, conversationModel } = setup({ answer: `Repasa aquí: ${LINK}`, authLinks: links });
+
+    const out = await service.reply(PHONE, '¿dónde explican la TSH?');
+
+    expect(out).toEqual([`Repasa aquí: ${LINK}&login=tk`]);
+    expect(links.addToMessages).toHaveBeenCalledWith([`Repasa aquí: ${LINK}`], 'u1', ORG_A, 'assistant');
+    const saved = conversationModel.updateOne.mock.calls.at(-1)![1];
+    expect(saved.$push.turns.$each[1].text).toBe(`Repasa aquí: ${LINK}`);
+  });
+
+  it('si la organización lo apaga, los enlaces salen normales', async () => {
+    const links = authLinks();
+    const { service } = setup({
+      answer: `Repasa aquí: ${LINK}`,
+      authLinks: links,
+      enabledOrgs: [{ _id: ORG_A, name: '[PRUEBA] Gen.ON', assistant: { enabled: true, auto_login_links: false } }],
+    });
+
+    await expect(service.reply(PHONE, '¿dónde?')).resolves.toEqual([`Repasa aquí: ${LINK}`]);
+    expect(links.addToMessages).not.toHaveBeenCalled();
   });
 });
