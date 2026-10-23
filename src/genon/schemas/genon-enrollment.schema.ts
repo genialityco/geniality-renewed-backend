@@ -86,6 +86,8 @@ export class GenOnEnrollment extends Document {
   @Prop({ default: 0 }) progress: number;
   @Prop({ default: 0 }) completed_activities: number;
   @Prop({ type: Date, default: null }) last_activity_at: Date | null;
+  // Última vez que la segmentación evaluó a esta persona (diaria o al despachar)
+  @Prop({ type: Date, default: null }) segmented_at: Date | null;
   @Prop({ type: Date, default: null }) enrolled_at: Date | null;
 
   // Conversación

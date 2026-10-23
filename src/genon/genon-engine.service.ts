@@ -17,6 +17,7 @@ import { Event } from 'src/events/schemas/event.schema';
 import { Organization } from 'src/organizations/schemas/organization.schema';
 import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema';
 import { User } from 'src/users/schemas/user.schema';
+import { ProgressEvent } from 'src/progress-events/schemas/progress-event.schema';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 import {
   resolveEmail,
@@ -50,6 +51,7 @@ import {
   spreadSlots,
   stepSendTime,
   validSlots,
+  zonedTime,
 } from './genon-schedule';
 import {
   buildSendComponents,
@@ -153,6 +155,8 @@ export class GenOnEngineService {
     private readonly snapshots: CourseSnapshotsService,
     private readonly engagementLog: EngagementLogService,
     private readonly gateway: WhatsappGatewayClient,
+    @InjectModel(ProgressEvent.name)
+    private readonly progressEventModel: Model<ProgressEvent>,
   ) {}
 
   // ───────────────────────── Ejecución ─────────────────────────
@@ -246,6 +250,8 @@ export class GenOnEngineService {
     program: GenOnProgram,
     event: { _id: any; name?: string; organizer_id: any },
     now: Date,
+    /** Solo estas personas (las estadísticas del curso siguen siendo de todos) */
+    onlyUsers?: Set<string>,
   ): Promise<Record<string, number> | null> {
     const eventId = String(event._id);
     const orgId = String(event.organizer_id);
@@ -269,6 +275,7 @@ export class GenOnEngineService {
     const counts: Record<string, number> = {};
     const ops: any[] = [];
     for (const row of rows) {
+      if (onlyUsers && !onlyUsers.has(row.user_id)) continue;
       const completed = stats.completedByUser.get(row.user_id)?.size || 0;
       const segment = classifySegment(
         {
@@ -336,7 +343,7 @@ export class GenOnEngineService {
             test: false,
           },
           update: {
-            $set: { ...base, ...state, ...schedule, slot },
+            $set: { ...base, ...state, ...schedule, slot, segmented_at: now },
             $setOnInsert: { organization_id: orgId, exited: false },
           },
           upsert: true,
@@ -514,8 +521,8 @@ export class GenOnEngineService {
 
     const cache = new Map<string, CourseCache | null>();
     const counts: VariantCounts = new Map();
-    const outcomes: DispatchOutcome[] = [];
-    for (const e of due) {
+    const { due: still, outcomes } = await this.resegmentMoved(program, due, now);
+    for (const e of still) {
       try {
         let entry = cache.get(e.event_id);
         if (entry === undefined) {
@@ -540,6 +547,76 @@ export class GenOnEngineService {
       }
     }
     return outcomes;
+  }
+
+  /**
+   * La segmentación es diaria: quien avanzó en el curso desde la última se
+   * resegmenta antes de enviarle su toque. Si ya no está en el mismo segmento
+   * (p. ej. en abandono y empezó el curso esta mañana), el toque no sale.
+   */
+  private async resegmentMoved(
+    program: GenOnProgram,
+    due: GenOnEnrollment[],
+    now: Date,
+  ): Promise<{ due: GenOnEnrollment[]; outcomes: DispatchOutcome[] }> {
+    if (!due.length) return { due, outcomes: [] };
+    // Inscripciones anteriores a segmented_at: se segmentaron hoy de madrugada
+    const startOfDay = zonedTime(localDate(now, program.timezone), '00:00', program.timezone);
+    const sinceOf = (e: GenOnEnrollment) =>
+      e.segmented_at ? new Date(e.segmented_at) : startOfDay;
+    const progress = await this.progressEventModel.collection
+      .find(
+        {
+          user_id: { $in: due.map((e) => e.user_id) },
+          event_id: { $in: [...new Set(due.map((e) => e.event_id))] },
+          at: { $gt: new Date(Math.min(...due.map((e) => sinceOf(e).getTime()))) },
+        },
+        { projection: { user_id: 1, event_id: 1, at: 1 } },
+      )
+      .toArray();
+    const moved = due.filter((e) =>
+      progress.some(
+        (p: any) =>
+          p.user_id === e.user_id &&
+          p.event_id === e.event_id &&
+          new Date(p.at) > sinceOf(e),
+      ),
+    );
+    if (!moved.length) return { due, outcomes: [] };
+
+    const byEvent = new Map<string, Set<string>>();
+    for (const e of moved) {
+      byEvent.set(e.event_id, (byEvent.get(e.event_id) || new Set()).add(e.user_id));
+    }
+    for (const [eventId, users] of byEvent) {
+      if (!Types.ObjectId.isValid(eventId)) continue;
+      const event = await this.eventModel.collection.findOne(
+        { _id: new Types.ObjectId(eventId) },
+        { projection: { name: 1, organizer_id: 1 } },
+      );
+      if (event) await this.segmentEvent(program, event as any, now, users);
+    }
+
+    const fresh = new Map(
+      (await this.enrollmentModel.find({ _id: { $in: moved.map((e) => e._id) } }).exec()).map(
+        (e) => [String(e._id), e],
+      ),
+    );
+    const still: GenOnEnrollment[] = [];
+    const outcomes: DispatchOutcome[] = [];
+    for (const e of due) {
+      const f = fresh.get(String(e._id));
+      if (!f) {
+        still.push(e);
+      } else if (f.segment === e.segment) {
+        still.push(f);
+      } else {
+        outcomes.push(
+          this.outcome(e, e.next_step_key, 'skipped', `avanzó en el curso: pasó a ${f.segment}`),
+        );
+      }
+    }
+    return { due: still, outcomes };
   }
 
   async loadCourseCache(

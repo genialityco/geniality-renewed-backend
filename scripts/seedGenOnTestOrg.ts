@@ -82,6 +82,10 @@ const PERSONAS: Persona[] = [
   { key: 'graduado', nombres: 'Felipe', apellidos: 'Graduado Prueba', enrolledDaysAgo: 50, completed: [40, 36, 32, 28, 24, 20, 16, 12], passExams: true },
 ];
 
+/** Correo de prueba: primer nombre sin tildes (andres@prueba.com); sin "+", que no lo aceptan. */
+const testEmail = (nombres: string) =>
+  `${nombres.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()}@prueba.com`;
+
 // Colecciones donde la semilla escribe (para el borrado)
 const COLLECTIONS = [
   'organizations',
@@ -251,7 +255,7 @@ async function seed(db: mongoose.Connection, dryRun: boolean) {
   const total = ordered.length;
   PERSONAS.forEach((p, n) => {
     const userId = new ObjectId();
-    const email = `genon.prueba+${p.key}@example.com`;
+    const email = testEmail(p.nombres);
     const enrolledAt = ago(p.enrolledDaysAgo);
     docs.users.push({
       _id: userId,

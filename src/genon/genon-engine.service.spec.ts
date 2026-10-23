@@ -38,6 +38,10 @@ function setup(opts: {
   phone?: string | null;
   deliverResult?: string;
   variantCounts?: { _id: string; n: number }[];
+  /** Avances registrados en progress_events */
+  progress?: { user_id: string; event_id: string; at: Date }[];
+  /** Cómo queda la inscripción si se resegmenta al despachar */
+  resegmented?: Record<string, any>;
 } = {}) {
   const program: any = {
     _id: 'p1',
@@ -71,6 +75,8 @@ function setup(opts: {
     find: jest.fn(() => ({
       sort: () => ({ limit: () => exec([enrollment]) }),
       select: () => ({ lean: () => exec([{ user_id: 'u1', progress: 0 }]) }),
+      // Recarga tras resegmentar
+      exec: jest.fn().mockResolvedValue([{ ...enrollment, ...opts.resegmented }]),
     })),
     updateOne: jest.fn((..._args: any[]) => exec({})),
     aggregate: jest.fn((..._args: any[]) => exec(opts.variantCounts || [])),
@@ -113,11 +119,21 @@ function setup(opts: {
   const gateway = {
     sendTemplateComponents: jest.fn().mockResolvedValue({ result: 'sent', messageId: 'w1' }),
   };
+  const progressEventModel = {
+    collection: {
+      find: jest.fn(() => ({ toArray: jest.fn().mockResolvedValue(opts.progress || []) })),
+    },
+  };
+  const eventModel = {
+    collection: {
+      findOne: jest.fn().mockResolvedValue({ _id: 'ev1', name: 'Curso', organizer_id: 'org1' }),
+    },
+  };
 
   const service = new GenOnEngineService(
     programModel as any,
     enrollmentModel as any,
-    {} as any,
+    eventModel as any,
     {} as any,
     {} as any,
     {} as any,
@@ -126,6 +142,7 @@ function setup(opts: {
     {} as any,
     engagementLog as any,
     gateway as any,
+    progressEventModel as any,
   );
   jest.spyOn(service, 'resolvePerson').mockResolvedValue({
     userId: 'u1',
@@ -350,5 +367,39 @@ describe('GenOnEngineService: reprogramación', () => {
     expect(
       (service as any).schedule(program, state, '10:00', NOW, 60 * 60 * 1000).next_step_at,
     ).toEqual(new Date('2026-10-22T15:00:00Z'));
+  });
+});
+
+describe('GenOnEngineService: avance desde la última segmentación', () => {
+  const segmentedAt = new Date(NOW.getTime() - 10 * 3600 * 1000);
+  const EV = '6ada6d2ab4d306c546cb8e39';
+
+  it('si avanzó y cambió de segmento, se resegmenta y el toque no sale', async () => {
+    const { service, program, engagementLog } = setup({
+      enrollment: { event_id: EV, segmented_at: segmentedAt },
+      progress: [{ user_id: 'u1', event_id: EV, at: new Date(NOW.getTime() - 3600 * 1000) }],
+      resegmented: { segment: 'active', next_step_key: null, next_step_at: null },
+    });
+    const segmentEvent = jest.spyOn(service as any, 'segmentEvent').mockResolvedValue({});
+
+    const { outcomes } = await service.runProgram(program, NOW);
+
+    expect(segmentEvent).toHaveBeenCalledWith(program, expect.anything(), NOW, new Set(['u1']));
+    expect(outcomes[0]).toMatchObject({ result: 'skipped', reason: 'avanzó en el curso: pasó a active' });
+    expect(engagementLog.deliver).not.toHaveBeenCalled();
+  });
+
+  it('sin avance desde la segmentación, envía sin resegmentar', async () => {
+    const { service, program } = setup({
+      enrollment: { event_id: EV, segmented_at: segmentedAt },
+      // Avance anterior a la segmentación: ya contado
+      progress: [{ user_id: 'u1', event_id: EV, at: new Date(segmentedAt.getTime() - 1000) }],
+    });
+    const segmentEvent = jest.spyOn(service as any, 'segmentEvent');
+
+    const { outcomes } = await service.runProgram(program, NOW);
+
+    expect(segmentEvent).not.toHaveBeenCalled();
+    expect(outcomes[0]).toMatchObject({ step: '1.1', result: 'sent' });
   });
 });

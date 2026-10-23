@@ -43,13 +43,9 @@ export class HostsService {
   }
 
   // NUEVO: Método para buscar hosts por event_id
+  // Un curso sin conferencistas es válido: lista vacía, no 404 (el 404
+  // tumbaba la carga del curso en el frontend: "Curso no encontrado")
   async findByEventId(eventId: string): Promise<Host[]> {
-    const hosts = await this.hostModel.find({ event_id: eventId }).exec();
-    if (!hosts || hosts.length === 0) {
-      throw new NotFoundException(
-        `No se encontraron hosts para el evento con id ${eventId}`,
-      );
-    }
-    return hosts;
+    return this.hostModel.find({ event_id: eventId }).exec();
   }
 }
