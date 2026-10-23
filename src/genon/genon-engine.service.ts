@@ -818,16 +818,18 @@ export class GenOnEngineService {
 
   /**
    * Valores y sufijo del botón con el acceso directo, si el programa lo tiene
-   * activo y es un envío real a un inscrito (no simulación ni prueba).
+   * activo y el mensaje sale de verdad (no en simulación). También en los
+   * envíos de prueba: el admin ya puede copiar ese enlace desde el historial.
    */
   private async withAccess(
     program: GenOnProgram,
-    e: GenOnEnrollment,
+    e: Pick<GenOnEnrollment, 'user_id' | 'organization_id'>,
     params: { values: Record<string, string | number | null>; urlSuffix: string; dryRun: boolean },
+    source = 'genon',
   ) {
     const plain = { values: params.values, urlSuffix: params.urlSuffix };
-    if (!program.auto_login_links || params.dryRun || e.test || !this.authLinks) return plain;
-    const token = await this.authLinks.create(e.user_id, e.organization_id, 'genon');
+    if (!program.auto_login_links || params.dryRun || !this.authLinks) return plain;
+    const token = await this.authLinks.create(e.user_id, e.organization_id, source);
     if (!token) return plain;
     const values: Record<string, string | number | null> = {};
     for (const [k, v] of Object.entries(params.values)) {
@@ -1492,13 +1494,19 @@ export class GenOnEngineService {
       )
       .exec();
 
+    const access = await this.withAccess(
+      program,
+      { user_id: params.userId, organization_id: params.organizationId },
+      { values: params.values, urlSuffix: params.urlSuffix, dryRun: false },
+      'admin',
+    );
     let components: ReturnType<typeof buildSendComponents>;
     try {
       components = buildSendComponents({
         variables: version.variables,
-        values: params.values,
+        values: access.values,
         buttons: version.buttons,
-        urlSuffix: params.urlSuffix,
+        urlSuffix: access.urlSuffix,
         payloadFor: (b) => buttonPayload(String(test._id), b.action, params.actionData),
       });
     } catch (error) {

@@ -329,7 +329,7 @@ export class PracticeEngineService {
     replies: OutboundMessage[],
   ): Promise<OutboundMessage[]> {
     const enabled = session.genon
-      ? Boolean(session.genon.auto_login) && !session.genon.test
+      ? Boolean(session.genon.auto_login)
       : process.env.AUTH_LINKS_PRACTICE === 'true';
     if (!enabled || !this.authLinks || !session.organization_id) return replies;
     return this.authLinks.addToMessages(

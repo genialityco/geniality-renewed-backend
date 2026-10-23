@@ -111,8 +111,8 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
     const out = await this.respond(phone, text, replyId);
     if (!out) return null;
     const { program, e, messages } = out;
-    // Acceso directo en los enlaces de las respuestas (no en las pruebas)
-    if (!program.auto_login_links || e.test || !this.authLinks) return messages;
+    // Acceso directo en los enlaces de las respuestas
+    if (!program.auto_login_links || !this.authLinks) return messages;
     return this.authLinks.addToMessages(messages, e.user_id, e.organization_id, 'genon');
   }
 
@@ -430,7 +430,7 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
         test: e.test,
         kind: finalKind,
         // Los enlaces del reto (minuto del video) entran con la sesión iniciada
-        auto_login: Boolean(program.auto_login_links) && !e.test,
+        auto_login: Boolean(program.auto_login_links),
       },
       intro,
     });
