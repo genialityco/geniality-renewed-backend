@@ -21,6 +21,7 @@ import { ProgressEvent } from 'src/progress-events/schemas/progress-event.schema
 import { AuthLinksService } from 'src/auth-links/auth-links.service';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 import {
+  maskPhone,
   resolveEmail,
   resolveName,
   resolvePhone,
@@ -749,6 +750,8 @@ export class GenOnEngineService {
       actionData?: Record<string, string>;
       /** Hora del registro (en simulación, la hora en que saldría) */
       at?: Date;
+      /** Envío manual de un admin: sin tope semanal */
+      manual?: boolean;
     },
   ): Promise<{
     result: DeliveryResult | 'not_approved' | 'missing_data';
@@ -793,7 +796,7 @@ export class GenOnEngineService {
         progress: e.progress ?? null,
         completedActivities: e.completed_activities ?? null,
         text: renderText(version.body, params.values),
-        weeklyCap: program.weekly_cap,
+        weeklyCap: params.manual ? Number.MAX_SAFE_INTEGER : program.weekly_cap,
         holdout: params.holdout,
         dryRun: params.dryRun,
         at: params.at,
@@ -1428,6 +1431,115 @@ export class GenOnEngineService {
       urlSuffix: ctx.urlSuffix,
       to: phone,
     });
+  }
+
+  /**
+   * Envía de verdad un toque de la secuencia a la persona (botón "Enviar a la
+   * persona" de Pruebas). Si el toque es de su segmento actual, su secuencia
+   * avanza a él, como en un envío normal.
+   */
+  async sendRealStep(program: GenOnProgram, userId: string, eventId: string, stepKey: string) {
+    const { step, segment } = this.findStep(program, stepKey);
+    const now = new Date();
+    const { course, stats, row } = await this.loadForUser(program, userId, eventId, now);
+    const person = await this.resolvePerson(course.organizationId, userId);
+    const ctx = this.context.forPerson(
+      program,
+      course,
+      stats,
+      { userId, fullName: person.name, email: person.email, progress: row.course_progress },
+      segment,
+    );
+    if (step.mechanic === 'challenge_invite' && !ctx.challengeActivity) {
+      throw new BadRequestException(NO_CHALLENGE_REASON);
+    }
+    const picks = await this.storedPicks(program, eventId, userId);
+    const variant = this.chooseVariant(program, step, ctx, userId, picks) || step.variants[0];
+    return this.sendRealTemplate(program, {
+      userId,
+      eventId,
+      templateKey: variant.template_key,
+      values: ctx.values,
+      urlSuffix: ctx.urlSuffix,
+      step: step.key,
+      advance: { step, segment },
+    });
+  }
+
+  /**
+   * Envío real y manual a la persona con su inscripción y su teléfono: los
+   * botones, el reto y las respuestas del chatbot usan sus datos reales y
+   * queda en la bitácora. Se salta el tope semanal y el grupo de control
+   * (lo pide un admin); respeta teléfono, consentimiento y baja.
+   */
+  async sendRealTemplate(
+    program: GenOnProgram,
+    params: {
+      userId: string;
+      eventId: string;
+      templateKey: string;
+      values: Record<string, string | number | null>;
+      urlSuffix: string;
+      /** Cómo aparece en la bitácora ("1.3", "certificado") */
+      step: string;
+      actionData?: Record<string, string>;
+      /** Toque de la secuencia: avanza si es del segmento actual */
+      advance?: { step: GenOnStep; segment: GenOnSegment };
+    },
+  ) {
+    const now = new Date();
+    const find = () =>
+      this.enrollmentModel
+        .findOne({
+          program_id: String(program._id),
+          event_id: params.eventId,
+          user_id: params.userId,
+          test: false,
+        })
+        .exec();
+    let e = await find();
+    if (!e) {
+      // Aún no segmentada (p. ej. tras borrar su historial)
+      await this.resegmentPeople(program, params.eventId, new Set([params.userId]), now);
+      e = await find();
+    }
+    if (!e) throw new BadRequestException('La persona no está inscrita en el programa.');
+    if (e.exited) {
+      throw new BadRequestException('La persona salió del programa (pidió no recibir mensajes).');
+    }
+    const person = await this.resolvePerson(e.organization_id, e.user_id);
+    if (!person.phone) throw new BadRequestException('La persona no tiene teléfono.');
+    if (!person.consent) {
+      throw new BadRequestException(
+        'La persona no tiene consentimiento de WhatsApp (o se dio de baja).',
+      );
+    }
+
+    const delivery = await this.deliverTemplate(program, e, person, {
+      templateKey: params.templateKey,
+      values: params.values,
+      urlSuffix: params.urlSuffix,
+      dedupeKey: `genon:manual:${String(e._id)}:${params.step}:${now.getTime()}`,
+      segment: e.segment,
+      step: params.step,
+      holdout: false,
+      dryRun: false,
+      actionData: params.actionData,
+      at: now,
+      manual: true,
+    });
+    if (delivery.result !== 'sent' && delivery.result !== 'fallback_email') {
+      throw new BadRequestException(delivery.reason || `No se envió (${delivery.result}).`);
+    }
+    const advanced = Boolean(params.advance && params.advance.segment === e.segment);
+    if (advanced) await this.advance(program, e, params.advance!.step, now, null);
+    return {
+      result: delivery.result,
+      template: params.templateKey,
+      phone: maskPhone(person.phone),
+      segment: e.segment,
+      advanced,
+    };
   }
 
   /**

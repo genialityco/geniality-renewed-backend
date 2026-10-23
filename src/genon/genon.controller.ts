@@ -250,6 +250,19 @@ export class GenOnController {
     );
   }
 
+  /** Envía de verdad el toque a la persona (su teléfono y su inscripción real). */
+  @Post('programs/:id/test/send-real')
+  async sendRealStep(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { userId?: string; eventId?: string; stepKey?: string },
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    this.requireIds(body);
+    if (!body.stepKey) throw new BadRequestException('Falta el toque');
+    return this.engine.sendRealStep(program, body.userId!, body.eventId!, body.stepKey);
+  }
+
   @Post('programs/:id/test/send')
   async sendTest(
     @Req() req: any,
@@ -345,6 +358,23 @@ export class GenOnController {
     const program = await this.programs.get(req.auth.uid, id);
     this.requireIds(body);
     return this.triggers.previewTrigger(
+      program,
+      body.userId!,
+      body.eventId!,
+      this.triggerKey(body.key),
+    );
+  }
+
+  /** Envía de verdad el disparador a la persona (solo si hoy se cumple). */
+  @Post('programs/:id/test/triggers/send-real')
+  async sendTriggerReal(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { userId?: string; eventId?: string; key?: string },
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    this.requireIds(body);
+    return this.triggers.sendTriggerReal(
       program,
       body.userId!,
       body.eventId!,

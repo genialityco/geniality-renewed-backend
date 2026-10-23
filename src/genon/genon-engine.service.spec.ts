@@ -455,3 +455,69 @@ describe('GenOnEngineService: acceso directo en los enlaces', () => {
     expect(dry.create).not.toHaveBeenCalled();
   });
 });
+
+describe('GenOnEngineService: enviar a la persona', () => {
+  const step = () => ({ key: '1.1', day: 0, mechanic: 'abandon_question', variants: [], enabled: true });
+
+  it('envía con su inscripción real, sin tope ni grupo de control, y avanza su secuencia', async () => {
+    const { service, program, enrollmentModel, engagementLog, gateway } = setup({
+      enrollment: { holdout: true },
+    });
+    (enrollmentModel as any).findOne = jest.fn(() => exec({ _id: 'e1', user_id: 'u1', organization_id: 'org1', event_id: 'ev1', segment: 'abandon', segment_since: NOW, slot: '12:30', exited: false }));
+
+    const out = await service.sendRealTemplate(program, {
+      userId: 'u1',
+      eventId: 'ev1',
+      templateKey: 'abandon_question',
+      values: { nombre: 'Ana', curso: 'Endocrinología' },
+      urlSuffix: '',
+      step: '1.1',
+      advance: { step: step() as any, segment: 'abandon' },
+    });
+
+    expect(engagementLog.deliver.mock.calls[0][0]).toMatchObject({
+      holdout: false,
+      dryRun: false,
+      weeklyCap: Number.MAX_SAFE_INTEGER,
+      step: '1.1',
+    });
+    expect(gateway.sendTemplateComponents.mock.calls[0][0].to).toBe(PHONE);
+    expect(out).toMatchObject({ result: 'sent', advanced: true });
+    expect(lastSet(enrollmentModel)).toMatchObject({ last_step_key: '1.1' });
+  });
+
+  it('no avanza la secuencia si el toque es de otro segmento', async () => {
+    const { service, program, enrollmentModel } = setup();
+    (enrollmentModel as any).findOne = jest.fn(() => exec({ _id: 'e1', user_id: 'u1', organization_id: 'org1', event_id: 'ev1', segment: 'active', exited: false }));
+
+    const out = await service.sendRealTemplate(program, {
+      userId: 'u1',
+      eventId: 'ev1',
+      templateKey: 'abandon_question',
+      values: { nombre: 'Ana', curso: 'Endocrinología' },
+      urlSuffix: '',
+      step: '1.1',
+      advance: { step: step() as any, segment: 'abandon' },
+    });
+
+    expect(out.advanced).toBe(false);
+  });
+
+  it('no envía a quien no tiene consentimiento', async () => {
+    const { service, program, enrollmentModel, engagementLog } = setup();
+    (enrollmentModel as any).findOne = jest.fn(() => exec({ _id: 'e1', user_id: 'u1', organization_id: 'org1', event_id: 'ev1', segment: 'abandon', exited: false }));
+    (service.resolvePerson as jest.Mock).mockResolvedValue({ userId: 'u1', name: 'Ana', email: '', phone: PHONE, consent: false });
+
+    await expect(
+      service.sendRealTemplate(program, {
+        userId: 'u1',
+        eventId: 'ev1',
+        templateKey: 'abandon_question',
+        values: { nombre: 'Ana', curso: 'Endocrinología' },
+        urlSuffix: '',
+        step: '1.1',
+      }),
+    ).rejects.toThrow('consentimiento');
+    expect(engagementLog.deliver).not.toHaveBeenCalled();
+  });
+});

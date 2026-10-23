@@ -1116,6 +1116,33 @@ export class GenOnTriggersService {
     return { ...result, sample: msg.sample };
   }
 
+  /**
+   * Envía de verdad el disparador a la persona (botón "Enviar a la persona").
+   * Solo si hoy se cumple: con datos de ejemplo le llegaría algo falso.
+   */
+  async sendTriggerReal(
+    program: GenOnProgram,
+    userId: string,
+    eventId: string,
+    key: GenOnTriggerKey,
+  ) {
+    const msg = await this.buildTriggerMessage(program, userId, eventId, key);
+    if (msg.sample) {
+      throw new BadRequestException(
+        'Hoy este disparador no se cumple para la persona: el mensaje llevaría datos de ejemplo. Usa "Enviar a mi teléfono" para verlo.',
+      );
+    }
+    return this.engine.sendRealTemplate(program, {
+      userId,
+      eventId,
+      templateKey: msg.templateKey,
+      values: msg.values,
+      urlSuffix: msg.urlSuffix,
+      step: TRIGGER_STEP[key],
+      actionData: msg.actionData,
+    });
+  }
+
   private templateFor(cfg: GenOnTriggersConfig, key: GenOnTriggerKey): string {
     switch (key) {
       case 'module_completed':
