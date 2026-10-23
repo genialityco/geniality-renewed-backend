@@ -56,6 +56,9 @@ const ACTIVE_ONLY: GenOnTriggerKey[] = [
   'streak_recovery',
 ];
 
+// No aplican a quien ya terminó el curso (si egresa, se descartan)
+const NOT_GRADUATED: GenOnTriggerKey[] = ['exam_reminder'];
+
 function idVariants(id: unknown): any[] {
   const raw = String(id);
   return Types.ObjectId.isValid(raw) && String(new Types.ObjectId(raw)) === raw
@@ -447,8 +450,8 @@ export class GenOnTriggersService {
     const completed = stats.completedByUser.get(e.user_id) || new Set<string>();
     const modules = this.context.modulesOf(course);
 
-    // Recordatorio de examen (todos los segmentos)
-    if (cfg.exam_reminder.enabled) {
+    // Recordatorio de examen (todos los segmentos menos egresados)
+    if (cfg.exam_reminder.enabled && e.segment !== 'graduated') {
       for (const quiz of data.quizzes) {
         const quizId = String(quiz._id);
         if (data.bestScore.has(`${e.user_id}:${quizId}`)) continue;
@@ -705,7 +708,8 @@ export class GenOnTriggersService {
       const live = (e.queue || []).filter(
         (q) =>
           new Date(q.expires_at).getTime() > now.getTime() &&
-          (!ACTIVE_ONLY.includes(q.key) || e.segment === 'active'),
+          (!ACTIVE_ONLY.includes(q.key) || e.segment === 'active') &&
+          (!NOT_GRADUATED.includes(q.key) || e.segment !== 'graduated'),
       );
       const ready = live
         .filter((q) => new Date(q.due_at).getTime() <= until.getTime())

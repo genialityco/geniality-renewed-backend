@@ -106,6 +106,7 @@ import { GenOnCron } from './genon.cron';
     GenOnHistoryService,
     GenOnCron,
   ],
-  exports: [GenOnProgramsService],
+  // GenOnContextService: el asistente usa los cursos en orden y sus módulos
+  exports: [GenOnProgramsService, GenOnContextService],
 })
 export class GenOnModule {}

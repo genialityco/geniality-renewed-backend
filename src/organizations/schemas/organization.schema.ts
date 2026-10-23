@@ -21,6 +21,16 @@ export class Organization extends Document {
   // consentimiento para recibir WhatsApp (ver common/whatsapp-consent.ts).
   @Prop({ type: String, default: null })
   whatsapp_consent_property?: string | null;
+  // Asistente por WhatsApp (src/assistant): solo responde en las
+  // organizaciones donde está habilitado
+  @Prop({ type: MongooseSchema.Types.Mixed, default: null })
+  assistant?: {
+    enabled: boolean;
+    /** Indicaciones propias de la organización (tono, temas, contacto) */
+    instructions?: string;
+    /** Mensajes por persona al día (por defecto 30) */
+    daily_limit?: number;
+  } | null;
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   styles?: { banner_image_email?: string; FooterImage?: string; banner_image?: string; event_image?: string; logo_image?: string; auth_image?: string };
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })

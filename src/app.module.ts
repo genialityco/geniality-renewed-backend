@@ -32,6 +32,7 @@ import { ProgressEventsModule } from './progress-events/progress-events.module';
 import { CourseSnapshotsModule } from './course-snapshots/course-snapshots.module';
 import { EngagementModule } from './engagement/engagement.module';
 import { GenOnModule } from './genon/genon.module';
+import { AssistantModule } from './assistant/assistant.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { GenOnModule } from './genon/genon.module';
     CourseSnapshotsModule,
     EngagementModule,
     GenOnModule,
+    AssistantModule,
   ],
   // providers: [SessionTokenGuard],
 })

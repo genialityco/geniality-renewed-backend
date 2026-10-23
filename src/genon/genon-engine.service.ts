@@ -385,9 +385,13 @@ export class GenOnEngineService {
    * Reparte de nuevo a todos los inscritos por igual entre las franjas
    * actuales y borra las variantes asignadas (el próximo envío de cada toque
    * las vuelve a repartir). La hora del próximo toque se recalcula con la
-   * franja nueva.
+   * franja nueva. Segmenta antes (no envía nada) para que también reparta a
+   * quienes aún no tienen inscripción, p. ej. justo después de activar el
+   * programa, que borra las de la simulación. No marca la segmentación del
+   * día: la pasada diaria del cron (con sus disparadores) sigue igual.
    */
   async reassign(program: GenOnProgram, now: Date) {
+    await this.segment(program, now);
     const all = await this.enrollmentModel
       .find({ program_id: String(program._id), test: false })
       .select(

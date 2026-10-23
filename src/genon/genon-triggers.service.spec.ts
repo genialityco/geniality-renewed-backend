@@ -101,6 +101,12 @@ describe('GenOnTriggersService: disparadores diarios', () => {
     expect(scenario({ completed: { a1: 5 } })).not.toContain('exam_reminder');
   });
 
+  it('no recuerda el examen a quien ya egresó', () => {
+    expect(
+      scenario({ segment: 'graduated', completed: { a1: 5, a2: 3 }, progress: 100 }),
+    ).not.toContain('exam_reminder');
+  });
+
   it('certificado: egresado, reglas cumplidas y sin certificado generado', () => {
     const gating = { certificate_gating_enabled: true, certificate_required_activities: 2 };
     expect(
@@ -148,13 +154,13 @@ describe('GenOnTriggersService: disparadores diarios', () => {
 });
 
 describe('GenOnTriggersService: cola', () => {
-  function queueSetup(queue: any[], deliverResult = 'sent') {
+  function queueSetup(queue: any[], deliverResult = 'sent', segment = 'active') {
     const e = {
       _id: 'e1',
       user_id: 'u1',
       event_id: 'ev1',
       organization_id: 'org1',
-      segment: 'active',
+      segment,
       slot: '12:30',
       holdout: false,
       progress: 50,
@@ -215,6 +221,21 @@ describe('GenOnTriggersService: cola', () => {
     expect(params.values.modulo).toBe('Módulo 1');
     const queue = enrollmentModel.updateOne.mock.calls[0][1].$set.queue;
     expect(queue.map((q: any) => q.key)).toEqual(['module_completed']);
+  });
+
+  it('descarta el recordatorio de examen encolado si la persona egresó', async () => {
+    const { svc, program, enrollmentModel, engine, cache } = queueSetup(
+      [item('exam_reminder'), item('certificate')],
+      'sent',
+      'graduated',
+    );
+
+    const out = await svc.dispatchQueue(program, defaultTriggers(), NOW, false, 10, cache);
+
+    expect(out[0]).toMatchObject({ step: 'certificado' });
+    expect(engine.deliverTemplate.mock.calls[0][3].templateKey).toBe('certificate');
+    const queue = enrollmentModel.updateOne.mock.calls[0][1].$set.queue;
+    expect(queue).toEqual([]);
   });
 
   it('si el tope lo frena, se reintenta al día siguiente', async () => {

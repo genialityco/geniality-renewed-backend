@@ -73,6 +73,45 @@ export class WhatsappOptOutService {
     return ids.length;
   }
 
+  /**
+   * Membresías cuyo teléfono resuelto es este número (en cualquier
+   * organización), con su organización, usuario y estado de WhatsApp.
+   */
+  async membershipsByPhone(phone: string): Promise<
+    {
+      _id: Types.ObjectId;
+      user_id: string;
+      organization_id: string;
+      whatsapp_opt_out_at: Date | null;
+      properties: Record<string, any>;
+    }[]
+  > {
+    const digits = String(phone ?? '').replace(/\D/g, '');
+    if (digits.length < 7) return [];
+    const ids = await this.findMembershipIds(digits);
+    if (!ids.length) return [];
+    const rows = await this.organizationUserModel.collection
+      .find(
+        { _id: { $in: ids } },
+        {
+          projection: {
+            user_id: 1,
+            organization_id: 1,
+            whatsapp_opt_out_at: 1,
+            properties: 1,
+          },
+        },
+      )
+      .toArray();
+    return rows.map((o: any) => ({
+      _id: o._id,
+      user_id: String(o.user_id),
+      organization_id: String(o.organization_id),
+      whatsapp_opt_out_at: o.whatsapp_opt_out_at ?? null,
+      properties: o.properties || {},
+    }));
+  }
+
   private async findMembershipIds(digits: string): Promise<Types.ObjectId[]> {
     // Se filtra en BD por los últimos 7 dígitos y se confirma con
     // resolvePhone (que antepone el indicativo de país).

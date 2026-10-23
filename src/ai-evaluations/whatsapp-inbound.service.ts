@@ -79,7 +79,8 @@ function asPlainText(message: Exclude<OutboundMessage, string>): string {
  * 4. Botón de un simulacro (replyId "pq:...") o simulacro en curso → simulacro.
  * 5. Evaluación EV- en curso → evaluación.
  * 6. Simulacro invitado (esperando "Empezar") → simulacro.
- * 7. Si no, se ignora.
+ * 7. Respaldo (asistente por WhatsApp): lo que ningún motor atendió.
+ * 8. Si no, se ignora.
  *
  * La cola y la deduplicación viven en memoria: asume una sola instancia.
  */
@@ -89,11 +90,22 @@ export class WhatsappInboundService {
   private readonly phoneQueues = new Map<string, Promise<unknown>>();
   private readonly seenMessages = new Map<string, number>();
   private readonly handlers: InboundHandler[] = [];
+  private readonly fallbacks: InboundHandler[] = [];
 
   /** Lo llaman otros módulos al iniciar (así ai-evaluations no depende de ellos). */
   registerHandler(handler: InboundHandler): void {
     if (!this.handlers.some((h) => h.name === handler.name)) {
       this.handlers.push(handler);
+    }
+  }
+
+  /**
+   * Respaldo: recibe los mensajes que ningún motor atendió (p. ej. el
+   * asistente). Nunca le quita un mensaje a un reto, simulacro o evaluación.
+   */
+  registerFallback(handler: InboundHandler): void {
+    if (!this.fallbacks.some((h) => h.name === handler.name)) {
+      this.fallbacks.push(handler);
     }
   }
 
@@ -284,6 +296,13 @@ export class WhatsappInboundService {
     // 6. Invitación a simulacro pendiente (p. ej. botón "Empezar" de la plantilla)
     if (practiceSession) {
       return this.practice.handleMessage(phone, text, replyId);
+    }
+
+    // 7. Respaldo (asistente)
+    for (const fallback of this.fallbacks) {
+      if (await fallback.matches(phone, text, replyId)) {
+        return fallback.handle(phone, text, replyId);
+      }
     }
     return null;
   }
