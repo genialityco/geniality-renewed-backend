@@ -159,6 +159,30 @@ export class GenOnTriggersService {
     return { segmentation, detected, outcomes: [...outcomes, ...triggered] };
   }
 
+  /**
+   * Envía ya el próximo mensaje programado de cada persona (secuencia y
+   * disparadores encolados) sin esperar su franja. No segmenta ni detecta:
+   * solo adelanta lo que ya está programado. Uno por persona y pasada, con
+   * las mismas reglas del despacho normal (tope, control, consentimiento).
+   */
+  async sendScheduledNow(program: GenOnProgram, now: Date, budget: number) {
+    const dryRun = program.mode !== 'live';
+    const outcomes = await this.engine.dispatchAhead(program, now, dryRun, budget);
+    const cfg = withTriggerDefaults(program.triggers);
+    const caches = new Map<string, CourseCache | null>();
+    const cache = async (eventId: string) => {
+      if (!caches.has(eventId)) {
+        caches.set(eventId, await this.engine.loadCourseCache(program, eventId, now));
+      }
+      return caches.get(eventId) || null;
+    };
+    const left = Math.max(0, budget - outcomes.length);
+    const triggered = left
+      ? await this.dispatchQueue(program, cfg, now, dryRun, left, cache, undefined, true)
+      : [];
+    return [...outcomes, ...triggered];
+  }
+
   // ───────────────────────── Detección por actividad ─────────────────────────
 
   /** Actividades completadas desde la última revisión: módulo terminado y reto del video. */
@@ -687,8 +711,14 @@ export class GenOnTriggersService {
     budget: number,
     cache: (eventId: string) => Promise<CourseCache | null>,
     planUntil?: Date,
+    /** Envía ya lo encolado aunque su franja no haya llegado */
+    ahead = false,
   ): Promise<DispatchOutcome[]> {
-    const until = planUntil && planUntil > now ? planUntil : now;
+    const until = ahead
+      ? new Date(8.64e15)
+      : planUntil && planUntil > now
+        ? planUntil
+        : now;
     const due = await this.enrollmentModel
       .find({
         program_id: String(program._id),
@@ -721,7 +751,10 @@ export class GenOnTriggersService {
       }
       try {
         // Lo planeado por adelantado queda registrado a la hora en que saldría
-        const at = new Date(Math.max(now.getTime(), new Date(item.due_at).getTime()));
+        // (al adelantarlo a mano, sale ahora)
+        const at = ahead
+          ? now
+          : new Date(Math.max(now.getTime(), new Date(item.due_at).getTime()));
         const outcome = await this.sendQueued(program, e, item, at, dryRun, cache);
         outcomes.push(outcome);
         let rest = live.filter((q) => q !== item);

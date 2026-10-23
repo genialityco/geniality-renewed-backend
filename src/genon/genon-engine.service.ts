@@ -69,6 +69,10 @@ const pickKey = (stepKey: string) => stepKey.replace(/\./g, '_');
 
 // Envíos máximos por programa en cada ejecución del cron (cada 15 min)
 export const MAX_SENDS_PER_RUN = 40;
+// Al reprogramar (segmentar, reasignar), una franja de hoy que pasó hace
+// menos de esto aún sale hoy (atrasada) en vez de correrse al día siguiente:
+// la segmentación corre antes del despacho y el cron va cada 15 min
+export const RESCHEDULE_GRACE_MS = 60 * 60 * 1000;
 
 function idVariants(id: unknown): any[] {
   const raw = String(id);
@@ -320,7 +324,7 @@ export class GenOnEngineService {
       const exited = e?.exited || false;
       const schedule =
         !exited && !state.paused
-          ? this.schedule(program, state as any, slot, now)
+          ? this.schedule(program, state as any, slot, now, RESCHEDULE_GRACE_MS)
           : { next_step_key: null, next_step_at: null };
 
       ops.push({
@@ -358,6 +362,7 @@ export class GenOnEngineService {
     },
     slot: string,
     now: Date,
+    graceMs = 0,
   ): { next_step_key: string | null; next_step_at: Date | null } {
     if (!FLOW_SEGMENTS.includes(state.segment as GenOnFlowSegment)) {
       return { next_step_key: null, next_step_at: null };
@@ -376,7 +381,7 @@ export class GenOnEngineService {
         slot,
         timeZone: program.timezone,
         blockedWeekdays: program.blocked_weekdays,
-        now,
+        now: new Date(now.getTime() - graceMs),
       }),
     };
   }
@@ -413,7 +418,9 @@ export class GenOnEngineService {
       if (Object.keys(e.variant_picks || {}).length) variantsCleared++;
       // Pausados y retirados conservan su estado; solo cambia la franja
       const schedule =
-        !e.exited && !e.paused ? this.schedule(program, e as any, slot, now) : {};
+        !e.exited && !e.paused
+          ? this.schedule(program, e as any, slot, now, RESCHEDULE_GRACE_MS)
+          : {};
       return {
         updateOne: {
           filter: { _id: e._id },
@@ -474,13 +481,24 @@ export class GenOnEngineService {
 
   // ───────────────────────── Despacho ─────────────────────────
 
+  /**
+   * Envía ya el próximo toque programado de cada persona, sin esperar su
+   * franja (botón "Enviar ya lo programado"). Respeta tope, grupo de control,
+   * consentimiento y el resto de reglas del despacho normal.
+   */
+  async dispatchAhead(program: GenOnProgram, now: Date, dryRun: boolean, budget: number) {
+    return this.dispatch(program, now, dryRun, budget, undefined, true);
+  }
+
   private async dispatch(
     program: GenOnProgram,
     now: Date,
     dryRun: boolean,
     budget: number,
     planUntil?: Date,
+    ahead = false,
   ): Promise<DispatchOutcome[]> {
+    const until = planUntil && planUntil > now ? planUntil : now;
     const due = await this.enrollmentModel
       .find({
         program_id: String(program._id),
@@ -488,7 +506,7 @@ export class GenOnEngineService {
         exited: false,
         paused: false,
         segment: { $in: FLOW_SEGMENTS },
-        next_step_at: { $ne: null, $lte: planUntil && planUntil > now ? planUntil : now },
+        next_step_at: ahead ? { $ne: null } : { $ne: null, $lte: until },
       })
       .sort({ next_step_at: 1 })
       .limit(budget)
@@ -509,8 +527,11 @@ export class GenOnEngineService {
           continue;
         }
         // Lo planeado por adelantado queda registrado a la hora en que saldría
+        // (al adelantarlo a mano, sale ahora)
         const at =
-          e.next_step_at && new Date(e.next_step_at) > now ? new Date(e.next_step_at) : now;
+          !ahead && e.next_step_at && new Date(e.next_step_at) > now
+            ? new Date(e.next_step_at)
+            : now;
         outcomes.push(await this.dispatchOne(program, e, entry, counts, dryRun, at));
       } catch (error) {
         const reason = (error as Error).message;

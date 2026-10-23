@@ -25,6 +25,9 @@ import { GenOnFeedback } from './schemas/genon-feedback.schema';
 import { GENON_VARIABLES, validateTemplate } from './genon-variables';
 import { localDate, zonedTime } from './genon-schedule';
 
+// Envíos máximos por clic de "Enviar ya lo programado" (cada uno espera al gateway)
+const SEND_NOW_BUDGET = 200;
+
 /**
  * Administración de Gen.ON. Un programa solo lo ve y edita quien administra
  * todas sus organizaciones; las plantillas (compartidas por la cuenta de
@@ -263,6 +266,25 @@ export class GenOnController {
       by_result: byResult,
       outcomes: outcomes.slice(0, 200),
     };
+  }
+
+  /**
+   * Con el programa activo, envía de verdad y ya el próximo mensaje
+   * programado de cada persona, sin esperar su franja. Uno por persona por
+   * clic; el tope semanal, el grupo de control y el consentimiento aplican.
+   */
+  @Post('programs/:id/send-now')
+  async sendNow(@Req() req: any, @Param('id') id: string) {
+    const program = await this.programs.get(req.auth.uid, id);
+    if (program.mode !== 'live') {
+      throw new BadRequestException(
+        'Solo con el programa activo. En simulación usa "Ejecutar ahora".',
+      );
+    }
+    const outcomes = await this.triggers.sendScheduledNow(program, new Date(), SEND_NOW_BUDGET);
+    const byResult: Record<string, number> = {};
+    for (const o of outcomes) byResult[o.result] = (byResult[o.result] || 0) + 1;
+    return { by_result: byResult, outcomes: outcomes.slice(0, 200) };
   }
 
   /**

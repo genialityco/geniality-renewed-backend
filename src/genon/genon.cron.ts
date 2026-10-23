@@ -47,11 +47,17 @@ export class GenOnCron implements OnModuleInit {
         try {
           const { segmentation, outcomes } = await this.runner.run(program, new Date());
           const byResult: Record<string, number> = {};
-          for (const o of outcomes) byResult[o.result] = (byResult[o.result] || 0) + 1;
+          const reasons: Record<string, number> = {};
+          for (const o of outcomes) {
+            byResult[o.result] = (byResult[o.result] || 0) + 1;
+            if (o.reason) reasons[o.reason] = (reasons[o.reason] || 0) + 1;
+          }
           this.logger.log(
             `Gen.ON "${program.name}" (${program.mode}): ` +
               (segmentation ? `segmentó ${JSON.stringify(segmentation.counts)} · ` : '') +
-              `resultados ${JSON.stringify(byResult)} · ${await this.nextSend(program)}`,
+              `resultados ${JSON.stringify(byResult)} · ` +
+              (Object.keys(reasons).length ? `motivos ${JSON.stringify(reasons)} · ` : '') +
+              (await this.nextSend(program)),
           );
         } catch (error) {
           this.logger.error(

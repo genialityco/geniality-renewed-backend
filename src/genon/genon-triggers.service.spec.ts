@@ -238,6 +238,21 @@ describe('GenOnTriggersService: cola', () => {
     expect(queue).toEqual([]);
   });
 
+  it('al adelantar a mano envía lo encolado para más tarde', async () => {
+    const { svc, program, engine, cache } = queueSetup([
+      item('certificate', { due_at: new Date(NOW.getTime() + 6 * 3600 * 1000) }),
+    ]);
+
+    const normal = await svc.dispatchQueue(program, defaultTriggers(), NOW, false, 10, cache);
+    expect(normal).toEqual([]);
+    expect(engine.deliverTemplate).not.toHaveBeenCalled();
+
+    const out = await svc.dispatchQueue(
+      program, defaultTriggers(), NOW, false, 10, cache, undefined, true,
+    );
+    expect(out[0]).toMatchObject({ step: 'certificado', result: 'sent' });
+  });
+
   it('si el tope lo frena, se reintenta al día siguiente', async () => {
     const { svc, program, enrollmentModel, cache } = queueSetup(
       [item('weekly_social', { expires_at: new Date(NOW.getTime() + 3 * DAY) })],

@@ -212,6 +212,20 @@ describe('GenOnEngineService: despacho', () => {
     expect(engagementLog.deliver.mock.calls[0][0]).toMatchObject({ dryRun: true, at: later });
   });
 
+  it('al adelantar a mano envía de verdad lo programado para más tarde, con la hora de ahora', async () => {
+    const later = new Date(NOW.getTime() + 6.5 * 3600 * 1000); // 19:00 en Bogotá
+    const { service, program, enrollmentModel, engagementLog, gateway } = setup({
+      enrollment: { next_step_at: later, slot: '19:00' },
+    });
+
+    const outcomes = await service.dispatchAhead(program, NOW, false, 10);
+
+    expect((enrollmentModel.find.mock.calls as any[][])[0][0].next_step_at).toEqual({ $ne: null });
+    expect(outcomes[0]).toMatchObject({ step: '1.1', result: 'sent' });
+    expect(engagementLog.deliver.mock.calls[0][0]).toMatchObject({ dryRun: false, at: NOW });
+    expect(gateway.sendTemplateComponents).toHaveBeenCalled();
+  });
+
   it('con dos variantes posibles asigna la menos usada y la guarda', async () => {
     const { service, program, enrollmentModel, engagementLog } = setup({
       enrollment: { next_step_key: '1.2', last_step_key: '1.1', last_step_day: 0 },
@@ -307,5 +321,34 @@ describe('GenOnEngineService: despacho', () => {
 
     expect(outcomes[0]).toMatchObject({ result: 'skipped', reason: 'sin teléfono' });
     expect(engagementLog.deliver).not.toHaveBeenCalled();
+  });
+});
+
+describe('GenOnEngineService: reprogramación', () => {
+  // Segmentado hoy a las 12:30 en Bogotá; su franja de hoy (12:15) ya pasó
+  const state = {
+    segment: 'abandon',
+    segment_since: NOW,
+    last_step_key: null,
+    last_step_day: null,
+  };
+
+  it('con margen, la franja que acaba de pasar sale hoy atrasada', () => {
+    const { service, program } = setup();
+    const next = (service as any).schedule(program, state, '12:15', NOW, 60 * 60 * 1000);
+    expect(next).toEqual({
+      next_step_key: '1.1',
+      next_step_at: new Date('2026-10-21T17:15:00Z'),
+    });
+  });
+
+  it('sin margen (o pasado el margen) se corre al día siguiente', () => {
+    const { service, program } = setup();
+    expect((service as any).schedule(program, state, '12:15', NOW).next_step_at).toEqual(
+      new Date('2026-10-22T17:15:00Z'),
+    );
+    expect(
+      (service as any).schedule(program, state, '10:00', NOW, 60 * 60 * 1000).next_step_at,
+    ).toEqual(new Date('2026-10-22T15:00:00Z'));
   });
 });
