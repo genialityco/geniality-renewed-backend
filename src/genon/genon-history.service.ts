@@ -176,6 +176,50 @@ export class GenOnHistoryService {
   }
 
   /**
+   * Borra el historial de Gen.ON de la persona en el programa: sus mensajes
+   * (con lo que se liberan el tope y la deduplicación), sus comentarios y su
+   * inscripción (secuencia, retos, racha, cola). Luego la vuelve a segmentar
+   * para que empiece de cero sin esperar a la segmentación diaria. El avance
+   * del curso (progress_events) es dato académico y no se toca.
+   */
+  async clear(program: GenOnProgram, enrollmentId: string, now: Date) {
+    const e = Types.ObjectId.isValid(enrollmentId)
+      ? await this.enrollmentModel.findById(enrollmentId).lean().exec()
+      : null;
+    if (!e || e.program_id !== String(program._id)) {
+      throw new NotFoundException('Inscripción no encontrada en el programa');
+    }
+    const [messages, feedback] = await Promise.all([
+      this.engagementLog.deleteProgramHistory(e.user_id, e.program_id, e.event_id),
+      this.feedbackModel.deleteMany({ enrollment_id: String(e._id) }).exec(),
+    ]);
+    await this.enrollmentModel.deleteOne({ _id: e._id }).exec();
+    // Las inscripciones de prueba no salen de la segmentación
+    if (!e.test) {
+      await this.engine.resegmentPeople(program, e.event_id, new Set([e.user_id]), now);
+    }
+    const fresh = e.test
+      ? null
+      : await this.enrollmentModel
+          .findOne({ program_id: e.program_id, event_id: e.event_id, user_id: e.user_id, test: false })
+          .select('_id segment next_step_key next_step_at')
+          .lean()
+          .exec();
+    return {
+      messages_deleted: messages,
+      feedback_deleted: feedback.deletedCount,
+      enrollment: fresh
+        ? {
+            _id: String(fresh._id),
+            segment: fresh.segment,
+            next_step_key: fresh.next_step_key,
+            next_step_at: fresh.next_step_at,
+          }
+        : null,
+    };
+  }
+
+  /**
    * El avance se registra en cada actualización (p. ej. al ver un video): se
    * resume en un registro por actividad y día, y uno por día para el curso.
    */

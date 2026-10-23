@@ -362,6 +362,21 @@ export class EngagementLogService {
       .exec();
   }
 
+  /**
+   * Borra los envíos de un programa a una persona en un curso (y los que no
+   * son de un curso). Libera también el tope semanal y la deduplicación.
+   */
+  async deleteProgramHistory(userId: string, programId: string, eventId: string) {
+    const { deletedCount } = await this.messageModel
+      .deleteMany({
+        user_id: String(userId),
+        program_id: String(programId),
+        event_id: { $in: [String(eventId), null] },
+      })
+      .exec();
+    return deletedCount;
+  }
+
   /** Envíos a una persona en una organización, del más antiguo al más nuevo. */
   async historyFor(userId: string, organizationId: string, limit = 500) {
     return this.messageModel

@@ -159,6 +159,21 @@ export class GenOnController {
     return this.historyService.history(program, enrollmentId);
   }
 
+  /**
+   * Borra el historial de Gen.ON de una persona en el programa (mensajes,
+   * secuencia, retos, racha, comentarios) y la vuelve a segmentar: empieza de
+   * cero. Su avance real en el curso no se toca.
+   */
+  @Delete('programs/:id/enrollments/:enrollmentId/history')
+  async clearHistory(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Param('enrollmentId') enrollmentId: string,
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    return this.historyService.clear(program, enrollmentId, new Date());
+  }
+
   @Get('programs/:id/feedback')
   async feedback(@Req() req: any, @Param('id') id: string) {
     const program = await this.programs.get(req.auth.uid, id);

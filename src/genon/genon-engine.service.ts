@@ -589,12 +589,7 @@ export class GenOnEngineService {
       byEvent.set(e.event_id, (byEvent.get(e.event_id) || new Set()).add(e.user_id));
     }
     for (const [eventId, users] of byEvent) {
-      if (!Types.ObjectId.isValid(eventId)) continue;
-      const event = await this.eventModel.collection.findOne(
-        { _id: new Types.ObjectId(eventId) },
-        { projection: { name: 1, organizer_id: 1 } },
-      );
-      if (event) await this.segmentEvent(program, event as any, now, users);
+      await this.resegmentPeople(program, eventId, users, now);
     }
 
     const fresh = new Map(
@@ -617,6 +612,21 @@ export class GenOnEngineService {
       }
     }
     return { due: still, outcomes };
+  }
+
+  /** Segmenta ya a estas personas de un curso (crea su inscripción si no la tienen). */
+  async resegmentPeople(
+    program: GenOnProgram,
+    eventId: string,
+    userIds: Set<string>,
+    now: Date,
+  ) {
+    if (!Types.ObjectId.isValid(eventId)) return;
+    const event = await this.eventModel.collection.findOne(
+      { _id: new Types.ObjectId(eventId) },
+      { projection: { name: 1, organizer_id: 1 } },
+    );
+    if (event) await this.segmentEvent(program, event as any, now, userIds);
   }
 
   async loadCourseCache(
