@@ -28,6 +28,7 @@ const EDITABLE = [
   'weekly_cap',
   'social_min',
   'default_activity_minutes',
+  'auto_login_links',
   'holdout_percent',
   'segments',
   'flows',

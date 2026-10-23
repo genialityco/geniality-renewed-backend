@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ProgressEvent } from 'src/progress-events/schemas/progress-event.schema';
@@ -10,6 +10,7 @@ import { GenOnFeedback } from './schemas/genon-feedback.schema';
 import { GenOnContextService } from './genon-context.service';
 import { GenOnEngineService } from './genon-engine.service';
 import { localDate } from './genon-schedule';
+import { AuthLinksService, appBaseUrl } from 'src/auth-links/auth-links.service';
 
 export type HistoryItem =
   | {
@@ -70,7 +71,48 @@ export class GenOnHistoryService {
     private readonly engagementLog: EngagementLogService,
     private readonly context: GenOnContextService,
     private readonly engine: GenOnEngineService,
+    private readonly authLinks?: AuthLinksService,
   ) {}
+
+  /**
+   * Enlace de acceso directo de la persona (para que un admin entre como ella
+   * a probar): a su actividad pendiente o, si no tiene, al curso. No se da
+   * para administradores ni para quien no es miembro.
+   */
+  async accessLink(program: GenOnProgram, enrollmentId: string, now: Date) {
+    const e = Types.ObjectId.isValid(enrollmentId)
+      ? await this.enrollmentModel.findById(enrollmentId).lean().exec()
+      : null;
+    if (!e || e.program_id !== String(program._id)) {
+      throw new NotFoundException('Inscripción no encontrada en el programa');
+    }
+    const courseUrl = `${appBaseUrl()}/organization/${e.organization_id}/course/${e.event_id}`;
+    let target = courseUrl;
+    const entry = await this.engine.loadCourseCache(program, e.event_id, now);
+    if (entry) {
+      const ctx = this.context.forPerson(
+        program,
+        entry.course,
+        entry.stats,
+        { userId: e.user_id, fullName: '', email: '', progress: e.progress },
+        e.segment,
+      );
+      target = String(ctx.values.link || courseUrl);
+    }
+    const token = this.authLinks
+      ? await this.authLinks.create(e.user_id, e.organization_id, 'admin')
+      : null;
+    if (!token) {
+      throw new BadRequestException(
+        'No se puede crear: la persona no es miembro de la organización o es administradora.',
+      );
+    }
+    return {
+      url: AuthLinksService.withToken(target, token),
+      course_url: AuthLinksService.withToken(courseUrl, token),
+      expires_days: Number(process.env.AUTH_LINK_TTL_DAYS) > 0 ? Number(process.env.AUTH_LINK_TTL_DAYS) : 7,
+    };
+  }
 
   async history(program: GenOnProgram, enrollmentId: string) {
     const e = Types.ObjectId.isValid(enrollmentId)

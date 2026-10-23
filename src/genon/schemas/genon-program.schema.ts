@@ -204,6 +204,8 @@ export class GenOnProgram extends Document {
   @Prop({ default: 2 }) weekly_cap: number;
   @Prop({ default: 20 }) social_min: number;
   @Prop({ default: 15 }) default_activity_minutes: number;
+  // Los enlaces de los mensajes y retos entran ya con la sesión iniciada
+  @Prop({ default: false }) auto_login_links: boolean;
   // % del grupo de control por segmento
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   holdout_percent: Partial<Record<GenOnSegment, number>>;

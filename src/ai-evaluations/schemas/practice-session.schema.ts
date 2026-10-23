@@ -113,6 +113,8 @@ export class PracticeSession extends Document {
     test: boolean;
     // advance: marca la actividad · review: repaso (racha) · video: salta el video
     kind?: 'advance' | 'review' | 'video';
+    // Los enlaces del reto entran con la sesión iniciada (programa con acceso directo)
+    auto_login?: boolean;
   } | null;
   // whatsapp: simulacro conversacional · web: práctica dentro de la plataforma
   @Prop({ type: String, default: 'whatsapp' }) channel: 'whatsapp' | 'web';

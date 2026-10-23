@@ -31,6 +31,7 @@ import {
   similarity,
   toPracticeQuestion,
 } from './practice-format';
+import { AuthLinksService } from 'src/auth-links/auth-links.service';
 
 // Una sesión sin mensajes en este tiempo se da por vencida
 const SESSION_TTL_DAYS = Number(process.env.PRACTICE_SESSION_TTL_DAYS) || 7;
@@ -144,6 +145,7 @@ export class PracticeEngineService {
     private readonly questionModel: Model<ActivityQuestion>,
     private readonly gemini: GeminiTextClient,
     private readonly usage: QuestionUsageService,
+    private readonly authLinks?: AuthLinksService,
   ) {}
 
   // ─── Retos de otros módulos (Gen.ON) ───────────────────────────────────
@@ -313,7 +315,29 @@ export class PracticeEngineService {
     await this.log(session, 'user', text);
     const replies = await this.dispatch(session, text, replyId);
     await this.log(session, 'assistant', replies);
-    return replies;
+    return this.withAccess(session, replies);
+  }
+
+  /**
+   * Enlaces a la plataforma (p. ej. al minuto del video) con la sesión ya
+   * iniciada: en los retos de Gen.ON si su programa lo tiene activo, y en los
+   * simulacros con AUTH_LINKS_PRACTICE=true. La conversación guardada queda
+   * sin el token.
+   */
+  private async withAccess(
+    session: Session,
+    replies: OutboundMessage[],
+  ): Promise<OutboundMessage[]> {
+    const enabled = session.genon
+      ? Boolean(session.genon.auto_login) && !session.genon.test
+      : process.env.AUTH_LINKS_PRACTICE === 'true';
+    if (!enabled || !this.authLinks || !session.organization_id) return replies;
+    return this.authLinks.addToMessages(
+      replies,
+      String(session.user_id),
+      String(session.organization_id),
+      session.genon ? 'genon' : 'practice',
+    );
   }
 
   private async dispatch(

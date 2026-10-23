@@ -59,6 +59,7 @@ import { GenOnTriggersService } from './genon-triggers.service';
 import { GenOnHistoryService } from './genon-history.service';
 import { GenOnController } from './genon.controller';
 import { GenOnCron } from './genon.cron';
+import { AuthLinksModule } from 'src/auth-links/auth-links.module';
 
 /**
  * Gen.ON Adherencia Educación: segmentos, secuencias de mensajes por
@@ -94,6 +95,8 @@ import { GenOnCron } from './genon.cron';
     CourseSnapshotsModule,
     EngagementModule,
     ActivityAttendeeModule,
+    // Acceso directo en los enlaces de los mensajes
+    AuthLinksModule,
   ],
   controllers: [GenOnController],
   providers: [

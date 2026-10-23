@@ -18,6 +18,7 @@ import { Organization } from 'src/organizations/schemas/organization.schema';
 import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema';
 import { User } from 'src/users/schemas/user.schema';
 import { ProgressEvent } from 'src/progress-events/schemas/progress-event.schema';
+import { AuthLinksService } from 'src/auth-links/auth-links.service';
 import { hasWhatsappConsent } from 'src/common/whatsapp-consent';
 import {
   resolveEmail,
@@ -157,6 +158,7 @@ export class GenOnEngineService {
     private readonly gateway: WhatsappGatewayClient,
     @InjectModel(ProgressEvent.name)
     private readonly progressEventModel: Model<ProgressEvent>,
+    private readonly authLinks?: AuthLinksService,
   ) {}
 
   // ───────────────────────── Ejecución ─────────────────────────
@@ -773,6 +775,9 @@ export class GenOnEngineService {
     await this.enrollmentModel
       .updateOne({ _id: e._id }, { $set: { phone_tail: phoneTail(person.phone) } })
       .exec();
+    // Acceso directo en los enlaces (solo envíos reales); la bitácora guarda
+    // el texto sin el token
+    const access = await this.withAccess(program, e, params);
     const result = await this.engagementLog.deliver(
       {
         dedupeKey: params.dedupeKey,
@@ -800,15 +805,40 @@ export class GenOnEngineService {
           languageCode: version.language,
           components: buildSendComponents({
             variables: version.variables,
-            values: params.values,
+            values: access.values,
             buttons: version.buttons,
-            urlSuffix: this.engagementLog.withClickRef(params.urlSuffix, ref),
+            urlSuffix: this.engagementLog.withClickRef(access.urlSuffix, ref),
             payloadFor: (b) =>
               buttonPayload(String(e._id), b.action, params.actionData),
           }),
         }),
     );
     return { result };
+  }
+
+  /**
+   * Valores y sufijo del botón con el acceso directo, si el programa lo tiene
+   * activo y es un envío real a un inscrito (no simulación ni prueba).
+   */
+  private async withAccess(
+    program: GenOnProgram,
+    e: GenOnEnrollment,
+    params: { values: Record<string, string | number | null>; urlSuffix: string; dryRun: boolean },
+  ) {
+    const plain = { values: params.values, urlSuffix: params.urlSuffix };
+    if (!program.auto_login_links || params.dryRun || e.test || !this.authLinks) return plain;
+    const token = await this.authLinks.create(e.user_id, e.organization_id, 'genon');
+    if (!token) return plain;
+    const values: Record<string, string | number | null> = {};
+    for (const [k, v] of Object.entries(params.values)) {
+      values[k] = typeof v === 'string' ? this.authLinks.addToText(v, e.organization_id, token) : v;
+    }
+    return {
+      values,
+      urlSuffix: params.urlSuffix
+        ? AuthLinksService.withToken(params.urlSuffix, token)
+        : params.urlSuffix,
+    };
   }
 
   /** Variantes cuyas condiciones se cumplen todas (ninguna = se omite). */

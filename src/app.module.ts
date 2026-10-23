@@ -33,6 +33,7 @@ import { CourseSnapshotsModule } from './course-snapshots/course-snapshots.modul
 import { EngagementModule } from './engagement/engagement.module';
 import { GenOnModule } from './genon/genon.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { AuthLinksModule } from './auth-links/auth-links.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { AssistantModule } from './assistant/assistant.module';
     EngagementModule,
     GenOnModule,
     AssistantModule,
+    AuthLinksModule,
   ],
   // providers: [SessionTokenGuard],
 })

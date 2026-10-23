@@ -415,6 +415,7 @@ export function defaultProgram() {
     weekly_cap: 2,
     social_min: socialMin,
     default_activity_minutes: 15,
+    auto_login_links: false,
     holdout_percent: { abandon: 20, inactive: 20, active: 20 },
     segments: defaultSegments(),
     flows: defaultFlows(socialMin),

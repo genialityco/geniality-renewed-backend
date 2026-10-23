@@ -34,6 +34,7 @@ import { GenOnTriggersService } from './genon-triggers.service';
 import { withTriggerDefaults } from './genon-defaults';
 import { GenOnEngineService } from './genon-engine.service';
 import { renderText } from './genon-variables';
+import { AuthLinksService } from 'src/auth-links/auth-links.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SUPPORT_WINDOW_DAYS = 7;
@@ -79,6 +80,7 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
     private readonly context: GenOnContextService,
     private readonly engine: GenOnEngineService,
     private readonly triggers: GenOnTriggersService,
+    private readonly authLinks?: AuthLinksService,
   ) {}
 
   onModuleInit() {
@@ -106,6 +108,19 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
     text: string,
     replyId?: string,
   ): Promise<OutboundMessage[] | null> {
+    const out = await this.respond(phone, text, replyId);
+    if (!out) return null;
+    const { program, e, messages } = out;
+    // Acceso directo en los enlaces de las respuestas (no en las pruebas)
+    if (!program.auto_login_links || e.test || !this.authLinks) return messages;
+    return this.authLinks.addToMessages(messages, e.user_id, e.organization_id, 'genon');
+  }
+
+  private async respond(
+    phone: string,
+    text: string,
+    replyId?: string,
+  ): Promise<{ program: GenOnProgram; e: GenOnEnrollment; messages: OutboundMessage[] } | null> {
     if (replyId?.startsWith('gn:')) {
       const [, enrollmentId, ...rest] = replyId.split(':');
       const action = rest.join(':') as GenOnAction;
@@ -113,7 +128,7 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
       if (!e) return null;
       const program = await this.programModel.findById(e.program_id).exec();
       if (!program) return null;
-      return this.runAction(program, e, action, phone);
+      return { program, e, messages: await this.runAction(program, e, action, phone) };
     }
 
     const e = await this.pendingFor(phone);
@@ -130,7 +145,7 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
       await this.enrollmentModel
         .updateOne({ _id: e._id }, { $set: { awaiting_feedback: false } })
         .exec();
-      return this.replyMessages(program, e, 'feedback_thanks');
+      return { program, e, messages: await this.replyMessages(program, e, 'feedback_thanks') };
     }
 
     // AYUDA después de "Problemas para ingresar"
@@ -142,7 +157,7 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
     await this.enrollmentModel
       .updateOne({ _id: e._id }, { $set: { support_until: null } })
       .exec();
-    return this.replyMessages(program, e, 'help');
+    return { program, e, messages: await this.replyMessages(program, e, 'help') };
   }
 
   /** Inscripción con una conversación pendiente para ese teléfono. */
@@ -414,6 +429,8 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
         pass_percent: finalKind === 'advance' ? cfg.pass_percent : 100,
         test: e.test,
         kind: finalKind,
+        // Los enlaces del reto (minuto del video) entran con la sesión iniciada
+        auto_login: Boolean(program.auto_login_links) && !e.test,
       },
       intro,
     });

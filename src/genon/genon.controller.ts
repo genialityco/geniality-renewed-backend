@@ -159,6 +159,17 @@ export class GenOnController {
     return this.historyService.history(program, enrollmentId);
   }
 
+  /** Enlace de acceso directo de la persona, para entrar como ella a probar. */
+  @Post('programs/:id/enrollments/:enrollmentId/access-link')
+  async accessLink(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Param('enrollmentId') enrollmentId: string,
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    return this.historyService.accessLink(program, enrollmentId, new Date());
+  }
+
   /**
    * Borra el historial de Gen.ON de una persona en el programa (mensajes,
    * secuencia, retos, racha, comentarios) y la vuelve a segmentar: empieza de

@@ -99,6 +99,8 @@ import { User, UserSchema } from '../users/schemas/user.schema';
 import { UsersModule } from '../users/users.module';
 import { EngagementModule } from '../engagement/engagement.module';
 
+import { AuthLinksModule } from 'src/auth-links/auth-links.module';
+
 @Module({
   imports: [
     HttpModule,
@@ -132,6 +134,8 @@ import { EngagementModule } from '../engagement/engagement.module';
     TranscriptSegmentsModule,
     // Bitácora de envíos y baja de WhatsApp por número
     EngagementModule,
+    // Acceso directo en los enlaces de los retos y simulacros
+    AuthLinksModule,
   ],
   controllers: [
     AiEvaluationsController,

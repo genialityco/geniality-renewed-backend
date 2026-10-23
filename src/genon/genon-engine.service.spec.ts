@@ -42,6 +42,8 @@ function setup(opts: {
   progress?: { user_id: string; event_id: string; at: Date }[];
   /** Cómo queda la inscripción si se resegmenta al despachar */
   resegmented?: Record<string, any>;
+  autoLogin?: boolean;
+  authLinks?: Record<string, any>;
 } = {}) {
   const program: any = {
     _id: 'p1',
@@ -51,6 +53,7 @@ function setup(opts: {
     ...defaultProgram(),
     mode: opts.mode || 'live',
     last_segmented_on: localDate(NOW, 'America/Bogota'),
+    auto_login_links: opts.autoLogin ?? false,
   };
   const enrollment = {
     _id: 'e1',
@@ -143,6 +146,7 @@ function setup(opts: {
     engagementLog as any,
     gateway as any,
     progressEventModel as any,
+    opts.authLinks as any,
   );
   jest.spyOn(service, 'resolvePerson').mockResolvedValue({
     userId: 'u1',
@@ -401,5 +405,53 @@ describe('GenOnEngineService: avance desde la última segmentación', () => {
 
     expect(segmentEvent).not.toHaveBeenCalled();
     expect(outcomes[0]).toMatchObject({ step: '1.1', result: 'sent' });
+  });
+});
+
+describe('GenOnEngineService: acceso directo en los enlaces', () => {
+  const authLinks = () => ({
+    create: jest.fn().mockResolvedValue('tk'),
+    addToText: jest.fn((text: string) => text.replace(/(https:\/\/\S+)/g, '$1?login=tk')),
+  });
+
+  it('con el programa activo, el botón y los enlaces llevan el token', async () => {
+    const links = authLinks();
+    const { service, program } = setup({ autoLogin: true, authLinks: links });
+
+    const out = await (service as any).withAccess(
+      program,
+      { user_id: 'u1', organization_id: 'org1', test: false },
+      {
+        values: { nombre: 'Ana', link: 'https://app.geniality.com.co/organization/org1/activitydetail/a1' },
+        urlSuffix: 'org1/activitydetail/a1',
+        dryRun: false,
+      },
+    );
+
+    expect(links.create).toHaveBeenCalledWith('u1', 'org1', 'genon');
+    expect(out.urlSuffix).toBe('org1/activitydetail/a1?login=tk');
+    expect(out.values.link).toContain('?login=tk');
+    expect(out.values.nombre).toBe('Ana');
+  });
+
+  it('el texto que guarda la bitácora va sin el token', async () => {
+    const links = authLinks();
+    const { service, program, engagementLog } = setup({ autoLogin: true, authLinks: links });
+
+    await service.runProgram(program, NOW);
+
+    expect(links.create).toHaveBeenCalled();
+    expect(engagementLog.deliver.mock.calls[0][0].text).not.toContain('login=');
+  });
+
+  it('apagado (por defecto) o en simulación no crea tokens', async () => {
+    const off = authLinks();
+    await setup({ authLinks: off }).service.runProgram(setup().program, NOW);
+    expect(off.create).not.toHaveBeenCalled();
+
+    const dry = authLinks();
+    const sim = setup({ autoLogin: true, mode: 'dry_run', authLinks: dry });
+    await sim.service.runProgram(sim.program, NOW);
+    expect(dry.create).not.toHaveBeenCalled();
   });
 });
