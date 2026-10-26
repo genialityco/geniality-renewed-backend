@@ -13,6 +13,9 @@ const LAB_TAG = 'genon-streak-lab';
 
 export type StreakLabAction = 'study' | 'next_day';
 
+// Disparadores que dependen de la racha
+const STREAK_KEYS = ['streak_milestone', 'streak_risk', 'streak_recovery'];
+
 function idVariants(id: unknown): any[] {
   const raw = String(id);
   return Types.ObjectId.isValid(raw) && String(new Types.ObjectId(raw)) === raw
@@ -187,6 +190,22 @@ export class GenOnStreakLabService {
             last_activity_at: minusDay('$last_activity_at'),
             enrolled_at: minusDay('$enrolled_at'),
             streak_bridged: { $literal: (e.streak_bridged || []).map((d) => addDays(d, -1)) },
+            // El aviso de riesgo sale una vez por día y por semana: se olvida
+            // para poder probarlo de nuevo. Los de racha en cola eran del
+            // estado anterior; la próxima revisión encola los que tocan ahora
+            streak_risk_week: null,
+            fired: {
+              $filter: {
+                input: { $ifNull: ['$fired', []] },
+                cond: { $not: { $regexMatch: { input: '$$this', regex: '^risk:' } } },
+              },
+            },
+            queue: {
+              $filter: {
+                input: { $ifNull: ['$queue', []] },
+                cond: { $not: { $in: ['$$this.key', STREAK_KEYS] } },
+              },
+            },
           },
         },
       ]);

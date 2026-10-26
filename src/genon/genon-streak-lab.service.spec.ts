@@ -74,5 +74,9 @@ describe('GenOnStreakLabService', () => {
     const [filter, pipeline] = enrollmentModel.collection.updateOne.mock.calls[0];
     expect(filter).toEqual({ _id: enrollment._id });
     expect(pipeline[0].$set.streak_bridged).toEqual({ $literal: ['2026-10-19'] });
+    // El aviso de riesgo se puede volver a probar y la cola de racha se limpia
+    expect(pipeline[0].$set.streak_risk_week).toBeNull();
+    expect(pipeline[0].$set.fired.$filter).toBeDefined();
+    expect(pipeline[0].$set.queue.$filter.cond.$not.$in[1]).toEqual(['streak_milestone', 'streak_risk', 'streak_recovery']);
   });
 });

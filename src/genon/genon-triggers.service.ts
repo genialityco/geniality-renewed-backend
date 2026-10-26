@@ -161,9 +161,10 @@ export class GenOnTriggersService {
 
   /**
    * Envía ya el próximo mensaje programado de cada persona (secuencia y
-   * disparadores encolados) sin esperar su franja. No segmenta ni detecta:
-   * solo adelanta lo que ya está programado. Uno por persona y pasada, con
-   * las mismas reglas del despacho normal (tope, control, consentimiento).
+   * disparadores encolados) sin esperar su franja. Antes vuelve a segmentar a
+   * quien avanzó y revisa los disparadores diarios, para que salga lo que
+   * toca ahora. Uno por persona y pasada, con las mismas reglas del despacho
+   * normal (tope, control, consentimiento).
    */
   async sendScheduledNow(program: GenOnProgram, now: Date, budget: number) {
     const dryRun = program.mode !== 'live';
@@ -176,6 +177,10 @@ export class GenOnTriggersService {
       }
       return caches.get(eventId) || null;
     };
+    // Antes, los disparadores diarios (racha, examen, certificado): si la
+    // situación cambió desde la revisión del día (p. ej. la racha en Pruebas),
+    // salen ya. Lo que ya se envió o encoló no se repite.
+    await this.detectDaily(program, cfg, now, cache);
     const left = Math.max(0, budget - outcomes.length);
     const triggered = left
       ? await this.dispatchQueue(program, cfg, now, dryRun, left, cache, undefined, true)

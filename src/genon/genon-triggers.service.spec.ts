@@ -301,3 +301,35 @@ describe('GenOnTriggersService: cola', () => {
     expect(engine.deliverTemplate).not.toHaveBeenCalled();
   });
 });
+
+describe('GenOnTriggersService: enviar ya lo programado', () => {
+  it('revisa los disparadores diarios antes de despachar la cola', async () => {
+    const engine = {
+      dispatchAhead: jest.fn().mockResolvedValue([]),
+      loadCourseCache: jest.fn().mockResolvedValue(null),
+    };
+    const svc = new GenOnTriggersService(
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      {} as any,
+      engine as any,
+      {} as any,
+    );
+    const order: string[] = [];
+    const detect = jest.spyOn(svc, 'detectDaily').mockImplementation(async () => {
+      order.push('detect');
+      return {};
+    });
+    jest.spyOn(svc, 'dispatchQueue').mockImplementation(async () => {
+      order.push('dispatch');
+      return [];
+    });
+    const program: any = { _id: 'p1', mode: 'live', triggers: null };
+    const now = new Date('2026-10-26T20:00:00Z');
+
+    await svc.sendScheduledNow(program, now, 10);
+
+    expect(engine.dispatchAhead).toHaveBeenCalledWith(program, now, false, 10);
+    expect(detect).toHaveBeenCalledWith(program, expect.anything(), now, expect.any(Function));
+    expect(order).toEqual(['detect', 'dispatch']);
+  });
+});
