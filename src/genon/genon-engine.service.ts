@@ -194,6 +194,7 @@ export class GenOnEngineService {
       await this.programModel
         .updateOne({ _id: program._id }, { $set: { last_run_at: now } })
         .exec();
+      await this.resegmentProgressed(program, now);
     }
     const outcomes = await this.dispatch(
       program,
@@ -535,7 +536,52 @@ export class GenOnEngineService {
    * consentimiento y el resto de reglas del despacho normal.
    */
   async dispatchAhead(program: GenOnProgram, now: Date, dryRun: boolean, budget: number) {
+    await this.resegmentProgressed(program, now);
     return this.dispatch(program, now, dryRun, budget, undefined, true);
+  }
+
+  /**
+   * Quien avanzó en el curso desde su última segmentación se segmenta ya,
+   * aunque no tenga un toque pendiente (p. ej. en pausa tras el cierre, o
+   * activo): si en abandono terminó una actividad, pasa a activos sin esperar
+   * a la segmentación del día siguiente, y sus disparadores (módulo
+   * terminado…) ya lo ven activo. resegmentMoved cubre lo mismo solo para
+   * quienes tienen un toque por salir.
+   */
+  async resegmentProgressed(program: GenOnProgram, now: Date): Promise<number> {
+    const enrollments = await this.enrollmentModel
+      .find({ program_id: String(program._id), test: false, exited: false })
+      .select('user_id event_id segmented_at')
+      .lean()
+      .exec();
+    if (!enrollments.length) return 0;
+    const startOfDay = zonedTime(localDate(now, program.timezone), '00:00', program.timezone);
+    const sinceOf = (e: { segmented_at?: Date | null }) =>
+      e.segmented_at ? new Date(e.segmented_at) : startOfDay;
+    const progress = await this.progressEventModel.collection
+      .find(
+        {
+          user_id: { $in: enrollments.map((e) => e.user_id) },
+          event_id: { $in: [...new Set(enrollments.map((e) => e.event_id))] },
+          at: { $gt: new Date(Math.min(...enrollments.map((e) => sinceOf(e).getTime()))) },
+        },
+        { projection: { user_id: 1, event_id: 1, at: 1 } },
+      )
+      .toArray();
+    const byEvent = new Map<string, Set<string>>();
+    for (const e of enrollments) {
+      const moved = progress.some(
+        (p: any) =>
+          p.user_id === e.user_id && p.event_id === e.event_id && new Date(p.at) > sinceOf(e),
+      );
+      if (moved) byEvent.set(e.event_id, (byEvent.get(e.event_id) || new Set()).add(e.user_id));
+    }
+    let count = 0;
+    for (const [eventId, users] of byEvent) {
+      await this.resegmentPeople(program, eventId, users, now);
+      count += users.size;
+    }
+    return count;
   }
 
   private async dispatch(

@@ -8,6 +8,10 @@ const PHONE = '573132735116';
 
 const exec = (value: unknown) => ({ exec: jest.fn().mockResolvedValue(value) });
 
+/** Filtro de la consulta del despacho (la que pide un toque programado). */
+const dispatchQuery = (model: { find: jest.Mock }) =>
+  (model.find.mock.calls as any[][]).map((c) => c[0]).find((q) => q && 'next_step_at' in q);
+
 function template(key: string, approved: boolean) {
   const t = DEFAULT_TEMPLATES.find((x) => x.key === key)!;
   return {
@@ -44,6 +48,8 @@ function setup(opts: {
   resegmented?: Record<string, any> | null;
   autoLogin?: boolean;
   authLinks?: Record<string, any>;
+  /** Inscripciones que lista find().select().lean() (por defecto u1 sin datos) */
+  listed?: Record<string, any>[];
 } = {}) {
   const program: any = {
     _id: 'p1',
@@ -77,7 +83,7 @@ function setup(opts: {
   const enrollmentModel = {
     find: jest.fn(() => ({
       sort: () => ({ limit: () => exec([enrollment]) }),
-      select: () => ({ lean: () => exec([{ user_id: 'u1', progress: 0 }]) }),
+      select: () => ({ lean: () => exec(opts.listed || [{ user_id: 'u1', progress: 0 }]) }),
       // Recarga tras resegmentar
       exec: jest
         .fn()
@@ -229,7 +235,7 @@ describe('GenOnEngineService: despacho', () => {
       planUntil: new Date(NOW.getTime() + 10 * 3600 * 1000),
     });
 
-    expect((enrollmentModel.find.mock.calls as any[][])[0][0]).toMatchObject({
+    expect(dispatchQuery(enrollmentModel)).toMatchObject({
       next_step_at: { $lte: new Date(NOW.getTime() + 10 * 3600 * 1000) },
     });
     expect(engagementLog.deliver.mock.calls[0][0]).toMatchObject({ dryRun: true, at: later });
@@ -243,7 +249,7 @@ describe('GenOnEngineService: despacho', () => {
 
     const outcomes = await service.dispatchAhead(program, NOW, false, 10);
 
-    expect((enrollmentModel.find.mock.calls as any[][])[0][0].next_step_at).toEqual({ $ne: null });
+    expect(dispatchQuery(enrollmentModel).next_step_at).toEqual({ $ne: null });
     expect(outcomes[0]).toMatchObject({ step: '1.1', result: 'sent' });
     expect(engagementLog.deliver.mock.calls[0][0]).toMatchObject({ dryRun: false, at: NOW });
     expect(gateway.sendTemplateComponents).toHaveBeenCalled();
@@ -421,6 +427,47 @@ describe('GenOnEngineService: avance desde la última segmentación', () => {
 
     expect(segmentEvent).not.toHaveBeenCalled();
     expect(outcomes[0]).toMatchObject({ step: '1.1', result: 'sent' });
+  });
+});
+
+describe('GenOnEngineService: segmentar a quien avanzó sin toque pendiente', () => {
+  const EV = '6ada6d2ab4d306c546cb8e39';
+  const segmentedAt = new Date(NOW.getTime() - 3600 * 1000);
+  const paused = { user_id: 'u1', event_id: EV, segmented_at: segmentedAt };
+
+  it('en pausa y con avance desde la segmentación: se segmenta en la pasada del cron', async () => {
+    const { service, program } = setup({
+      listed: [paused],
+      progress: [{ user_id: 'u1', event_id: EV, at: new Date(NOW.getTime() - 60 * 1000) }],
+    });
+    const resegment = jest.spyOn(service, 'resegmentPeople').mockResolvedValue(undefined);
+
+    await service.runProgram(program, NOW);
+
+    expect(resegment).toHaveBeenCalledWith(program, EV, new Set(['u1']), NOW);
+  });
+
+  it('también al enviar ya lo programado', async () => {
+    const { service, program } = setup({
+      listed: [paused],
+      progress: [{ user_id: 'u1', event_id: EV, at: new Date(NOW.getTime() - 60 * 1000) }],
+    });
+    const resegment = jest.spyOn(service, 'resegmentPeople').mockResolvedValue(undefined);
+
+    await service.dispatchAhead(program, NOW, false, 10);
+
+    expect(resegment).toHaveBeenCalledWith(program, EV, new Set(['u1']), NOW);
+  });
+
+  it('sin avance desde la segmentación no la toca', async () => {
+    const { service, program } = setup({
+      listed: [paused],
+      progress: [{ user_id: 'u1', event_id: EV, at: new Date(segmentedAt.getTime() - 1000) }],
+    });
+    const resegment = jest.spyOn(service, 'resegmentPeople').mockResolvedValue(undefined);
+
+    expect(await service.resegmentProgressed(program, NOW)).toBe(0);
+    expect(resegment).not.toHaveBeenCalled();
   });
 });
 
