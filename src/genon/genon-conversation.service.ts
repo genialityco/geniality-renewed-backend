@@ -35,6 +35,7 @@ import { withTriggerDefaults } from './genon-defaults';
 import { GenOnEngineService } from './genon-engine.service';
 import { renderText } from './genon-variables';
 import { AuthLinksService } from 'src/auth-links/auth-links.service';
+import { GenOnDemoService } from './genon-demo.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SUPPORT_WINDOW_DAYS = 7;
@@ -81,6 +82,7 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
     private readonly engine: GenOnEngineService,
     private readonly triggers: GenOnTriggersService,
     private readonly authLinks?: AuthLinksService,
+    private readonly demo?: GenOnDemoService,
   ) {}
 
   onModuleInit() {
@@ -228,9 +230,10 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
       updates.exited = true;
       updates.exit_reason = 'opt_out';
       updates.next_step_at = null;
-      // En pruebas no se da de baja el teléfono del admin
+      // En pruebas no se da de baja el teléfono del admin; en una
+      // demostración, solo la membresía de prueba del participante
       if (!e.test) {
-        await this.optOut.optOutByPhone(phone);
+        if (!(await this.demo?.optOutDemoMember(e))) await this.optOut.optOutByPhone(phone);
         await this.engagementLog.markOptOut(phone).catch(() => undefined);
       }
     }

@@ -8,6 +8,7 @@ import {
   GenOnEnrollmentSchema,
 } from './schemas/genon-enrollment.schema';
 import { GenOnFeedback, GenOnFeedbackSchema } from './schemas/genon-feedback.schema';
+import { GenOnDemo, GenOnDemoSchema } from './schemas/genon-demo.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import { Activity, ActivitySchema } from '../activities/schemas/activity.schema';
 import { ModuleSchema } from '../modules/schemas/module.schema';
@@ -57,7 +58,9 @@ import { GenOnEngineService } from './genon-engine.service';
 import { GenOnConversationService } from './genon-conversation.service';
 import { GenOnTriggersService } from './genon-triggers.service';
 import { GenOnHistoryService } from './genon-history.service';
+import { GenOnDemoService } from './genon-demo.service';
 import { GenOnController } from './genon.controller';
+import { GenOnDemoController } from './genon-demo.controller';
 import { GenOnCron } from './genon.cron';
 import { AuthLinksModule } from 'src/auth-links/auth-links.module';
 
@@ -75,6 +78,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
       { name: GenOnTemplate.name, schema: GenOnTemplateSchema },
       { name: GenOnEnrollment.name, schema: GenOnEnrollmentSchema },
       { name: GenOnFeedback.name, schema: GenOnFeedbackSchema },
+      { name: GenOnDemo.name, schema: GenOnDemoSchema },
       { name: Event.name, schema: EventSchema },
       { name: Activity.name, schema: ActivitySchema },
       { name: 'Module', schema: ModuleSchema },
@@ -98,7 +102,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
     // Acceso directo en los enlaces de los mensajes
     AuthLinksModule,
   ],
-  controllers: [GenOnController],
+  controllers: [GenOnController, GenOnDemoController],
   providers: [
     GenOnProgramsService,
     GenOnTemplatesService,
@@ -107,6 +111,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
     GenOnTriggersService,
     GenOnConversationService,
     GenOnHistoryService,
+    GenOnDemoService,
     GenOnCron,
   ],
   // GenOnContextService: el asistente usa los cursos en orden y sus módulos

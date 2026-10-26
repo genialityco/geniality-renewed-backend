@@ -1143,7 +1143,7 @@ export class GenOnTriggersService {
     });
   }
 
-  private templateFor(cfg: GenOnTriggersConfig, key: GenOnTriggerKey): string {
+  templateFor(cfg: GenOnTriggersConfig, key: GenOnTriggerKey): string {
     switch (key) {
       case 'module_completed':
         return cfg.module_completed.template_key;

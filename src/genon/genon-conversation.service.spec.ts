@@ -8,7 +8,7 @@ const ACTIVITY_2 = '507f191e810c19729de860a2';
 
 const exec = (value: unknown) => ({ exec: jest.fn().mockResolvedValue(value) });
 
-function setup(overrides: { enrollment?: Record<string, any> } = {}) {
+function setup(overrides: { enrollment?: Record<string, any>; demo?: Record<string, any> } = {}) {
   const program = {
     _id: 'p1',
     flows: defaultFlows(),
@@ -88,6 +88,8 @@ function setup(overrides: { enrollment?: Record<string, any> } = {}) {
     context as any,
     engine as any,
     triggers as any,
+    undefined,
+    overrides.demo as any,
   );
   return { service, enrollmentModel, feedbackModel, attendees, optOut, triggers };
 }
@@ -229,6 +231,24 @@ describe('GenOnConversationService: botones', () => {
     await test.service.handle(PHONE, 'x', `gn:${ENROLLMENT_ID}:reply:opt_out`);
     expect(test.optOut.optOutByPhone).not.toHaveBeenCalled();
   });
+
+  it('en una demostración solo da de baja la membresía de prueba, no el número', async () => {
+    const demo = { optOutDemoMember: jest.fn().mockResolvedValue(true) };
+    const { service, optOut, enrollmentModel } = setup({ demo });
+    await service.handle(PHONE, 'x', `gn:${ENROLLMENT_ID}:reply:opt_out`);
+    expect(demo.optOutDemoMember).toHaveBeenCalledWith(expect.objectContaining({ user_id: 'u1' }));
+    expect(optOut.optOutByPhone).not.toHaveBeenCalled();
+    // Igual sale del flujo
+    expect(enrollmentModel.updateOne).toHaveBeenCalledWith(
+      { _id: ENROLLMENT_ID },
+      { $set: expect.objectContaining({ exited: true, exit_reason: 'opt_out' }) },
+    );
+
+    const other = setup({ demo: { optOutDemoMember: jest.fn().mockResolvedValue(false) } });
+    await other.service.handle(PHONE, 'x', `gn:${ENROLLMENT_ID}:reply:opt_out`);
+    expect(other.optOut.optOutByPhone).toHaveBeenCalledWith(PHONE);
+  });
+
 
   it('ignora el botón si lo toca otro teléfono', async () => {
     const { service } = setup();
