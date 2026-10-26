@@ -61,17 +61,7 @@ export class GenOnStreakLabService {
   ) {
     const now = new Date();
     const { course, stats } = await this.engine.loadForUser(program, userId, eventId, now);
-    const org = Types.ObjectId.isValid(course.organizationId)
-      ? await this.col('organizations').findOne(
-          { _id: new Types.ObjectId(course.organizationId) },
-          { projection: { seed_tag: 1 } },
-        )
-      : null;
-    if (!org?.seed_tag) {
-      throw new BadRequestException(
-        'El laboratorio de rachas solo funciona en una organización de prueba: cambia las fechas de estudio de la persona.',
-      );
-    }
+    await this.requireTestOrganizations([course.organizationId]);
     const e = await this.enrollmentModel
       .findOne({ program_id: String(program._id), event_id: eventId, user_id: userId, test: false })
       .exec();
@@ -80,35 +70,113 @@ export class GenOnStreakLabService {
     }
 
     if (action === 'study') {
-      // Su última actividad terminada: volver a terminarla no cambia el avance
-      const completedAt = stats.completedAt.get(userId) || new Map<string, Date>();
-      const last = [...completedAt.entries()].sort((a, b) => b[1].getTime() - a[1].getTime())[0];
-      if (!last) {
+      if (!(await this.studyToday(userId, eventId, stats.completedAt.get(userId), now))) {
         throw new BadRequestException(
           'Para tener racha la persona debe haber terminado al menos una actividad del curso.',
         );
       }
-      const [activityId] = last;
-      await this.col('progress_events').insertOne({
-        user_id: userId,
-        event_id: eventId,
-        activity_id: activityId,
-        type: 'activity_progress',
-        from: 100,
-        to: 100,
-        at: now,
-        created_at: now,
-        lab: LAB_TAG,
-      });
-      // También como última actividad: si no, tras varios días pasaría a inactivos
-      await this.col('activityattendees').updateOne(
-        { user_id: { $in: idVariants(userId) }, activity_id: { $in: idVariants(activityId) } },
-        { $set: { updatedAt: now } },
-      );
     } else {
       await this.shiftDay(e, userId, eventId, course.activities.map((a) => a.id));
     }
     return this.triggers.simulateForUser(program, userId, eventId);
+  }
+
+  /**
+   * Lo mismo para todos los inscritos del programa (junto a "Enviar ya").
+   * Solo si todas sus organizaciones son de prueba. Tras pasar el día se
+   * segmenta a todos: el día nuevo cuenta también para los flujos (el toque
+   * del día 3 llega un día antes, quien no estudia se acerca a inactivos).
+   * Los mensajes salen luego con "Enviar ya".
+   */
+  async applyAll(program: GenOnProgram, action: StreakLabAction) {
+    const now = new Date();
+    await this.requireTestOrganizations(program.organization_ids || []);
+    const enrollments = await this.enrollmentModel
+      .find({ program_id: String(program._id), test: false, exited: false })
+      .exec();
+    const ids = [...new Set(enrollments.map((e) => e.user_id))].filter((id) =>
+      Types.ObjectId.isValid(id),
+    );
+    const users = await this.col('users')
+      .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } }, { projection: { names: 1 } })
+      .toArray();
+    const names = new Map(users.map((u: any) => [String(u._id), String(u.names || '')]));
+
+    const results: { user_id: string; name: string; ok: boolean; reason: string | null }[] = [];
+    for (const eventId of [...new Set(enrollments.map((e) => e.event_id))]) {
+      const cache = await this.engine.loadCourseCache(program, eventId, now);
+      for (const e of enrollments.filter((x) => x.event_id === eventId)) {
+        const name = names.get(e.user_id) || e.user_id;
+        if (!cache) {
+          results.push({ user_id: e.user_id, name, ok: false, reason: 'curso no encontrado' });
+          continue;
+        }
+        if (action === 'study') {
+          const ok = await this.studyToday(e.user_id, eventId, cache.stats.completedAt.get(e.user_id), now);
+          results.push({
+            user_id: e.user_id,
+            name,
+            ok,
+            reason: ok ? null : 'no ha terminado ninguna actividad',
+          });
+        } else {
+          await this.shiftDay(e, e.user_id, eventId, cache.course.activities.map((a) => a.id));
+          results.push({ user_id: e.user_id, name, ok: true, reason: null });
+        }
+      }
+    }
+    if (action === 'next_day') await this.engine.segment(program, now);
+    return { action, results };
+  }
+
+  /** Solo organizaciones de prueba: el laboratorio cambia fechas de estudio. */
+  private async requireTestOrganizations(organizationIds: string[]) {
+    const ids = organizationIds.filter((id) => Types.ObjectId.isValid(id));
+    const marked = ids.length
+      ? await this.col('organizations').countDocuments({
+          _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+          seed_tag: { $exists: true, $ne: null },
+        })
+      : 0;
+    if (!organizationIds.length || marked !== organizationIds.length) {
+      throw new BadRequestException(
+        'El laboratorio de rachas solo funciona en organizaciones de prueba: cambia las fechas de estudio de las personas.',
+      );
+    }
+  }
+
+  /**
+   * Hoy cuenta como día de estudio: vuelve a terminar su última actividad
+   * terminada (no cambia el avance). false si no ha terminado ninguna.
+   */
+  private async studyToday(
+    userId: string,
+    eventId: string,
+    completedAt: Map<string, Date> | undefined,
+    now: Date,
+  ): Promise<boolean> {
+    const last = [...(completedAt || new Map<string, Date>()).entries()].sort(
+      (a, b) => b[1].getTime() - a[1].getTime(),
+    )[0];
+    if (!last) return false;
+    const [activityId] = last;
+    await this.col('progress_events').insertOne({
+      user_id: userId,
+      event_id: eventId,
+      activity_id: activityId,
+      type: 'activity_progress',
+      from: 100,
+      to: 100,
+      at: now,
+      created_at: now,
+      lab: LAB_TAG,
+    });
+    // También como última actividad: si no, tras varios días pasaría a inactivos
+    await this.col('activityattendees').updateOne(
+      { user_id: { $in: idVariants(userId) }, activity_id: { $in: idVariants(activityId) } },
+      { $set: { updatedAt: now } },
+    );
+    return true;
   }
 
   private async shiftDay(

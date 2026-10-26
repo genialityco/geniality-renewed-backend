@@ -12,6 +12,8 @@ function setup(opts: { testOrg?: boolean; completedAt?: Map<string, Date> } = {}
       findOne: jest.fn().mockResolvedValue(
         name === 'organizations' && opts.testOrg !== false ? { seed_tag: 'genon-prueba' } : null,
       ),
+      countDocuments: jest.fn().mockResolvedValue(opts.testOrg === false ? 0 : 1),
+      find: jest.fn(() => ({ toArray: jest.fn().mockResolvedValue([{ _id: 'u1', names: 'Ana' }]) })),
       insertOne: jest.fn().mockResolvedValue({}),
       updateOne: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({}),
@@ -19,9 +21,15 @@ function setup(opts: { testOrg?: boolean; completedAt?: Map<string, Date> } = {}
   const enrollment = { _id: new Types.ObjectId(), streak_bridged: ['2026-10-20'] };
   const enrollmentModel = {
     findOne: jest.fn(() => exec(enrollment)),
+    find: jest.fn(() => exec([{ ...enrollment, user_id: 'u1', event_id: EV }])),
     collection: { updateOne: jest.fn().mockResolvedValue({}) },
   };
   const engine = {
+    segment: jest.fn().mockResolvedValue({ courses: 1, counts: {} }),
+    loadCourseCache: jest.fn().mockResolvedValue({
+      course: { activities: [{ id: 'a1' }] },
+      stats: { completedAt: new Map([['u1', new Map([['a1', new Date('2026-10-20')]])]]) },
+    }),
     loadForUser: jest.fn().mockResolvedValue({
       course: { organizationId: ORG, activities: [{ id: 'a1' }, { id: 'a2' }] },
       stats: {
@@ -38,7 +46,7 @@ function setup(opts: { testOrg?: boolean; completedAt?: Map<string, Date> } = {}
     engine as any,
     triggers as any,
   );
-  return { service, collections, enrollmentModel, enrollment, triggers };
+  return { service, collections, enrollmentModel, enrollment, triggers, engine };
 }
 
 const program: any = { _id: 'p1' };
@@ -46,7 +54,7 @@ const program: any = { _id: 'p1' };
 describe('GenOnStreakLabService', () => {
   it('solo en organizaciones de prueba', async () => {
     const { service } = setup({ testOrg: false });
-    await expect(service.apply(program, 'u1', EV, 'study')).rejects.toThrow('organización de prueba');
+    await expect(service.apply(program, 'u1', EV, 'study')).rejects.toThrow('organizaciones de prueba');
   });
 
   it('estudiar hoy vuelve a terminar su última actividad terminada y devuelve la simulación', async () => {
@@ -78,5 +86,32 @@ describe('GenOnStreakLabService', () => {
     expect(pipeline[0].$set.streak_risk_week).toBeNull();
     expect(pipeline[0].$set.fired.$filter).toBeDefined();
     expect(pipeline[0].$set.queue.$filter.cond.$not.$in[1]).toEqual(['streak_milestone', 'streak_risk', 'streak_recovery']);
+  });
+});
+
+describe('GenOnStreakLabService: todos los inscritos', () => {
+  it('solo si todas las organizaciones del programa son de prueba', async () => {
+    const { service } = setup({ testOrg: false });
+    await expect(service.applyAll({ _id: 'p1', organization_ids: [ORG] } as any, 'next_day')).rejects.toThrow(
+      'organizaciones de prueba',
+    );
+  });
+
+  it('pasar el día a todos corre sus fechas y vuelve a segmentar', async () => {
+    const { service, enrollmentModel, engine } = setup();
+    const program: any = { _id: 'p1', organization_ids: [ORG] };
+    const res = await service.applyAll(program, 'next_day');
+    expect(enrollmentModel.collection.updateOne).toHaveBeenCalledTimes(1);
+    expect(engine.segment).toHaveBeenCalledWith(program, expect.any(Date));
+    expect(res.results).toEqual([{ user_id: 'u1', name: 'Ana', ok: true, reason: null }]);
+  });
+
+  it('estudiar hoy a todos: quien no ha terminado nada se reporta', async () => {
+    const { service, collections, engine } = setup();
+    engine.loadCourseCache.mockResolvedValue({ course: { activities: [] }, stats: { completedAt: new Map() } });
+    const res = await service.applyAll({ _id: 'p1', organization_ids: [ORG] } as any, 'study');
+    expect(collections.progress_events?.insertOne).toBeUndefined();
+    expect(res.results[0]).toMatchObject({ ok: false, reason: 'no ha terminado ninguna actividad' });
+    expect(engine.segment).not.toHaveBeenCalled();
   });
 });

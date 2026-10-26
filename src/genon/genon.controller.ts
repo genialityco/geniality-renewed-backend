@@ -434,6 +434,20 @@ export class GenOnController {
     );
   }
 
+  /** Lo mismo para todos los inscritos del programa (solo organizaciones de prueba). */
+  @Post('programs/:id/test/streak-all')
+  async streakLabAll(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { action?: string },
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    if (body?.action !== 'study' && body?.action !== 'next_day') {
+      throw new BadRequestException('Acción desconocida');
+    }
+    return this.streakLab.applyAll(program, body.action as StreakLabAction);
+  }
+
   private triggerKey(key?: string): GenOnTriggerKey {
     if (!key || !(key in TRIGGER_STEP)) {
       throw new BadRequestException('Disparador desconocido');
