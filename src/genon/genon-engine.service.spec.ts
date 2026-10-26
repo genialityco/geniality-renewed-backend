@@ -40,8 +40,8 @@ function setup(opts: {
   variantCounts?: { _id: string; n: number }[];
   /** Avances registrados en progress_events */
   progress?: { user_id: string; event_id: string; at: Date }[];
-  /** Cómo queda la inscripción si se resegmenta al despachar */
-  resegmented?: Record<string, any>;
+  /** Cómo queda la inscripción si se resegmenta al despachar (null: se borró) */
+  resegmented?: Record<string, any> | null;
   autoLogin?: boolean;
   authLinks?: Record<string, any>;
 } = {}) {
@@ -79,7 +79,9 @@ function setup(opts: {
       sort: () => ({ limit: () => exec([enrollment]) }),
       select: () => ({ lean: () => exec([{ user_id: 'u1', progress: 0 }]) }),
       // Recarga tras resegmentar
-      exec: jest.fn().mockResolvedValue([{ ...enrollment, ...opts.resegmented }]),
+      exec: jest
+        .fn()
+        .mockResolvedValue(opts.resegmented === null ? [] : [{ ...enrollment, ...opts.resegmented }]),
     })),
     updateOne: jest.fn((..._args: any[]) => exec({})),
     aggregate: jest.fn((..._args: any[]) => exec(opts.variantCounts || [])),
@@ -393,6 +395,20 @@ describe('GenOnEngineService: avance desde la última segmentación', () => {
     expect(engagementLog.deliver).not.toHaveBeenCalled();
   });
 
+  it('si al resegmentar su inscripción se borra (ya no es miembro), el toque no sale', async () => {
+    const { service, program, engagementLog } = setup({
+      enrollment: { event_id: EV, segmented_at: segmentedAt },
+      progress: [{ user_id: 'u1', event_id: EV, at: new Date(NOW.getTime() - 3600 * 1000) }],
+      resegmented: null,
+    });
+    jest.spyOn(service as any, 'segmentEvent').mockResolvedValue({});
+
+    const { outcomes } = await service.runProgram(program, NOW);
+
+    expect(outcomes[0]).toMatchObject({ result: 'skipped', reason: 'no es miembro de la organización' });
+    expect(engagementLog.deliver).not.toHaveBeenCalled();
+  });
+
   it('sin avance desde la segmentación, envía sin resegmentar', async () => {
     const { service, program } = setup({
       enrollment: { event_id: EV, segmented_at: segmentedAt },
@@ -519,5 +535,58 @@ describe('GenOnEngineService: enviar a la persona', () => {
       }),
     ).rejects.toThrow('consentimiento');
     expect(engagementLog.deliver).not.toHaveBeenCalled();
+  });
+});
+
+describe('GenOnEngineService: segmentación solo de miembros', () => {
+  it('omite a los inscritos sin membresía en la organización y borra su inscripción', async () => {
+    const program: any = { _id: 'p1', organization_ids: ['org1'], ...defaultProgram() };
+    const row = (user_id: string) => ({
+      user_id,
+      course_progress: 0,
+      enrolled_at: new Date(NOW.getTime() - 10 * 24 * 3600 * 1000),
+      last_activity_at: null,
+    });
+    const enrollmentModel = {
+      find: jest.fn(() => exec([])),
+      bulkWrite: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn((..._args: any[]) => exec({})),
+    };
+    const organizationUserModel = {
+      collection: {
+        find: jest.fn(() => ({ toArray: jest.fn().mockResolvedValue([{ user_id: 'u1' }]) })),
+      },
+    };
+    const context = {
+      loadCourse: jest.fn().mockResolvedValue({ eventId: 'ev1', organizationId: 'org1', activities: [] }),
+      loadStats: jest.fn().mockResolvedValue({ completedByUser: new Map() }),
+    };
+    const snapshots = { computeEvent: jest.fn().mockResolvedValue({ rows: [row('u1'), row('u2')] }) };
+    const service = new GenOnEngineService(
+      {} as any,
+      enrollmentModel as any,
+      {} as any,
+      {} as any,
+      organizationUserModel as any,
+      {} as any,
+      {} as any,
+      context as any,
+      snapshots as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+
+    const counts = await (service as any).segmentEvent(program, { _id: 'ev1', organizer_id: 'org1' }, NOW);
+
+    expect(counts).toEqual({ abandon: 1 });
+    const ops = enrollmentModel.bulkWrite.mock.calls[0][0];
+    expect(ops.map((o: any) => o.updateOne.filter.user_id)).toEqual(['u1']);
+    expect(enrollmentModel.deleteMany).toHaveBeenCalledWith({
+      program_id: 'p1',
+      event_id: 'ev1',
+      user_id: { $in: ['u2'] },
+      test: false,
+    });
   });
 });

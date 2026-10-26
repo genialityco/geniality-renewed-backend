@@ -275,10 +275,22 @@ export class GenOnEngineService {
       ).map((e) => [e.user_id, e]),
     );
 
+    // Solo miembros de la organización: si el curso es público, quien lo abre
+    // desde otra organización queda inscrito sin ser miembro
+    const members = await this.memberIds(
+      orgId,
+      rows.map((r) => r.user_id).filter((id) => !onlyUsers || onlyUsers.has(id)),
+    );
+    const outsiders: string[] = [];
+
     const counts: Record<string, number> = {};
     const ops: any[] = [];
     for (const row of rows) {
       if (onlyUsers && !onlyUsers.has(row.user_id)) continue;
+      if (!members.has(row.user_id)) {
+        outsiders.push(row.user_id);
+        continue;
+      }
       const completed = stats.completedByUser.get(row.user_id)?.size || 0;
       const segment = classifySegment(
         {
@@ -358,7 +370,33 @@ export class GenOnEngineService {
         ordered: false,
       });
     }
+    // Quien entró antes de este filtro (o perdió la membresía) sale del programa
+    if (outsiders.length) {
+      await this.enrollmentModel
+        .deleteMany({
+          program_id: String(program._id),
+          event_id: eventId,
+          user_id: { $in: outsiders },
+          test: false,
+        })
+        .exec();
+    }
     return counts;
+  }
+
+  /** De entre estos usuarios, los que tienen membresía en la organización. */
+  private async memberIds(organizationId: string, userIds: string[]): Promise<Set<string>> {
+    if (!userIds.length) return new Set();
+    const rows = await this.organizationUserModel.collection
+      .find(
+        {
+          organization_id: { $in: idVariants(organizationId) },
+          user_id: { $in: userIds.flatMap(idVariants) },
+        },
+        { projection: { user_id: 1 } },
+      )
+      .toArray();
+    return new Set(rows.map((r: any) => String(r.user_id)));
   }
 
   /** Próximo toque y su hora (null si el segmento no tiene secuencia o terminó). */
@@ -600,12 +638,18 @@ export class GenOnEngineService {
         (e) => [String(e._id), e],
       ),
     );
+    const movedIds = new Set(moved.map((e) => String(e._id)));
     const still: GenOnEnrollment[] = [];
     const outcomes: DispatchOutcome[] = [];
     for (const e of due) {
       const f = fresh.get(String(e._id));
-      if (!f) {
+      if (!movedIds.has(String(e._id))) {
         still.push(e);
+      } else if (!f) {
+        // La segmentación borró su inscripción: ya no es miembro
+        outcomes.push(
+          this.outcome(e, e.next_step_key, 'skipped', 'no es miembro de la organización'),
+        );
       } else if (f.segment === e.segment) {
         still.push(f);
       } else {
