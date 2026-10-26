@@ -59,6 +59,7 @@ import { GenOnConversationService } from './genon-conversation.service';
 import { GenOnTriggersService } from './genon-triggers.service';
 import { GenOnHistoryService } from './genon-history.service';
 import { GenOnDemoService } from './genon-demo.service';
+import { GenOnStreakLabService } from './genon-streak-lab.service';
 import { GenOnController } from './genon.controller';
 import { GenOnDemoController } from './genon-demo.controller';
 import { GenOnCron } from './genon.cron';
@@ -112,6 +113,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
     GenOnConversationService,
     GenOnHistoryService,
     GenOnDemoService,
+    GenOnStreakLabService,
     GenOnCron,
   ],
   // GenOnContextService: el asistente usa los cursos en orden y sus módulos

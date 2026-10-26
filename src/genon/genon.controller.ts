@@ -20,6 +20,7 @@ import { GenOnTemplatesService } from './genon-templates.service';
 import { GenOnEngineService } from './genon-engine.service';
 import { GenOnTriggersService, TRIGGER_STEP } from './genon-triggers.service';
 import { GenOnHistoryService } from './genon-history.service';
+import { GenOnStreakLabService, StreakLabAction } from './genon-streak-lab.service';
 import { GenOnTriggerKey } from './schemas/genon-program.schema';
 import { GenOnFeedback } from './schemas/genon-feedback.schema';
 import { GENON_VARIABLES, validateTemplate } from './genon-variables';
@@ -42,6 +43,7 @@ export class GenOnController {
     private readonly engine: GenOnEngineService,
     private readonly triggers: GenOnTriggersService,
     private readonly historyService: GenOnHistoryService,
+    private readonly streakLab: GenOnStreakLabService,
     @InjectModel(GenOnFeedback.name)
     private readonly feedbackModel: Model<GenOnFeedback>,
   ) {}
@@ -396,6 +398,29 @@ export class GenOnController {
       body.eventId!,
       this.triggerKey(body.key),
       body.to || '',
+    );
+  }
+
+  /**
+   * Laboratorio de rachas (solo organizaciones de prueba): hoy cuenta como día
+   * de estudio, o pasa un día. Devuelve la simulación de disparadores.
+   */
+  @Post('programs/:id/test/streak')
+  async streakLabAction(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { userId?: string; eventId?: string; action?: string },
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    this.requireIds(body);
+    if (body.action !== 'study' && body.action !== 'next_day') {
+      throw new BadRequestException('Acción desconocida');
+    }
+    return this.streakLab.apply(
+      program,
+      body.userId!,
+      body.eventId!,
+      body.action as StreakLabAction,
     );
   }
 
