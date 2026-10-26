@@ -338,6 +338,16 @@ export class GenOnController {
     return this.engine.reassign(program, new Date());
   }
 
+  /**
+   * Segmenta ya a todos (quien pasó a activos, p. ej., deja la secuencia de
+   * abandono). No envía nada; vale también con el programa activo.
+   */
+  @Post('programs/:id/regroup')
+  async regroup(@Req() req: any, @Param('id') id: string) {
+    const program = await this.programs.get(req.auth.uid, id);
+    return this.engine.regroup(program, new Date());
+  }
+
   // ── Disparadores (segmento 3, examen, certificado) ──
 
   @Post('programs/:id/test/triggers')

@@ -637,3 +637,52 @@ describe('GenOnEngineService: segmentación solo de miembros', () => {
     });
   });
 });
+
+describe('GenOnEngineService: actualizar grupos', () => {
+  it('segmenta a todos y devuelve solo a quienes cambiaron de grupo', async () => {
+    const before = [
+      { user_id: '507f191e810c19729de860a1', event_id: 'ev1', segment: 'abandon' },
+      { user_id: '507f191e810c19729de860a2', event_id: 'ev1', segment: 'inactive' },
+    ];
+    const after = [
+      { user_id: '507f191e810c19729de860a1', event_id: 'ev1', segment: 'active' },
+      { user_id: '507f191e810c19729de860a2', event_id: 'ev1', segment: 'inactive' },
+    ];
+    const lists = [before, after];
+    const enrollmentModel = {
+      find: jest.fn(() => ({ select: () => ({ lean: () => exec(lists.shift()) }) })),
+    };
+    const userModel = {
+      collection: {
+        find: jest.fn(() => ({
+          toArray: jest.fn().mockResolvedValue([{ _id: '507f191e810c19729de860a1', names: 'Sergio' }]),
+        })),
+      },
+    };
+    const service = new GenOnEngineService(
+      {} as any,
+      enrollmentModel as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      userModel as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const segment = jest
+      .spyOn(service, 'segment')
+      .mockResolvedValue({ courses: 1, counts: { active: 1, inactive: 1 } });
+    const program: any = { _id: 'p1' };
+
+    const res = await service.regroup(program, NOW);
+
+    expect(segment).toHaveBeenCalledWith(program, NOW);
+    expect(res.changed).toEqual([
+      { user_id: '507f191e810c19729de860a1', event_id: 'ev1', name: 'Sergio', from: 'abandon', to: 'active' },
+    ]);
+  });
+});

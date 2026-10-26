@@ -27,6 +27,11 @@ dotenv.config();
  * Uso:
  *   npx ts-node scripts/resetGenOnTestOrg.ts --dry-run   # solo reporta
  *   npx ts-node scripts/resetGenOnTestOrg.ts             # aplica
+ *   ... --end-demos   # además termina las demostraciones del programa
+ *                     # (borra a sus participantes); sin él se conservan
+ *
+ * Mejor no correrlo a la hora en punto ni a los cuartos: el cron segmenta
+ * cada 15 minutos y puede pasar a mitad del reinicio.
  */
 
 const ORG_ID = '6ada6d2ab4d306c546cb8e38';
@@ -469,10 +474,14 @@ async function main() {
       await wipe(String(user._id), false);
     }
 
-    // ── Demostraciones del programa ──
-    for (const demo of await col('genon_demos')
-      .find({ program_id: programId })
-      .toArray()) {
+    // ── Demostraciones del programa (solo con --end-demos) ──
+    const demos = await col('genon_demos').find({ program_id: programId }).toArray();
+    if (demos.length && !process.argv.includes('--end-demos')) {
+      log(
+        `${demos.length} demostración(es) se conservan con sus participantes (--end-demos para terminarlas)`,
+      );
+    }
+    for (const demo of process.argv.includes('--end-demos') ? demos : []) {
       const ids: string[] = (demo.participants || []).map((p: any) =>
         String(p.user_id),
       );

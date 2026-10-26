@@ -436,6 +436,44 @@ export class GenOnEngineService {
   }
 
   /**
+   * Segmenta ya a todos los inscritos (botón "Actualizar grupos"): quien
+   * cambió de grupo empieza la secuencia del nuevo, p. ej. al pasar de
+   * abandono a activos. No envía nada, no reparte franjas ni variantes y no
+   * cuenta como la segmentación del día (los disparadores diarios siguen
+   * igual). Devuelve quiénes cambiaron de grupo.
+   */
+  async regroup(program: GenOnProgram, now: Date) {
+    const current = () =>
+      this.enrollmentModel
+        .find({ program_id: String(program._id), test: false })
+        .select('user_id event_id segment')
+        .lean()
+        .exec();
+    const key = (e: { event_id: string; user_id: string }) => `${e.event_id}:${e.user_id}`;
+    const before = new Map((await current()).map((e) => [key(e), e.segment]));
+    const { counts } = await this.segment(program, now);
+    const moved = (await current()).filter((e) => before.get(key(e)) !== e.segment);
+
+    const ids = [...new Set(moved.map((e) => e.user_id))].filter((id) => Types.ObjectId.isValid(id));
+    const users = ids.length
+      ? await this.userModel.collection
+          .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } }, { projection: { names: 1 } })
+          .toArray()
+      : [];
+    const names = new Map(users.map((u: any) => [String(u._id), u.names || '']));
+    return {
+      counts,
+      changed: moved.map((e) => ({
+        user_id: e.user_id,
+        event_id: e.event_id,
+        name: names.get(e.user_id) || e.user_id,
+        from: before.get(key(e)) || null,
+        to: e.segment,
+      })),
+    };
+  }
+
+  /**
    * Reparte de nuevo a todos los inscritos por igual entre las franjas
    * actuales y borra las variantes asignadas (el próximo envío de cada toque
    * las vuelve a repartir). La hora del próximo toque se recalcula con la
