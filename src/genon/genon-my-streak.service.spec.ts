@@ -93,7 +93,7 @@ describe('GenOnMyStreakService: la racha del estudiante', () => {
 
   it('un día sin hito avisa que hoy ya cuenta', async () => {
     const s = await view({ 0: { activities: 1 }, 1: { activities: 1 } });
-    expect(s.celebrate).toMatchObject({ kind: 'day', days: 2, key: `day:${TODAY}` });
+    expect(s.celebrate).toMatchObject({ kind: 'day', days: 2, key: `day:${d(1)}:2` });
     expect(s.medal).toBeNull();
   });
 

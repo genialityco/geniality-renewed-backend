@@ -245,7 +245,9 @@ export class GenOnMyStreakService implements OnModuleInit {
     let celebrate: MyStreak['celebrate'] = null;
     if (s.activeToday && s.start) {
       const milestone = milestones.includes(s.current);
-      const key = milestone ? milestoneDedupe(s.start, s.current) : `day:${today}`;
+      // Un aviso por día de la racha (inicio + días), no por fecha: así el
+      // laboratorio (que corre las fechas hacia atrás) también lo muestra
+      const key = milestone ? milestoneDedupe(s.start, s.current) : `day:${s.start}:${s.current}`;
       if (!person.seen.has(key)) {
         celebrate = {
           key,
