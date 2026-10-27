@@ -81,9 +81,12 @@ function setup(opts: {
 
   const programModel = { updateOne: jest.fn(() => exec({})) };
   const enrollmentModel = {
-    find: jest.fn(() => ({
+    find: jest.fn((q?: any) => ({
       sort: () => ({ limit: () => exec([enrollment]) }),
-      select: () => ({ lean: () => exec(opts.listed || [{ user_id: 'u1', progress: 0 }]) }),
+      // Sin miembros pendientes de abrir un curso
+      select: () => ({
+        lean: () => exec(q?.without_course ? [] : opts.listed || [{ user_id: 'u1', progress: 0 }]),
+      }),
       // Recarga tras resegmentar
       exec: jest
         .fn()
@@ -634,6 +637,120 @@ describe('GenOnEngineService: segmentación solo de miembros', () => {
       event_id: 'ev1',
       user_id: { $in: ['u2'] },
       test: false,
+    });
+  });
+});
+
+describe('GenOnEngineService: miembros que aún no abren un curso', () => {
+  const DAY = 24 * 3600 * 1000;
+
+  function setupMembers(opts: { entry?: string | null; pending?: string[]; attendees?: any[] } = {}) {
+    const program: any = {
+      _id: 'p1',
+      organization_ids: ['org1'],
+      event_ids: [],
+      ...defaultProgram(),
+      entry_event_id: opts.entry === undefined ? 'ev1' : opts.entry,
+    };
+    const enrollmentModel = {
+      find: jest.fn((q?: any) => ({
+        ...exec([]),
+        select: () => ({ lean: () => exec(q?.without_course ? (opts.pending || []).map((user_id) => ({ user_id })) : []) }),
+      })),
+      bulkWrite: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn((..._args: any[]) => exec({})),
+    };
+    const courseattendees = {
+      distinct: jest.fn().mockResolvedValue(['u1']),
+      find: jest.fn(() => ({ toArray: jest.fn().mockResolvedValue(opts.attendees || []) })),
+    };
+    const organizationUserModel = {
+      collection: {
+        find: jest.fn(() => ({
+          toArray: jest.fn().mockResolvedValue([
+            { user_id: 'u1', created_at: new Date(NOW.getTime() - 60 * DAY) },
+            { user_id: 'u2', created_at: new Date(NOW.getTime() - 1 * DAY) },
+            { user_id: 'u3', created_at: new Date(NOW.getTime() - 30 * DAY) },
+          ]),
+        })),
+      },
+      db: { collection: jest.fn(() => courseattendees) },
+    };
+    const eventModel = {
+      collection: {
+        find: jest.fn(() => ({
+          toArray: jest.fn().mockResolvedValue([
+            { _id: 'ev1', organizer_id: 'org1' },
+            { _id: 'ev2', organizer_id: 'org1' },
+          ]),
+        })),
+      },
+    };
+    const service = new GenOnEngineService(
+      {} as any,
+      enrollmentModel as any,
+      eventModel as any,
+      {} as any,
+      organizationUserModel as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, program, enrollmentModel, organizationUserModel };
+  }
+
+  it('entran al curso de entrada: en espera los primeros días y luego en abandono', async () => {
+    const { service, program, enrollmentModel, organizationUserModel } = setupMembers();
+    const events = await service.programEvents(program);
+
+    const counts = await (service as any).segmentWithoutCourse(program, events, NOW);
+
+    // u1 ya abrió un curso del programa: sigue con su inscripción normal
+    expect(counts).toEqual({ waiting: 1, abandon: 1 });
+    const ops = enrollmentModel.bulkWrite.mock.calls[0][0].map((o: any) => o.updateOne);
+    expect(ops.map((o: any) => [o.filter.user_id, o.filter.event_id, o.update.$set.segment])).toEqual([
+      ['u2', 'ev1', 'waiting'],
+      ['u3', 'ev1', 'abandon'],
+    ]);
+    expect(ops[0].update.$set).toMatchObject({ without_course: true, progress: 0 });
+    // Sin administradores
+    expect((organizationUserModel.collection.find.mock.calls as any[][])[0][0].rol_id).toBeDefined();
+    // Sale quien abrió un curso, dejó la organización o quedó en otro curso de entrada
+    expect(enrollmentModel.deleteMany).toHaveBeenCalledWith({
+      program_id: 'p1',
+      test: false,
+      without_course: true,
+      $or: [{ event_id: { $ne: 'ev1' } }, { user_id: { $nin: ['u2', 'u3'] } }],
+    });
+  });
+
+  it('sin curso de entrada nadie entra así y se borran las que hubiera', async () => {
+    const { service, program, enrollmentModel } = setupMembers({ entry: null });
+
+    expect(await (service as any).segmentWithoutCourse(program, [{ _id: 'ev1', organizer_id: 'org1' }], NOW)).toEqual({});
+    expect(enrollmentModel.bulkWrite).not.toHaveBeenCalled();
+    expect(enrollmentModel.deleteMany).toHaveBeenCalledWith({ program_id: 'p1', test: false, without_course: true });
+  });
+
+  it('al abrir otro curso del programa pasa ya a esa inscripción', async () => {
+    const { service, program, enrollmentModel } = setupMembers({
+      pending: ['u2'],
+      attendees: [{ user_id: 'u2', event_id: 'ev2' }],
+    });
+    const resegment = jest.spyOn(service, 'resegmentPeople').mockResolvedValue();
+
+    await service.resegmentProgressed(program, NOW);
+
+    expect(resegment).toHaveBeenCalledWith(program, 'ev2', new Set(['u2']), NOW);
+    expect(enrollmentModel.deleteMany).toHaveBeenCalledWith({
+      program_id: 'p1',
+      test: false,
+      without_course: true,
+      user_id: { $in: ['u2'] },
     });
   });
 });

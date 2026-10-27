@@ -23,11 +23,20 @@ const MAX_DETAIL_DAYS = 30;
 // Celebraciones vistas que se recuerdan por inscripción
 const SEEN_KEEP = 30;
 
-export type MyStreakStatus = 'none' | 'safe' | 'at_risk' | 'broken';
+/**
+ * safe: hoy ya cuenta · protected: hoy aún no estudia, pero un protector
+ * cubre el día · at_risk: hoy aún no estudia · broken: se cortó (quizá
+ * recuperable) · none: sin racha
+ */
+export type MyStreakStatus = 'none' | 'safe' | 'protected' | 'at_risk' | 'broken';
 
 export interface MyStreak {
+  /** Inscripción donde se guardan los logros vistos */
   enrollment_id: string;
   event_id: string;
+  /** Cursos del programa: en cualquiera de ellos se suma a la racha */
+  event_ids: string[];
+  /** Cursos de la persona en el programa */
   event_name: string;
   organization_id: string;
   /** Zona del programa (los días de la racha son de esta zona) */
@@ -36,20 +45,36 @@ export interface MyStreak {
   current: number;
   best: number;
   active_today: boolean;
+  /** Actividades terminadas hoy (en todos sus cursos) */
+  today_activities: number;
   /** Día en que empezó la racha viva */
   start: string | null;
-  /**
-   * safe: hoy ya cuenta · at_risk: hoy aún no estudia · broken: se cortó
-   * (quizá recuperable) · none: sin racha
-   */
   status: MyStreakStatus;
   /** Hasta cuándo hay que estudiar para no perderla (fin del día, hora local) */
   deadline: string | null;
   medal: StreakMedal | null;
   next_medal: (StreakMedal & { missing: number }) | null;
   milestones: number[];
-  /** Por qué la tiene: qué hizo cada día de la racha (el más reciente primero) */
-  days: { day: string; activities: number; challenges: number; recovered: boolean }[];
+  /** Protector de racha: un día con varias actividades cubre un día sin estudio */
+  shield: {
+    enabled: boolean;
+    min_activities: number;
+    max: number;
+    /** Guardados */
+    count: number;
+    earned_today: boolean;
+  };
+  /**
+   * Por qué la tiene: qué hizo cada día de la racha (el más reciente
+   * primero). `covered`: día sin estudio que no cortó la racha (reto de
+   * recuperación o protector).
+   */
+  days: {
+    day: string;
+    activities: number;
+    challenges: number;
+    covered: 'challenge' | 'shield' | null;
+  }[];
   /** Racha cortada que un reto de repaso por WhatsApp aún puede recuperar */
   recovery: { lost: number; until: string } | null;
   /** Le llegan los mensajes de Gen.ON por WhatsApp (reconocimiento, retos) */
@@ -61,7 +86,8 @@ export interface MyStreak {
 /**
  * La racha vista por el estudiante (perfil, encabezado y aviso al lograrla)
  * y su reacción inmediata: al terminar una actividad, la racha se actualiza
- * y, si llega a un hito, el reconocimiento sale ya por WhatsApp.
+ * y, si llega a un hito, el reconocimiento sale ya por WhatsApp. La racha es
+ * de la persona en el programa: cuentan todos sus cursos.
  */
 @Injectable()
 export class GenOnMyStreakService implements OnModuleInit {
@@ -84,13 +110,12 @@ export class GenOnMyStreakService implements OnModuleInit {
     );
   }
 
-  /** Terminó una actividad o superó un reto: racha al día y reconocimiento si llegó a un hito. */
+  /** Terminó una actividad: racha al día y reconocimiento si llegó a un hito. */
   async onStudied(userId: string, eventId: string, now = new Date()) {
-    for (const { program, e } of await this.streakEnrollments({
-      user_id: userId,
-      event_id: eventId,
-    })) {
+    for (const { program, enrollments } of await this.streakPrograms({ user_id: userId })) {
       try {
+        if (!(await this.triggers.programEventIds(program)).includes(eventId)) continue;
+        const e = enrollments.find((x) => x.event_id === eventId) || enrollments[0];
         const { state, outcome } = await this.triggers.streakMilestoneNow(program, e, now);
         if (outcome) {
           this.logger.log(
@@ -106,23 +131,21 @@ export class GenOnMyStreakService implements OnModuleInit {
     }
   }
 
-  /** Rachas del usuario de la sesión, por curso (opcionalmente de una organización o curso). */
+  /** Rachas del usuario de la sesión, una por programa (opcionalmente de una organización o curso). */
   async mine(
     uid: string,
     filter: { organizationId?: string; eventId?: string },
   ): Promise<MyStreak[]> {
     const userId = await this.userIdOf(uid);
     if (!userId) return [];
-    const pairs = await this.streakEnrollments({
+    const groups = await this.streakPrograms({
       user_id: userId,
       ...(filter.organizationId ? { organization_id: filter.organizationId } : {}),
-      ...(filter.eventId ? { event_id: filter.eventId } : {}),
     });
-    // Un curso en dos programas: cuenta el primero
-    const byEvent = new Map<string, (typeof pairs)[number]>();
-    for (const p of pairs) if (!byEvent.has(p.e.event_id)) byEvent.set(p.e.event_id, p);
 
-    const eventIds = [...byEvent.keys()].filter((id) => Types.ObjectId.isValid(id));
+    const eventIds = [...new Set(groups.flatMap((g) => g.enrollments.map((e) => e.event_id)))].filter(
+      (id) => Types.ObjectId.isValid(id),
+    );
     const events = await this.eventModel.collection
       .find(
         { _id: { $in: eventIds.map((id) => new Types.ObjectId(id)) } },
@@ -133,8 +156,10 @@ export class GenOnMyStreakService implements OnModuleInit {
 
     const now = new Date();
     const out: MyStreak[] = [];
-    for (const { program, e } of byEvent.values()) {
-      out.push(await this.view(program, e, names.get(e.event_id) || 'Curso', now));
+    for (const { program, enrollments } of groups) {
+      const programEvents = await this.triggers.programEventIds(program);
+      if (filter.eventId && !programEvents.includes(filter.eventId)) continue;
+      out.push(await this.view(program, userId, enrollments, programEvents, names, now));
     }
     return out.sort((a, b) => b.current - a.current || b.best - a.best);
   }
@@ -157,17 +182,21 @@ export class GenOnMyStreakService implements OnModuleInit {
 
   async view(
     program: GenOnProgram,
-    e: GenOnEnrollment,
-    eventName: string,
+    userId: string,
+    enrollments: GenOnEnrollment[],
+    programEvents: string[],
+    names: Map<string, string>,
     now: Date,
   ): Promise<MyStreak> {
     const cfg = withTriggerDefaults(program.triggers).streak;
     const tz = program.timezone;
     const today = localDate(now, tz);
-    const studied = await this.triggers.studyDays(program, e, now);
-    const bridged = e.streak_bridged || [];
-    const s = streakState(studied.keys(), bridged, today);
+    const person = await this.triggers.personStreak(program, userId, now);
+    const s = person.state;
+    const studied = person.days;
+    const covered = [...person.bridged, ...person.shielded];
     const milestones = [...new Set(cfg.milestones)].sort((a, b) => a - b);
+    const holder = person.lead || enrollments[0];
 
     const days: MyStreak['days'] = [];
     if (s.start) {
@@ -178,7 +207,7 @@ export class GenOnMyStreakService implements OnModuleInit {
           day: d,
           activities: entry?.activities || 0,
           challenges: entry?.challenges || 0,
-          recovered: !entry,
+          covered: entry ? null : person.shielded.has(d) ? 'shield' : 'challenge',
         });
         d = addDays(d, -1);
       }
@@ -187,9 +216,9 @@ export class GenOnMyStreakService implements OnModuleInit {
     // Lo que un reto de repaso puede recuperar (misma regla que la conversación)
     let recovery: MyStreak['recovery'] = null;
     const before = [...studied.keys()].filter((d) => d < today);
-    const gap = daysToBridge(before, bridged, today, cfg.recovery_window_days);
+    const gap = daysToBridge(before, covered, today, cfg.recovery_window_days);
     if (cfg.recovery_enabled && gap.length) {
-      const lost = streakState(before, [...bridged, ...gap], today).throughYesterday;
+      const lost = streakState(before, [...covered, ...gap], today).throughYesterday;
       const lastValid = before.sort().pop();
       if (lost >= cfg.recovery_min && lastValid) {
         recovery = { lost, until: addDays(lastValid, cfg.recovery_window_days + 1) };
@@ -199,23 +228,25 @@ export class GenOnMyStreakService implements OnModuleInit {
     const status: MyStreakStatus = s.activeToday
       ? 'safe'
       : s.current > 0
-        ? 'at_risk'
+        ? person.shields > 0
+          ? 'protected'
+          : 'at_risk'
         : recovery
           ? 'broken'
           : 'none';
+    // Con protector, si hoy no estudia el protector cubre hoy: el plazo es mañana
     const deadline =
-      status === 'safe'
+      status === 'safe' || status === 'protected'
         ? zonedTime(addDays(today, 1), '23:59', tz)
         : status === 'at_risk'
           ? zonedTime(today, '23:59', tz)
           : null;
 
-    const seen = new Set(e.streak_seen || []);
     let celebrate: MyStreak['celebrate'] = null;
     if (s.activeToday && s.start) {
       const milestone = milestones.includes(s.current);
       const key = milestone ? milestoneDedupe(s.start, s.current) : `day:${today}`;
-      if (!seen.has(key)) {
+      if (!person.seen.has(key)) {
         celebrate = {
           key,
           kind: milestone ? 'milestone' : 'day',
@@ -225,31 +256,41 @@ export class GenOnMyStreakService implements OnModuleInit {
       }
     }
 
+    const courseNames = [...new Set(enrollments.map((e) => names.get(e.event_id) || 'Curso'))];
     return {
-      enrollment_id: String(e._id),
-      event_id: e.event_id,
-      event_name: eventName,
-      organization_id: e.organization_id,
+      enrollment_id: String(holder._id),
+      event_id: holder.event_id,
+      event_ids: programEvents,
+      event_name: courseNames.length > 2 ? 'tus cursos' : courseNames.join(' y '),
+      organization_id: holder.organization_id,
       timezone: tz,
       today,
       current: s.current,
-      best: Math.max(e.streak?.best || 0, s.current),
+      best: person.best,
       active_today: s.activeToday,
+      today_activities: studied.get(today)?.activities || 0,
       start: s.start,
       status,
       deadline: deadline ? deadline.toISOString() : null,
       medal: medalFor(s.current, milestones),
       next_medal: nextMedal(s.current, milestones),
       milestones,
+      shield: {
+        enabled: cfg.shield_enabled,
+        min_activities: cfg.shield_min_activities,
+        max: cfg.shield_max,
+        count: person.shields,
+        earned_today: person.shieldEarnedToday,
+      },
       days,
       recovery,
-      whatsapp: program.mode === 'live' && !e.exited && !e.holdout,
+      whatsapp: program.mode === 'live' && !holder.exited && !holder.holdout,
       celebrate,
     };
   }
 
-  /** Inscripciones reales con la racha encendida en un programa en marcha. */
-  private async streakEnrollments(filter: Record<string, string>) {
+  /** Inscripciones reales del usuario, por programa en marcha con la racha encendida. */
+  private async streakPrograms(filter: Record<string, string>) {
     const enrollments = await this.enrollmentModel.find({ ...filter, test: false }).exec();
     if (!enrollments.length) return [];
     const programIds = [...new Set(enrollments.map((e) => e.program_id))].filter((id) =>
@@ -261,14 +302,12 @@ export class GenOnMyStreakService implements OnModuleInit {
         mode: { $ne: 'off' },
       })
       .exec();
-    const byId = new Map(
-      programs
-        .filter((p) => withTriggerDefaults(p.triggers).streak.enabled)
-        .map((p) => [String(p._id), p]),
-    );
-    return enrollments
-      .filter((e) => byId.has(e.program_id))
-      .map((e) => ({ program: byId.get(e.program_id)!, e }));
+    return programs
+      .filter((p) => withTriggerDefaults(p.triggers).streak.enabled)
+      .map((program) => ({
+        program,
+        enrollments: enrollments.filter((e) => e.program_id === String(program._id)),
+      }));
   }
 
   private async userIdOf(uid: string): Promise<string | null> {

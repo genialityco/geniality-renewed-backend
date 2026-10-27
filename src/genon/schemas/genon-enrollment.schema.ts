@@ -89,6 +89,9 @@ export class GenOnEnrollment extends Document {
   // Última vez que la segmentación evaluó a esta persona (diaria o al despachar)
   @Prop({ type: Date, default: null }) segmented_at: Date | null;
   @Prop({ type: Date, default: null }) enrolled_at: Date | null;
+  // Miembro que aún no abre ningún curso del programa: está en el curso de
+  // entrada y enrolled_at es su llegada a la organización
+  @Prop({ default: false }) without_course: boolean;
 
   // Conversación
   // Últimos 10 dígitos del teléfono al que se escribió: así se reconoce su

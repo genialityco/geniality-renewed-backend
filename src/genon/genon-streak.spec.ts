@@ -1,4 +1,4 @@
-import { addDays, daysToBridge, medalFor, nextMedal, streakState } from './genon-streak';
+import { addDays, applyShields, daysToBridge, medalFor, nextMedal, streakState } from './genon-streak';
 
 const TODAY = '2026-10-21';
 const d = (n: number) => addDays(TODAY, -n); // d(1) = ayer
@@ -89,5 +89,36 @@ describe('medallas de racha', () => {
   it('próxima medalla y días que faltan', () => {
     expect(nextMedal(5, MILESTONES)).toEqual({ tier: 'silver', name: 'plata', days: 7, missing: 2 });
     expect(nextMedal(30, MILESTONES)).toBeNull();
+  });
+});
+
+describe('protector de racha', () => {
+  const T = '2026-10-21';
+  const rules = { enabled: true, minActivities: 2, max: 1 };
+  const acts = (entries: [number, number][]) =>
+    new Map(entries.map(([n, count]) => [addDays(T, -n), count]));
+
+  it('no se acumulan más de los permitidos ni se gana hoy si ya está lleno', () => {
+    const a = acts([[3, 2], [2, 3], [1, 1], [0, 2]]);
+    const s = applyShields(a, a.keys(), [], T, rules);
+    expect(s).toEqual({ shielded: [], shields: 1, earnedToday: false });
+  });
+
+  it('cubre solo un día: el segundo seguido sin estudio corta la racha', () => {
+    const a = acts([[4, 2]]);
+    const s = applyShields(a, a.keys(), [], T, rules);
+    expect(s.shielded).toEqual([addDays(T, -3)]);
+    expect(streakState(a.keys(), s.shielded, T).current).toBe(0);
+  });
+
+  it('un día ya recuperado con un reto no gasta el protector', () => {
+    const a = acts([[3, 2], [1, 1]]);
+    const s = applyShields(a, a.keys(), [addDays(T, -2)], T, rules);
+    expect(s).toMatchObject({ shielded: [], shields: 1 });
+  });
+
+  it('apagado no cubre nada', () => {
+    const a = acts([[2, 3]]);
+    expect(applyShields(a, a.keys(), [], T, { ...rules, enabled: false }).shields).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import { GenOnMyStreakService } from './genon-my-streak.service';
 import { defaultProgram } from './genon-defaults';
-import { addDays } from './genon-streak';
+import { addDays, applyShields, streakState } from './genon-streak';
 
 const NOW = new Date('2026-10-21T15:00:00Z'); // 10:00 en Bogotá
 const TODAY = '2026-10-21';
@@ -16,11 +16,6 @@ function view(
       { activities: v.activities || 0, challenges: v.challenges || 0 },
     ]),
   );
-  const triggers = { studyDays: jest.fn().mockResolvedValue(days) };
-  const svc = new GenOnMyStreakService(
-    {} as any, {} as any, {} as any, {} as any, {} as any,
-    triggers as any,
-  );
   const program: any = { _id: 'p1', ...defaultProgram(), mode: 'live', timezone: 'America/Bogota' };
   const e: any = {
     _id: 'e1',
@@ -34,7 +29,36 @@ function view(
     streak_seen: [],
     ...extra,
   };
-  return svc.view(program, e, 'Endocrinología', NOW);
+  // La racha de la persona como la arma el servicio de disparadores
+  const bridged = new Set<string>(e.streak_bridged);
+  const shield = applyShields(
+    new Map([...days].map(([k, v]) => [k, v.activities])),
+    days.keys(),
+    bridged,
+    TODAY,
+    { enabled: true, minActivities: 2, max: 1 },
+  );
+  const shielded = new Set(shield.shielded);
+  const person = {
+    state: streakState(days.keys(), [...bridged, ...shielded], TODAY),
+    days,
+    bridged,
+    shielded,
+    shields: shield.shields,
+    shieldEarnedToday: shield.earnedToday,
+    best: 5,
+    enrollments: [e],
+    lead: e,
+    fired: new Set(),
+    seen: new Set(e.streak_seen),
+    riskWeeks: new Set(),
+  };
+  const triggers = { personStreak: jest.fn().mockResolvedValue(person) };
+  const svc = new GenOnMyStreakService(
+    {} as any, {} as any, {} as any, {} as any, {} as any,
+    triggers as any,
+  );
+  return svc.view(program, 'u1', [e], ['ev1', 'ev2'], new Map([['ev1', 'Endocrinología']]), NOW);
 }
 
 describe('GenOnMyStreakService: la racha del estudiante', () => {
@@ -51,9 +75,9 @@ describe('GenOnMyStreakService: la racha del estudiante', () => {
       whatsapp: true,
     });
     expect(s.days).toEqual([
-      { day: d(0), activities: 2, challenges: 0, recovered: false },
-      { day: d(1), activities: 0, challenges: 1, recovered: false },
-      { day: d(2), activities: 1, challenges: 0, recovered: false },
+      { day: d(0), activities: 2, challenges: 0, covered: null },
+      { day: d(1), activities: 0, challenges: 1, covered: null },
+      { day: d(2), activities: 1, challenges: 0, covered: null },
     ]);
     // Para seguir: estudiar mañana antes de que termine el día
     expect(s.deadline).toBe('2026-10-23T04:59:00.000Z');
@@ -94,7 +118,27 @@ describe('GenOnMyStreakService: la racha del estudiante', () => {
       { streak_bridged: [d(1)] },
     );
     expect(s.current).toBe(2);
-    expect(s.days.map((x) => x.recovered)).toEqual([false, true, false]);
+    expect(s.days.map((x) => x.covered)).toEqual([null, 'challenge', null]);
+  });
+
+  it('dos actividades hoy ganan un protector', async () => {
+    const s = await view({ 0: { activities: 2 } });
+    expect(s.today_activities).toBe(2);
+    expect(s.shield).toMatchObject({ count: 1, earned_today: true, min_activities: 2 });
+    expect(s.event_ids).toEqual(['ev1', 'ev2']);
+  });
+
+  it('con protector, hoy sin estudio no pone la racha en riesgo hasta mañana', async () => {
+    const s = await view({ 1: { activities: 2 } });
+    expect(s).toMatchObject({ current: 1, status: 'protected', shield: { count: 1, earned_today: false } });
+    expect(s.deadline).toBe('2026-10-23T04:59:00.000Z');
+  });
+
+  it('el día que cubrió el protector aparece como tal', async () => {
+    const s = await view({ 0: { activities: 1 }, 2: { activities: 2 } });
+    expect(s.current).toBe(2);
+    expect(s.days.map((x) => x.covered)).toEqual([null, 'shield', null]);
+    expect(s.shield.count).toBe(0);
   });
 
   it('sin WhatsApp si está en el grupo de control o se dio de baja', async () => {

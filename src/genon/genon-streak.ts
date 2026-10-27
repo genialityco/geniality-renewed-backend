@@ -112,6 +112,63 @@ export function daysToBridge(
   return [];
 }
 
+// ───────────────────────── Protector de racha ─────────────────────────
+
+export interface ShieldRules {
+  enabled: boolean;
+  /** Actividades en un mismo día para ganar un protector */
+  minActivities: number;
+  /** Protectores que se pueden tener guardados */
+  max: number;
+}
+
+export interface ShieldState {
+  /** Días sin estudio que cubrió un protector (enlazan la racha sin contar) */
+  shielded: string[];
+  /** Protectores guardados hoy */
+  shields: number;
+  /** Hoy ganó uno (hizo las actividades necesarias y tenía cupo) */
+  earnedToday: boolean;
+}
+
+/**
+ * Protector de racha: un día con `minActivities` actividades o más gana uno
+ * (hasta `max` guardados) y el primer día sin estudio que viene después se
+ * cubre solo, sin cortar la racha. Se recalcula siempre desde los días de
+ * estudio, en orden: lo ganado un día solo cubre días posteriores. Los días
+ * ya puenteados por un reto no gastan protector. Hoy aún no se cubre (el día
+ * no ha terminado), pero lo ganado hoy ya cuenta.
+ */
+export function applyShields(
+  activitiesByDay: Map<string, number>,
+  validDays: Iterable<string>,
+  bridgedDays: Iterable<string>,
+  today: string,
+  rules: ShieldRules,
+): ShieldState {
+  const none = { shielded: [], shields: 0, earnedToday: false };
+  if (!rules.enabled || rules.max < 1) return none;
+  const valid = new Set(validDays);
+  const bridged = new Set(bridgedDays);
+  const first = [...valid].filter((d) => d <= today).sort()[0];
+  if (!first) return none;
+  const earns = (d: string) => (activitiesByDay.get(d) || 0) >= Math.max(1, rules.minActivities);
+
+  let shields = 0;
+  const shielded: string[] = [];
+  for (let d = first; d < today; d = addDays(d, 1)) {
+    if (valid.has(d)) {
+      if (earns(d)) shields = Math.min(rules.max, shields + 1);
+    } else if (!bridged.has(d) && shields > 0) {
+      shields--;
+      shielded.push(d);
+    }
+  }
+  const earnedToday = earns(today) && shields < rules.max;
+  if (earnedToday) shields++;
+  return { shielded, shields, earnedToday };
+}
+
 // ───────────────────────── Medallas ─────────────────────────
 
 export type StreakMedalTier = 'bronze' | 'silver' | 'gold' | 'diamond';

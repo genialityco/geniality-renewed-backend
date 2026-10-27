@@ -47,6 +47,10 @@ function scenario(opts: {
   weekly?: number;
   cohort?: number[];
   progress?: number;
+  /** Protectores guardados */
+  shields?: number;
+  /** Otra inscripción de la persona lleva su racha */
+  otherLead?: boolean;
 }) {
   const completedAt = new Map(
     Object.entries(opts.completed || {}).map(([id, n]) => [id, daysAgo(n)]),
@@ -74,11 +78,17 @@ function scenario(opts: {
     streaks: new Map([
       [
         'u1',
-        streakState(
-          (opts.validDays || []).map((n) => addDays(TODAY, -n)),
-          [],
-          TODAY,
-        ),
+        {
+          state: streakState(
+            (opts.validDays || []).map((n) => addDays(TODAY, -n)),
+            [],
+            TODAY,
+          ),
+          shields: opts.shields || 0,
+          fired: new Set(),
+          riskWeeks: new Set(),
+          lead: opts.otherLead ? { _id: 'e2' } : e,
+        },
       ],
     ]),
     stats,
@@ -136,6 +146,18 @@ describe('GenOnTriggersService: disparadores diarios', () => {
   it('racha cortada: ofrece recuperarla si hay actividad para repasar', () => {
     const keys = scenario({ validDays: [2, 3, 4], completed: { a1: 2 } });
     expect(keys).toContain('streak_recovery');
+    expect(keys).not.toContain('streak_risk');
+  });
+
+  it('con un protector guardado no avisa de racha en riesgo', () => {
+    const keys = scenario({ validDays: [1, 2, 3], shields: 1 });
+    expect(keys).toContain('streak_milestone');
+    expect(keys).not.toContain('streak_risk');
+  });
+
+  it('los mensajes de racha los lleva una sola inscripción de la persona', () => {
+    const keys = scenario({ validDays: [1, 2, 3], otherLead: true });
+    expect(keys).not.toContain('streak_milestone');
     expect(keys).not.toContain('streak_risk');
   });
 
@@ -270,7 +292,7 @@ describe('GenOnTriggersService: cola', () => {
     const { svc, program, engine, cache } = queueSetup([
       item('streak_risk', { unless_active_today: true }),
     ]);
-    (svc as any).progressEventModel.collection.findOne.mockResolvedValue({ _id: 'x' });
+    jest.spyOn(svc, 'personStreak').mockResolvedValue({ state: { activeToday: true } } as any);
 
     const out = await svc.dispatchQueue(program, defaultTriggers(), NOW, false, 10, cache);
 
@@ -335,7 +357,12 @@ describe('GenOnTriggersService: enviar ya lo programado', () => {
 });
 
 describe('GenOnTriggersService: hito de racha al instante', () => {
-  function setup(daysAgoStudied: number[], extra: Record<string, any> = {}) {
+  function setup(
+    daysAgoStudied: number[],
+    extra: Record<string, any> = {},
+    /** Otras inscripciones de la persona en el programa */
+    others: any[] = [],
+  ) {
     const e: any = {
       _id: 'e1',
       user_id: 'u1',
@@ -359,18 +386,21 @@ describe('GenOnTriggersService: hito de racha al instante', () => {
         return { exec: jest.fn().mockResolvedValue({}) };
       }),
       findById: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(e) })),
+      find: jest.fn(() => ({ exec: jest.fn().mockResolvedValue([e, ...others]) })),
     };
     // Un minuto antes de cada medianoche de NOW (00:30 en Bogotá): el mismo día local
     const at = (n: number) => new Date(NOW.getTime() - n * DAY - 60 * 1000);
     const progressEventModel = {
       collection: {
         find: jest.fn(() => ({
-          toArray: jest.fn().mockResolvedValue(daysAgoStudied.map((n) => ({ at: at(n) }))),
+          toArray: jest
+            .fn()
+            .mockResolvedValue(daysAgoStudied.map((n) => ({ user_id: 'u1', at: at(n) }))),
         })),
-        findOne: jest.fn().mockResolvedValue(null),
       },
     };
     const engine = {
+      programEvents: jest.fn().mockResolvedValue([{ _id: 'ev1' }, { _id: 'ev2' }]),
       loadCourseCache: jest.fn().mockResolvedValue({ course, stats: {} }),
       resolvePerson: jest.fn().mockResolvedValue({ phone: '573000000000', consent: true, name: 'Ana', email: 'a@x.com' }),
       deliverTemplate: jest.fn().mockResolvedValue({ result: 'sent' }),
@@ -433,5 +463,106 @@ describe('GenOnTriggersService: hito de racha al instante', () => {
     await svc.streakMilestoneNow(program, e, NOW);
 
     expect(engine.deliverTemplate.mock.calls[0][3].dryRun).toBe(true);
+  });
+
+  it('no repite un hito ya reconocido en otro curso de la persona', async () => {
+    const start = addDays(TODAY, -2);
+    const other = { _id: 'e2', user_id: 'u1', event_id: 'ev2', segment: 'active', fired: [`milestone:${start}:3`] };
+    const { svc, program, e, engine } = setup([0, 1, 2], {}, [other]);
+
+    const { outcome } = await svc.streakMilestoneNow(program, e, NOW);
+
+    expect(outcome).toBeNull();
+    expect(engine.deliverTemplate).not.toHaveBeenCalled();
+  });
+});
+
+describe('GenOnTriggersService: racha de la persona', () => {
+  function setup(events: { event_id: string; daysAgo: number }[], enrollments: any[]) {
+    const at = (n: number) => new Date(NOW.getTime() - n * DAY - 60 * 1000);
+    const progressFind = jest.fn((query: any) => ({
+      toArray: jest.fn().mockResolvedValue(
+        events
+          .filter((x) => query.event_id.$in.includes(x.event_id))
+          .map((x) => ({ user_id: 'u1', at: at(x.daysAgo) })),
+      ),
+    }));
+    const svc = new GenOnTriggersService(
+      {} as any,
+      { find: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(enrollments) })) } as any,
+      {} as any, {} as any, {} as any, {} as any,
+      { collection: { find: progressFind } } as any,
+      {} as any,
+      { programEvents: jest.fn().mockResolvedValue([{ _id: 'ev1' }, { _id: 'ev2' }]) } as any,
+      {} as any,
+    );
+    const program: any = { _id: 'p1', ...defaultProgram(), timezone: 'America/Bogota' };
+    return { svc, program };
+  }
+  const enrollment = (id: string, event_id: string, extra: Record<string, any> = {}) => ({
+    _id: id,
+    user_id: 'u1',
+    event_id,
+    segment: 'active',
+    exited: false,
+    challenges: [],
+    streak_bridged: [],
+    fired: [],
+    ...extra,
+  });
+
+  it('suma los días de todos sus cursos del programa', async () => {
+    const { svc, program } = setup(
+      [
+        { event_id: 'ev1', daysAgo: 2 },
+        { event_id: 'ev2', daysAgo: 1 },
+        { event_id: 'ev1', daysAgo: 0 },
+      ],
+      [
+        enrollment('e2', 'ev2', { created_at: new Date('2026-09-01') }),
+        enrollment('e1', 'ev1', { created_at: new Date('2026-08-01') }),
+      ],
+    );
+
+    const p = await svc.personStreak(program, 'u1', NOW);
+
+    expect(p.state.current).toBe(3);
+    // La más antigua activa lleva los mensajes de racha
+    expect(String(p.lead?._id)).toBe('e1');
+  });
+
+  it('dos actividades el mismo día ganan un protector que cubre el día siguiente sin estudio', async () => {
+    const { svc, program } = setup(
+      [
+        { event_id: 'ev1', daysAgo: 3 },
+        { event_id: 'ev2', daysAgo: 3 },
+        // hace 2 días no estudió: lo cubre el protector
+        { event_id: 'ev1', daysAgo: 1 },
+      ],
+      [enrollment('e1', 'ev1'), enrollment('e2', 'ev2')],
+    );
+
+    const p = await svc.personStreak(program, 'u1', NOW);
+
+    expect([...p.shielded]).toEqual([addDays(TODAY, -2)]);
+    expect(p.shields).toBe(0);
+    // Hoy aún no estudia: hace 3 días y ayer cuentan, el día cubierto no suma
+    expect(p.state.current).toBe(2);
+    expect(p.state.activeToday).toBe(false);
+  });
+
+  it('sin protector, el día sin estudio corta la racha', async () => {
+    const { svc, program } = setup(
+      [
+        { event_id: 'ev1', daysAgo: 3 },
+        { event_id: 'ev1', daysAgo: 1 },
+      ],
+      [enrollment('e1', 'ev1')],
+    );
+
+    const p = await svc.personStreak(program, 'u1', NOW);
+
+    expect(p.shielded.size).toBe(0);
+    expect(p.state.current).toBe(1);
   });
 });

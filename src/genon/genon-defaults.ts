@@ -215,6 +215,9 @@ export function defaultTriggers(): GenOnTriggersConfig {
       recovery_min: 3,
       recovery_template_key: 'streak_recovery',
       recovery_window_days: 2,
+      shield_enabled: true,
+      shield_min_activities: 2,
+      shield_max: 1,
     },
     review_challenge: {
       pass_text:

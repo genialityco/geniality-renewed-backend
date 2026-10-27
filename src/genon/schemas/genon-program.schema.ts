@@ -156,6 +156,11 @@ export interface GenOnTriggersConfig {
     recovery_template_key: string;
     /** Días sin estudio que un reto superado puede "puentear" */
     recovery_window_days: number;
+    /** Protector: un día con varias actividades cubre el siguiente día sin estudio */
+    shield_enabled: boolean;
+    shield_min_activities: number;
+    /** Protectores que se pueden tener guardados */
+    shield_max: number;
   };
   /** Reto de repaso (racha): sobre lo último que estudió, no cambia el avance */
   review_challenge: { pass_text: string; fail_text: string };
@@ -195,6 +200,9 @@ export class GenOnProgram extends Document {
   @Prop({ type: [String], default: [] }) organization_ids: string[];
   // Vacío = todos los cursos (con inscritos) de esas organizaciones
   @Prop({ type: [String], default: [] }) event_ids: string[];
+  // Curso al que entran los miembros que aún no abren ningún curso del
+  // programa (null = solo quien ya abrió uno)
+  @Prop({ type: String, default: null }) entry_event_id: string | null;
 
   @Prop({ default: 'America/Bogota' }) timezone: string;
   // Franjas de envío HH:mm; a cada persona le toca una al azar (estable)

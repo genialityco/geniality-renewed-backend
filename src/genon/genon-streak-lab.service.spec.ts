@@ -39,7 +39,10 @@ function setup(opts: { testOrg?: boolean; completedAt?: Map<string, Date> } = {}
       },
     }),
   };
-  const triggers = { simulateForUser: jest.fn().mockResolvedValue({ streak: { current: 1 } }) };
+  const triggers = {
+    simulateForUser: jest.fn().mockResolvedValue({ streak: { current: 1 } }),
+    programEventIds: jest.fn().mockResolvedValue([EV, 'ev2']),
+  };
   const service = new GenOnStreakLabService(
     enrollmentModel as any,
     { collection } as any,
@@ -79,6 +82,11 @@ describe('GenOnStreakLabService', () => {
     for (const name of ['progress_events', 'activityattendees', 'courseattendees', 'useractivities']) {
       expect(collections[name].updateMany).toHaveBeenCalled();
     }
+    // La racha es de la persona: se corren todos sus cursos del programa
+    expect(collections.progress_events.updateMany.mock.calls[0][0]).toEqual({
+      user_id: 'u1',
+      event_id: { $in: [EV, 'ev2'] },
+    });
     const [filter, pipeline] = enrollmentModel.collection.updateOne.mock.calls[0];
     expect(filter).toEqual({ _id: enrollment._id });
     expect(pipeline[0].$set.streak_bridged).toEqual({ $literal: ['2026-10-19'] });
@@ -104,6 +112,19 @@ describe('GenOnStreakLabService: todos los inscritos', () => {
     expect(enrollmentModel.collection.updateOne).toHaveBeenCalledTimes(1);
     expect(engine.segment).toHaveBeenCalledWith(program, expect.any(Date));
     expect(res.results).toEqual([{ user_id: 'u1', name: 'Ana', ok: true, reason: null }]);
+  });
+
+  it('pasar el día a quien está en dos cursos corre sus fechas una sola vez', async () => {
+    const { service, collections, enrollmentModel } = setup();
+    const both = [
+      { _id: new Types.ObjectId(), user_id: 'u1', event_id: EV, streak_bridged: [] },
+      { _id: new Types.ObjectId(), user_id: 'u1', event_id: 'ev2', streak_bridged: [] },
+    ];
+    enrollmentModel.find.mockReturnValue(exec(both));
+    const res = await service.applyAll({ _id: 'p1', organization_ids: [ORG] } as any, 'next_day');
+    expect(collections.progress_events.updateMany).toHaveBeenCalledTimes(1);
+    expect(enrollmentModel.collection.updateOne).toHaveBeenCalledTimes(2);
+    expect(res.results).toHaveLength(1);
   });
 
   it('estudiar hoy a todos: quien no ha terminado nada se reporta', async () => {

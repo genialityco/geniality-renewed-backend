@@ -13,7 +13,7 @@ import { GenOnProgram } from './schemas/genon-program.schema';
 import { GenOnEnrollment } from './schemas/genon-enrollment.schema';
 import { defaultProgram, withTriggerDefaults } from './genon-defaults';
 
-const ADMIN_ROLES = [/^admin$/i, /^owner$/i, /^super_admin$/i];
+export const ADMIN_ROLES = [/^admin$/i, /^owner$/i, /^super_admin$/i];
 const MANAGED_CACHE_MS = 60 * 1000;
 
 // Campos que el admin puede cambiar (el resto los maneja el motor)
@@ -22,6 +22,7 @@ const EDITABLE = [
   'mode',
   'organization_ids',
   'event_ids',
+  'entry_event_id',
   'timezone',
   'send_slots',
   'blocked_weekdays',
@@ -145,7 +146,7 @@ export class GenOnProgramsService {
       await this.assertNoOverlap(id, next.organization_ids, next.event_ids);
     }
     // Reglas o secuencias nuevas: se recalcula todo en la próxima ejecución
-    const resegment = ['segments', 'flows', 'event_ids', 'organization_ids'].some(
+    const resegment = ['segments', 'flows', 'event_ids', 'organization_ids', 'entry_event_id'].some(
       (k) => k in changes,
     );
     const goingLive = changes.mode === 'live' && program.mode !== 'live';
@@ -247,6 +248,7 @@ export class GenOnProgramsService {
       out.organization_ids = out.organization_ids.map(String);
     }
     if (out.event_ids) out.event_ids = out.event_ids.map(String);
+    if ('entry_event_id' in out) out.entry_event_id = out.entry_event_id ? String(out.entry_event_id) : null;
     return out;
   }
 }

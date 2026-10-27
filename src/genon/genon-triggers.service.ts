@@ -24,7 +24,13 @@ import { withTriggerDefaults } from './genon-defaults';
 import { GenOnTemplatesService } from './genon-templates.service';
 import { extractVariables, renderText } from './genon-variables';
 import { localDate, stepSendTime, zonedTime } from './genon-schedule';
-import { daysToBridge, medalFor, StreakState, streakState } from './genon-streak';
+import {
+  applyShields,
+  daysToBridge,
+  medalFor,
+  StreakState,
+  streakState,
+} from './genon-streak';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Al activar los disparadores no se mira más atrás de esto
@@ -58,6 +64,34 @@ const ACTIVE_ONLY: GenOnTriggerKey[] = [
 
 // No aplican a quien ya terminó el curso (si egresa, se descartan)
 const NOT_GRADUATED: GenOnTriggerKey[] = ['exam_reminder'];
+
+/**
+ * Racha de una persona en un programa: cuentan sus actividades y retos en
+ * todos los cursos del programa. Se guarda en cada una de sus inscripciones,
+ * pero los mensajes de racha los lleva solo una (`lead`).
+ */
+export interface PersonStreak {
+  state: StreakState;
+  /** Actividades terminadas y retos superados por día */
+  days: Map<string, { activities: number; challenges: number }>;
+  /** Días recuperados con un reto */
+  bridged: Set<string>;
+  /** Días sin estudio cubiertos por un protector */
+  shielded: Set<string>;
+  /** Protectores guardados */
+  shields: number;
+  shieldEarnedToday: boolean;
+  best: number;
+  enrollments: GenOnEnrollment[];
+  /** Inscripción que lleva los mensajes de racha: activa, la más antigua */
+  lead: GenOnEnrollment | null;
+  /** Disparos ya hechos en cualquiera de sus cursos */
+  fired: Set<string>;
+  /** Logros ya mostrados en la plataforma, en cualquiera de sus cursos */
+  seen: Set<string>;
+  /** Semanas con aviso de racha en riesgo */
+  riskWeeks: Set<string>;
+}
 
 /** Un hito de racha se reconoce una sola vez por racha (día de inicio y días). */
 export const milestoneDedupe = (start: string, days: number) => `milestone:${start}:${days}`;
@@ -342,8 +376,9 @@ export class GenOnTriggersService {
         const data = await this.loadDailyData(program, cfg, entry, enrollments, now);
         for (const e of enrollments) {
           const candidates = this.dailyCandidates(program, cfg, entry, data, e, now);
-          await this.saveStreak(e, data.streaks.get(e.user_id) || null);
-          const added = await this.enqueue(program, e, candidates, now);
+          const person = data.streaks.get(e.user_id) || null;
+          await this.saveStreak(e, person);
+          const added = await this.enqueue(program, e, candidates, now, person?.fired);
           for (const c of added) counts[c] = (counts[c] || 0) + 1;
         }
       } catch (error) {
@@ -429,30 +464,15 @@ export class GenOnTriggersService {
       bestScore.set(key, Math.max(bestScore.get(key) ?? -1, Number(a.score) || 0));
     }
 
-    // Días válidos de racha: actividades completadas y retos superados
-    const validDays = new Map<string, Set<string>>();
-    const addDay = (user: string, at: Date) => {
-      const set = validDays.get(user) || new Set<string>();
-      set.add(localDate(new Date(at), tz));
-      validDays.set(user, set);
-    };
     const weekly = new Map<string, number>();
     const weekStart = now.getTime() - 7 * DAY_MS;
     for (const r of recent as any[]) {
-      addDay(String(r.user_id), r.at);
       if (new Date(r.at).getTime() >= weekStart) {
         weekly.set(String(r.user_id), (weekly.get(String(r.user_id)) || 0) + 1);
       }
     }
-    for (const e of enrollments) {
-      for (const c of e.challenges || []) if (c.passed) addDay(e.user_id, c.at);
-    }
-    const streaks = new Map(
-      enrollments.map((e) => [
-        e.user_id,
-        streakState(validDays.get(e.user_id) || [], e.streak_bridged || [], today),
-      ]),
-    );
+    // La racha es de la persona: cuentan todos sus cursos del programa
+    const streaks = await this.personStreaks(program, userIds, now);
 
     return {
       today,
@@ -524,9 +544,12 @@ export class GenOnTriggersService {
 
     if (e.segment !== 'active') return candidates;
 
-    // Racha académica
-    const s = data.streaks.get(e.user_id);
-    if (cfg.streak.enabled && s) {
+    // Racha académica: es de la persona, así que sus mensajes los lleva una
+    // sola de sus inscripciones
+    const person = data.streaks.get(e.user_id);
+    const s = person?.state;
+    const isLead = !person?.lead || String(person.lead._id) === String(e._id);
+    if (cfg.streak.enabled && person && s && isLead) {
       if (
         cfg.streak.milestones.includes(s.throughYesterday) &&
         s.startThroughYesterday
@@ -544,11 +567,13 @@ export class GenOnTriggersService {
       }
       const week = localWeekKey(now, program.timezone);
       const riskAt = zonedTime(data.today, cfg.streak.risk_time, program.timezone);
+      // Con un protector guardado, hoy sin estudio no corta la racha
       if (
         cfg.streak.risk_enabled &&
         s.throughYesterday >= cfg.streak.risk_min &&
         !s.activeToday &&
-        e.streak_risk_week !== week &&
+        person.shields === 0 &&
+        !person.riskWeeks.has(week) &&
         riskAt.getTime() > now.getTime()
       ) {
         candidates.push({
@@ -645,9 +670,10 @@ export class GenOnTriggersService {
     return true;
   }
 
-  private async saveStreak(e: GenOnEnrollment, s: StreakState | null) {
-    if (!s) return;
-    const best = Math.max(e.streak?.best || 0, s.current);
+  private async saveStreak(e: GenOnEnrollment, person: PersonStreak | null) {
+    if (!person) return;
+    const s = person.state;
+    const best = Math.max(e.streak?.best || 0, person.best);
     await this.enrollmentModel
       .updateOne(
         { _id: e._id },
@@ -673,8 +699,10 @@ export class GenOnTriggersService {
     e: GenOnEnrollment,
     candidates: Candidate[],
     now: Date,
+    /** Disparos ya hechos en otras inscripciones de la persona (racha) */
+    alsoFired?: Set<string>,
   ): Promise<GenOnTriggerKey[]> {
-    const fired = new Set(e.fired || []);
+    const fired = new Set([...(e.fired || []), ...(alsoFired || [])]);
     const fresh = candidates.filter((c) => !fired.has(c.dedupe));
     if (!fresh.length) return [];
     const queued: GenOnQueued[] = fresh.map((c) => {
@@ -850,20 +878,9 @@ export class GenOnTriggersService {
     return this.outcome(e, item, delivery.result);
   }
 
-  /** ¿Completó una actividad o superó un reto hoy? (racha en riesgo) */
+  /** ¿Completó una actividad o superó un reto hoy, en cualquier curso? (racha en riesgo) */
   private async activeToday(program: GenOnProgram, e: GenOnEnrollment, now: Date) {
-    const today = localDate(now, program.timezone);
-    const start = zonedTime(today, '00:00', program.timezone);
-    if ((e.challenges || []).some((c) => c.passed && new Date(c.at) >= start)) return true;
-    return Boolean(
-      await this.progressEventModel.collection.findOne({
-        type: 'activity_progress',
-        to: { $gte: 100 },
-        event_id: e.event_id,
-        user_id: e.user_id,
-        at: { $gte: start },
-      }),
-    );
+    return (await this.personStreak(program, e.user_id, now)).state.activeToday;
   }
 
   private nextSlot(program: GenOnProgram, e: GenOnEnrollment, now: Date): Date {
@@ -911,25 +928,26 @@ export class GenOnTriggersService {
   ): Promise<number> {
     const cfg = withTriggerDefaults(program.triggers);
     const today = localDate(now, program.timezone);
-    const valid = new Set((await this.studyDays(program, e, now)).keys());
+    const person = await this.personStreak(program, e.user_id, now);
+    const valid = new Set(person.days.keys());
     // El reto de hoy ya cuenta
     valid.add(today);
 
-    const bridged = new Set(e.streak_bridged || []);
+    const covered = new Set([...person.bridged, ...person.shielded]);
     const gap = daysToBridge(
       [...valid].filter((d) => d !== today),
-      bridged,
+      covered,
       today,
       cfg.streak.recovery_window_days,
     );
     if (gap.length) {
-      gap.forEach((d) => bridged.add(d));
+      gap.forEach((d) => covered.add(d));
       await this.enrollmentModel
         .updateOne({ _id: e._id }, { $addToSet: { streak_bridged: { $each: gap } } })
         .exec();
     }
-    const s = streakState(valid, bridged, today);
-    const best = Math.max(e.streak?.best || 0, s.current);
+    const s = streakState(valid, covered, today);
+    const best = Math.max(e.streak?.best || 0, person.best, s.current);
     await this.enrollmentModel
       .updateOne(
         { _id: e._id },
@@ -943,44 +961,110 @@ export class GenOnTriggersService {
     return s.current;
   }
 
+  /** Ids de los cursos del programa. */
+  async programEventIds(program: GenOnProgram): Promise<string[]> {
+    return (await this.engine.programEvents(program)).map((ev: any) => String(ev._id));
+  }
+
+  /** Racha de una persona en el programa (todos sus cursos). */
+  async personStreak(program: GenOnProgram, userId: string, now: Date): Promise<PersonStreak> {
+    return (await this.personStreaks(program, [userId], now)).get(String(userId))!;
+  }
+
   /**
-   * Días de estudio recientes de una persona (zona del programa): cuántas
-   * actividades terminó y cuántos retos superó cada día.
+   * Racha de varias personas en el programa: actividades terminadas en
+   * cualquier curso del programa y retos superados en cualquiera de sus
+   * inscripciones, con los días recuperados y los protectores.
    */
-  async studyDays(
+  async personStreaks(
     program: GenOnProgram,
-    e: Pick<GenOnEnrollment, 'event_id' | 'user_id' | 'challenges'>,
+    userIds: string[],
     now: Date,
-  ): Promise<Map<string, { activities: number; challenges: number }>> {
+  ): Promise<Map<string, PersonStreak>> {
+    const out = new Map<string, PersonStreak>();
+    const ids = [...new Set(userIds.map(String))];
+    if (!ids.length) return out;
+    const cfg = withTriggerDefaults(program.triggers).streak;
     const tz = program.timezone;
+    const today = localDate(now, tz);
+    const [enrollments, events] = await Promise.all([
+      this.enrollmentModel
+        .find({ program_id: String(program._id), user_id: { $in: ids }, test: false })
+        .exec(),
+      this.engine.programEvents(program),
+    ]);
     const recent = await this.progressEventModel.collection
       .find(
         {
           type: 'activity_progress',
           to: { $gte: 100 },
-          event_id: e.event_id,
-          user_id: e.user_id,
+          event_id: { $in: events.map((ev: any) => String(ev._id)) },
+          user_id: { $in: ids },
           at: { $gte: new Date(now.getTime() - STREAK_LOOKBACK_DAYS * DAY_MS) },
         },
-        { projection: { at: 1 } },
+        { projection: { user_id: 1, at: 1 } },
       )
       .toArray();
-    const days = new Map<string, { activities: number; challenges: number }>();
-    const day = (at: Date) => {
+
+    const daysByUser = new Map<string, PersonStreak['days']>();
+    const day = (userId: string, at: Date) => {
+      const days = daysByUser.get(userId) || new Map();
+      daysByUser.set(userId, days);
       const key = localDate(new Date(at), tz);
       const entry = days.get(key) || { activities: 0, challenges: 0 };
       days.set(key, entry);
       return entry;
     };
-    for (const r of recent as any[]) day(r.at).activities++;
-    for (const c of e.challenges || []) if (c.passed) day(c.at).challenges++;
-    return days;
+    for (const r of recent as any[]) day(String(r.user_id), r.at).activities++;
+    for (const e of enrollments) {
+      for (const c of e.challenges || []) if (c.passed) day(e.user_id, c.at).challenges++;
+    }
+
+    const created = (e: GenOnEnrollment) => (e.created_at ? new Date(e.created_at).getTime() : 0);
+    for (const userId of ids) {
+      const mine = enrollments.filter((e) => e.user_id === userId);
+      const days = daysByUser.get(userId) || new Map();
+      const bridged = new Set(mine.flatMap((e) => e.streak_bridged || []));
+      const shield = applyShields(
+        new Map([...days].map(([d, v]) => [d, v.activities])),
+        days.keys(),
+        bridged,
+        today,
+        { enabled: cfg.shield_enabled, minActivities: cfg.shield_min_activities, max: cfg.shield_max },
+      );
+      const shielded = new Set(shield.shielded);
+      const state = streakState(days.keys(), [...bridged, ...shielded], today);
+      const lead =
+        mine
+          .filter((e) => !e.exited && e.segment === 'active')
+          .sort((a, b) => created(a) - created(b) || String(a._id).localeCompare(String(b._id)))[0] ||
+        null;
+      out.set(userId, {
+        state,
+        days,
+        bridged,
+        shielded,
+        shields: shield.shields,
+        shieldEarnedToday: shield.earnedToday,
+        best: Math.max(state.current, ...mine.map((e) => e.streak?.best || 0)),
+        enrollments: mine,
+        lead,
+        // Solo los de racha: el resto de disparos es de cada curso
+        fired: new Set(
+          mine.flatMap((e) => (e.fired || []).filter((f) => /^(milestone|risk|recovery):/.test(f))),
+        ),
+        seen: new Set(mine.flatMap((e) => e.streak_seen || [])),
+        riskWeeks: new Set(mine.map((e) => e.streak_risk_week).filter((w): w is string => !!w)),
+      });
+    }
+    return out;
   }
 
   /**
    * Al estudiar (actividad terminada o reto superado): actualiza la racha y,
    * si hoy alcanzó un hito, envía ya el reconocimiento en vez de esperar a la
-   * revisión diaria de mañana (que no lo repite).
+   * revisión diaria de mañana (que no lo repite). Lo lleva la inscripción
+   * donde estudió si está activa; si no, la que lleva su racha.
    */
   async streakMilestoneNow(
     program: GenOnProgram,
@@ -988,13 +1072,13 @@ export class GenOnTriggersService {
     now: Date,
   ): Promise<{ state: StreakState; outcome: DispatchOutcome | null }> {
     const cfg = withTriggerDefaults(program.triggers);
-    const days = await this.studyDays(program, e, now);
-    const s = streakState(days.keys(), e.streak_bridged || [], localDate(now, program.timezone));
-    await this.saveStreak(e, s);
+    const person = await this.personStreak(program, e.user_id, now);
+    const s = person.state;
+    await this.saveStreak(e, person);
+    const target = !e.exited && e.segment === 'active' ? e : person.lead;
     if (
       !cfg.streak.enabled ||
-      e.exited ||
-      e.segment !== 'active' ||
+      !target ||
       !s.activeToday ||
       !s.start ||
       !cfg.streak.milestones.includes(s.current)
@@ -1003,7 +1087,7 @@ export class GenOnTriggersService {
     }
     const added = await this.enqueue(
       program,
-      e,
+      target,
       [
         {
           key: 'streak_milestone',
@@ -1015,8 +1099,9 @@ export class GenOnTriggersService {
         },
       ],
       now,
+      person.fired,
     );
-    const fresh = added.length ? await this.enrollmentModel.findById(e._id).exec() : null;
+    const fresh = added.length ? await this.enrollmentModel.findById(target._id).exec() : null;
     if (!fresh) return { state: s, outcome: null };
     const outcome = await this.dispatchOne(
       program,
@@ -1063,7 +1148,10 @@ export class GenOnTriggersService {
     const enrollments = saved ? all : [...all, person];
     const data = await this.loadDailyData(program, cfg, entry, enrollments, now);
     const candidates = this.dailyCandidates(program, cfg, entry, data, person, now);
-    const streak = data.streaks.get(userId) || null;
+    const mine = data.streaks.get(userId) || null;
+    const streak = mine
+      ? { ...mine.state, shields: mine.shields, shielded: [...mine.shielded].sort() }
+      : null;
     return {
       segment: sim.segment,
       streak,

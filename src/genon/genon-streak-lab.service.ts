@@ -76,7 +76,7 @@ export class GenOnStreakLabService {
         );
       }
     } else {
-      await this.shiftDay(e, userId, eventId, course.activities.map((a) => a.id));
+      await this.shiftDay(program, userId);
     }
     return this.triggers.simulateForUser(program, userId, eventId);
   }
@@ -103,6 +103,16 @@ export class GenOnStreakLabService {
     const names = new Map(users.map((u: any) => [String(u._id), String(u.names || '')]));
 
     const results: { user_id: string; name: string; ok: boolean; reason: string | null }[] = [];
+    if (action === 'next_day') {
+      // La racha es de la persona: se corren todos sus cursos una sola vez
+      for (const userId of [...new Set(enrollments.map((e) => e.user_id))]) {
+        await this.shiftDay(program, userId);
+        results.push({ user_id: userId, name: names.get(userId) || userId, ok: true, reason: null });
+      }
+      await this.engine.segment(program, now);
+      return { action, results };
+    }
+    const studied = new Set<string>();
     for (const eventId of [...new Set(enrollments.map((e) => e.event_id))]) {
       const cache = await this.engine.loadCourseCache(program, eventId, now);
       for (const e of enrollments.filter((x) => x.event_id === eventId)) {
@@ -111,21 +121,18 @@ export class GenOnStreakLabService {
           results.push({ user_id: e.user_id, name, ok: false, reason: 'curso no encontrado' });
           continue;
         }
-        if (action === 'study') {
-          const ok = await this.studyToday(e.user_id, eventId, cache.stats.completedAt.get(e.user_id), now);
-          results.push({
-            user_id: e.user_id,
-            name,
-            ok,
-            reason: ok ? null : 'no ha terminado ninguna actividad',
-          });
-        } else {
-          await this.shiftDay(e, e.user_id, eventId, cache.course.activities.map((a) => a.id));
-          results.push({ user_id: e.user_id, name, ok: true, reason: null });
-        }
+        // Una vez por persona: dos actividades el mismo día ya ganan un protector
+        if (studied.has(e.user_id)) continue;
+        const ok = await this.studyToday(e.user_id, eventId, cache.stats.completedAt.get(e.user_id), now);
+        if (ok) studied.add(e.user_id);
+        results.push({
+          user_id: e.user_id,
+          name,
+          ok,
+          reason: ok ? null : 'no ha terminado ninguna actividad',
+        });
       }
     }
-    if (action === 'next_day') await this.engine.segment(program, now);
     return { action, results };
   }
 
@@ -179,16 +186,21 @@ export class GenOnStreakLabService {
     return true;
   }
 
-  private async shiftDay(
-    e: GenOnEnrollment,
-    userId: string,
-    eventId: string,
-    activityIds: string[],
-  ) {
+  /** Un día atrás para todo lo de la persona en los cursos del programa (la racha es de la persona). */
+  private async shiftDay(program: GenOnProgram, userId: string) {
+    const eventIds = await this.triggers.programEventIds(program);
     const userVals = idVariants(userId);
-    const eventVals = idVariants(eventId);
+    const eventVals = eventIds.flatMap(idVariants);
+    const activityIds = (
+      await this.col('activities')
+        .find({ event_id: { $in: eventVals } }, { projection: { _id: 1 } })
+        .toArray()
+    ).map((a) => String(a._id));
+    const enrollments = await this.enrollmentModel
+      .find({ program_id: String(program._id), user_id: userId, test: false })
+      .exec();
     await Promise.all([
-      this.col('progress_events').updateMany({ user_id: userId, event_id: eventId }, [
+      this.col('progress_events').updateMany({ user_id: userId, event_id: { $in: eventIds } }, [
         { $set: { at: minusDay('$at'), created_at: minusDay('$created_at') } },
       ]),
       this.col('activityattendees').updateMany(
@@ -217,7 +229,7 @@ export class GenOnStreakLabService {
                 as: 'c',
                 in: {
                   $cond: [
-                    { $eq: [{ $toString: '$$c.event_id' }, eventId] },
+                    { $in: [{ $toString: '$$c.event_id' }, eventIds] },
                     { $mergeObjects: ['$$c', { last_updated: minusDay('$$c.last_updated') }] },
                     '$$c',
                   ],
@@ -230,7 +242,7 @@ export class GenOnStreakLabService {
                 as: 'a',
                 in: {
                   $cond: [
-                    { $eq: [{ $toString: '$$a.event_id' }, eventId] },
+                    { $in: [{ $toString: '$$a.event_id' }, eventIds] },
                     { $mergeObjects: ['$$a', { last_updated: minusDay('$$a.last_updated') }] },
                     '$$a',
                   ],
@@ -242,7 +254,13 @@ export class GenOnStreakLabService {
       ]),
     ]);
 
-    // Inscripción: retos, días puenteados y fechas del flujo
+    // Inscripciones: retos, días puenteados y fechas del flujo
+    for (const e of enrollments) {
+      await this.shiftEnrollment(e);
+    }
+  }
+
+  private async shiftEnrollment(e: GenOnEnrollment) {
     await this.enrollmentModel.collection.updateOne({ _id: e._id as Types.ObjectId }, [
         {
           $set: {

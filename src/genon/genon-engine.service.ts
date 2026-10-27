@@ -36,6 +36,7 @@ import {
 import { GenOnEnrollment } from './schemas/genon-enrollment.schema';
 import { GenOnTemplate } from './schemas/genon-template.schema';
 import { GenOnTemplatesService } from './genon-templates.service';
+import { ADMIN_ROLES } from './genon-programs.service';
 import {
   CourseData,
   CourseStats,
@@ -233,18 +234,29 @@ export class GenOnEngineService {
 
   async segment(program: GenOnProgram, now: Date) {
     const counts: Record<string, number> = {};
+    const add = (n: Record<string, number>) => {
+      for (const [k, v] of Object.entries(n)) counts[k] = (counts[k] || 0) + v;
+    };
     let courses = 0;
-    for (const event of await this.programEvents(program)) {
+    const events = await this.programEvents(program);
+    for (const event of events) {
       try {
         const n = await this.segmentEvent(program, event as any, now);
         if (n === null) continue;
         courses++;
-        for (const [k, v] of Object.entries(n)) counts[k] = (counts[k] || 0) + v;
+        add(n);
       } catch (error) {
         this.logger.warn(
           `Gen.ON: segmentación del curso ${String(event._id)} falló: ${(error as Error).message}`,
         );
       }
+    }
+    try {
+      add(await this.segmentWithoutCourse(program, events as any[], now));
+    } catch (error) {
+      this.logger.warn(
+        `Gen.ON: segmentación de miembros sin curso falló: ${(error as Error).message}`,
+      );
     }
     await this.reactivateOptedIn(program);
     return { courses, counts };
@@ -292,85 +304,24 @@ export class GenOnEngineService {
         outsiders.push(row.user_id);
         continue;
       }
-      const completed = stats.completedByUser.get(row.user_id)?.size || 0;
-      const segment = classifySegment(
+      const { segment, op } = this.enrollmentOp(
+        program,
+        { eventId, orgId },
         {
+          user_id: row.user_id,
           progress: row.course_progress,
-          completedActivities: completed,
-          enrolledAt: row.enrolled_at,
-          lastActivityAt: row.last_activity_at,
+          completed: stats.completedByUser.get(row.user_id)?.size || 0,
+          enrolled_at: row.enrolled_at,
+          last_activity_at: row.last_activity_at,
         },
-        program.segments,
+        existing.get(row.user_id),
         now,
+        false,
       );
       counts[segment] = (counts[segment] || 0) + 1;
-
-      const e = existing.get(row.user_id);
-      const base = {
-        progress: row.course_progress,
-        completed_activities: completed,
-        last_activity_at: row.last_activity_at,
-        enrolled_at: row.enrolled_at,
-      };
-      // Si la franja ya no está en el programa, se sortea otra
-      const slot =
-        e?.slot && validSlots(program.send_slots).includes(e.slot)
-          ? e.slot
-          : slotFor(String(program._id), row.user_id, program.send_slots);
-      let state: Record<string, any>;
-      if (!e || e.segment !== segment) {
-        // Entra a un segmento nuevo: la secuencia empieza de cero
-        state = {
-          segment,
-          segment_since: now,
-          last_step_key: null,
-          last_step_day: null,
-          paused: false,
-          paused_at: null,
-          awaiting_feedback: false,
-          holdout: isHoldout(
-            String(program._id),
-            row.user_id,
-            segment,
-            program.holdout_percent?.[segment],
-          ),
-        };
-      } else {
-        state = {
-          segment: e.segment,
-          segment_since: e.segment_since,
-          last_step_key: e.last_step_key,
-          last_step_day: e.last_step_day,
-          paused: e.paused,
-        };
-      }
-      const exited = e?.exited || false;
-      const schedule =
-        !exited && !state.paused
-          ? this.schedule(program, state as any, slot, now, RESCHEDULE_GRACE_MS)
-          : { next_step_key: null, next_step_at: null };
-
-      ops.push({
-        updateOne: {
-          filter: {
-            program_id: String(program._id),
-            event_id: eventId,
-            user_id: row.user_id,
-            test: false,
-          },
-          update: {
-            $set: { ...base, ...state, ...schedule, slot, segmented_at: now },
-            $setOnInsert: { organization_id: orgId, exited: false },
-          },
-          upsert: true,
-        },
-      });
+      ops.push(op);
     }
-    for (let i = 0; i < ops.length; i += 500) {
-      await this.enrollmentModel.bulkWrite(ops.slice(i, i + 500), {
-        ordered: false,
-      });
-    }
+    await this.bulkWrite(ops);
     // Quien entró antes de este filtro (o perdió la membresía) sale del programa
     if (outsiders.length) {
       await this.enrollmentModel
@@ -383,6 +334,188 @@ export class GenOnEngineService {
         .exec();
     }
     return counts;
+  }
+
+  /**
+   * Miembros de la organización del curso de entrada que aún no abren ningún
+   * curso del programa: entran a ese curso con avance 0, en espera los
+   * primeros días desde que se unieron a la organización y luego en abandono.
+   * Al abrir un curso del programa siguen con su inscripción normal (esta se
+   * borra o, si abrió el de entrada, pasa a ser la normal). Sin curso de
+   * entrada nadie entra así y se borran las que hubiera.
+   */
+  private async segmentWithoutCourse(
+    program: GenOnProgram,
+    events: { _id: any; organizer_id: any }[],
+    now: Date,
+  ): Promise<Record<string, number>> {
+    const programId = String(program._id);
+    const removeStale = (filter: Record<string, any>) =>
+      this.enrollmentModel
+        .deleteMany({ program_id: programId, test: false, without_course: true, ...filter })
+        .exec();
+    const entry = program.entry_event_id
+      ? events.find((e) => String(e._id) === program.entry_event_id)
+      : null;
+    if (!entry) {
+      await removeStale({});
+      return {};
+    }
+    const eventId = String(entry._id);
+    const orgId = String(entry.organizer_id);
+    const [memberships, opened] = await Promise.all([
+      this.organizationUserModel.collection
+        .find(
+          { organization_id: { $in: idVariants(orgId) }, rol_id: { $nin: ADMIN_ROLES } },
+          { projection: { user_id: 1, created_at: 1, createdAt: 1 } },
+        )
+        .toArray(),
+      this.organizationUserModel.db
+        .collection('courseattendees')
+        .distinct('user_id', { event_id: { $in: events.flatMap((e) => idVariants(e._id)) } }),
+    ]);
+    const openedIds = new Set(opened.map(String));
+    // Llegada a la organización (la más antigua si hay membresías repetidas)
+    const joined = new Map<string, Date | null>();
+    for (const m of memberships as any[]) {
+      const userId = m.user_id ? String(m.user_id) : '';
+      if (!userId || openedIds.has(userId)) continue;
+      const raw =
+        m.created_at || m.createdAt || (m._id instanceof Types.ObjectId ? m._id.getTimestamp() : null);
+      const at = raw ? new Date(raw) : null;
+      const prev = joined.get(userId);
+      if (prev === undefined || (at && (!prev || at < prev))) joined.set(userId, at);
+    }
+
+    const userIds = [...joined.keys()];
+    const existing = new Map(
+      (
+        await this.enrollmentModel
+          .find({ program_id: programId, event_id: eventId, user_id: { $in: userIds }, test: false })
+          .exec()
+      ).map((e) => [e.user_id, e]),
+    );
+    const counts: Record<string, number> = {};
+    const ops = userIds.map((userId) => {
+      const { segment, op } = this.enrollmentOp(
+        program,
+        { eventId, orgId },
+        {
+          user_id: userId,
+          progress: 0,
+          completed: 0,
+          enrolled_at: joined.get(userId) ?? null,
+          last_activity_at: null,
+        },
+        existing.get(userId),
+        now,
+        true,
+      );
+      counts[segment] = (counts[segment] || 0) + 1;
+      return op;
+    });
+    await this.bulkWrite(ops);
+    // Abrió un curso del programa, dejó la organización o cambió el curso de entrada
+    await removeStale({
+      $or: [{ event_id: { $ne: eventId } }, { user_id: { $nin: userIds } }],
+    });
+    return counts;
+  }
+
+  /** Segmento de una persona en un curso y la escritura de su inscripción. */
+  private enrollmentOp(
+    program: GenOnProgram,
+    course: { eventId: string; orgId: string },
+    row: {
+      user_id: string;
+      progress: number;
+      completed: number;
+      enrolled_at: Date | null;
+      last_activity_at: Date | null;
+    },
+    e: GenOnEnrollment | undefined,
+    now: Date,
+    withoutCourse: boolean,
+  ): { segment: GenOnSegment; op: any } {
+    const segment = classifySegment(
+      {
+        progress: row.progress,
+        completedActivities: row.completed,
+        enrolledAt: row.enrolled_at,
+        lastActivityAt: row.last_activity_at,
+      },
+      program.segments,
+      now,
+    );
+    const base = {
+      progress: row.progress,
+      completed_activities: row.completed,
+      last_activity_at: row.last_activity_at,
+      enrolled_at: row.enrolled_at,
+      without_course: withoutCourse,
+    };
+    // Si la franja ya no está en el programa, se sortea otra
+    const slot =
+      e?.slot && validSlots(program.send_slots).includes(e.slot)
+        ? e.slot
+        : slotFor(String(program._id), row.user_id, program.send_slots);
+    let state: Record<string, any>;
+    if (!e || e.segment !== segment) {
+      // Entra a un segmento nuevo: la secuencia empieza de cero
+      state = {
+        segment,
+        segment_since: now,
+        last_step_key: null,
+        last_step_day: null,
+        paused: false,
+        paused_at: null,
+        awaiting_feedback: false,
+        holdout: isHoldout(
+          String(program._id),
+          row.user_id,
+          segment,
+          program.holdout_percent?.[segment],
+        ),
+      };
+    } else {
+      state = {
+        segment: e.segment,
+        segment_since: e.segment_since,
+        last_step_key: e.last_step_key,
+        last_step_day: e.last_step_day,
+        paused: e.paused,
+      };
+    }
+    const exited = e?.exited || false;
+    const schedule =
+      !exited && !state.paused
+        ? this.schedule(program, state as any, slot, now, RESCHEDULE_GRACE_MS)
+        : { next_step_key: null, next_step_at: null };
+
+    return {
+      segment,
+      op: {
+        updateOne: {
+          filter: {
+            program_id: String(program._id),
+            event_id: course.eventId,
+            user_id: row.user_id,
+            test: false,
+          },
+          update: {
+            $set: { ...base, ...state, ...schedule, slot, segmented_at: now },
+            $setOnInsert: { organization_id: course.orgId, exited: false },
+          },
+          upsert: true,
+        },
+      },
+    };
+  }
+
+  private async bulkWrite(ops: any[]) {
+    for (let i = 0; i < ops.length; i += 500) {
+      await this.enrollmentModel.bulkWrite(ops.slice(i, i + 500), { ordered: false });
+    }
   }
 
   /** De entre estos usuarios, los que tienen membresía en la organización. */
@@ -515,9 +648,7 @@ export class GenOnEngineService {
         },
       };
     });
-    for (let i = 0; i < ops.length; i += 500) {
-      await this.enrollmentModel.bulkWrite(ops.slice(i, i + 500), { ordered: false });
-    }
+    await this.bulkWrite(ops);
     return {
       enrollments: all.length,
       people: slots.size,
@@ -587,6 +718,7 @@ export class GenOnEngineService {
    * quienes tienen un toque por salir.
    */
   async resegmentProgressed(program: GenOnProgram, now: Date): Promise<number> {
+    await this.enrollOpened(program, now);
     const enrollments = await this.enrollmentModel
       .find({ program_id: String(program._id), test: false, exited: false })
       .select('user_id event_id segmented_at')
@@ -620,6 +752,50 @@ export class GenOnEngineService {
       count += users.size;
     }
     return count;
+  }
+
+  /**
+   * Quien estaba sin curso y ya abrió uno del programa pasa ya a su
+   * inscripción normal (sin esperar a la segmentación del día): así no le
+   * llega el abandono del curso de entrada.
+   */
+  private async enrollOpened(program: GenOnProgram, now: Date) {
+    const programId = String(program._id);
+    const pending = await this.enrollmentModel
+      .find({ program_id: programId, test: false, without_course: true })
+      .select('user_id')
+      .lean()
+      .exec();
+    if (!pending.length) return;
+    const events = await this.programEvents(program);
+    const attendees = await this.organizationUserModel.db
+      .collection('courseattendees')
+      .find(
+        {
+          user_id: { $in: pending.flatMap((e) => idVariants(e.user_id)) },
+          event_id: { $in: events.flatMap((e: any) => idVariants(e._id)) },
+        },
+        { projection: { user_id: 1, event_id: 1 } },
+      )
+      .toArray();
+    if (!attendees.length) return;
+    const byEvent = new Map<string, Set<string>>();
+    for (const a of attendees) {
+      const eventId = String(a.event_id);
+      byEvent.set(eventId, (byEvent.get(eventId) || new Set()).add(String(a.user_id)));
+    }
+    for (const [eventId, users] of byEvent) {
+      await this.resegmentPeople(program, eventId, users, now);
+    }
+    // La del curso de entrada ya quedó como normal si abrió ese mismo
+    await this.enrollmentModel
+      .deleteMany({
+        program_id: programId,
+        test: false,
+        without_course: true,
+        user_id: { $in: attendees.map((a) => String(a.user_id)) },
+      })
+      .exec();
   }
 
   private async dispatch(
@@ -1325,6 +1501,7 @@ export class GenOnEngineService {
           completed_activities: r.completed_activities,
           last_activity_at: r.last_activity_at,
           holdout: r.holdout,
+          without_course: r.without_course || false,
           slot: r.slot,
           last_step_key: r.last_step_key,
           next_step_key: r.next_step_key,
