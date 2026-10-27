@@ -333,3 +333,105 @@ describe('GenOnTriggersService: enviar ya lo programado', () => {
     expect(order).toEqual(['detect', 'dispatch']);
   });
 });
+
+describe('GenOnTriggersService: hito de racha al instante', () => {
+  function setup(daysAgoStudied: number[], extra: Record<string, any> = {}) {
+    const e: any = {
+      _id: 'e1',
+      user_id: 'u1',
+      event_id: 'ev1',
+      organization_id: 'org1',
+      segment: 'active',
+      slot: '12:30',
+      holdout: false,
+      exited: false,
+      progress: 50,
+      challenges: [],
+      streak_bridged: [],
+      fired: [],
+      queue: [],
+      ...extra,
+    };
+    const enrollmentModel = {
+      updateOne: jest.fn((_filter: any, update: any) => {
+        if (update.$push?.queue) e.queue = [...e.queue, ...update.$push.queue.$each];
+        if (update.$set?.queue) e.queue = update.$set.queue;
+        return { exec: jest.fn().mockResolvedValue({}) };
+      }),
+      findById: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(e) })),
+    };
+    // Un minuto antes de cada medianoche de NOW (00:30 en Bogotá): el mismo día local
+    const at = (n: number) => new Date(NOW.getTime() - n * DAY - 60 * 1000);
+    const progressEventModel = {
+      collection: {
+        find: jest.fn(() => ({
+          toArray: jest.fn().mockResolvedValue(daysAgoStudied.map((n) => ({ at: at(n) }))),
+        })),
+        findOne: jest.fn().mockResolvedValue(null),
+      },
+    };
+    const engine = {
+      loadCourseCache: jest.fn().mockResolvedValue({ course, stats: {} }),
+      resolvePerson: jest.fn().mockResolvedValue({ phone: '573000000000', consent: true, name: 'Ana', email: 'a@x.com' }),
+      deliverTemplate: jest.fn().mockResolvedValue({ result: 'sent' }),
+    };
+    const context = { forPerson: jest.fn(() => ({ values: { nombre: 'Ana' }, urlSuffix: 'org1/course/ev1' })) };
+    const svc = new GenOnTriggersService(
+      {} as any,
+      enrollmentModel as any,
+      {} as any, {} as any, {} as any, {} as any,
+      progressEventModel as any,
+      context as any,
+      engine as any,
+      {} as any,
+    );
+    const program: any = { _id: 'p1', ...defaultProgram(), mode: 'live', timezone: 'America/Bogota' };
+    return { svc, program, e, engine, enrollmentModel };
+  }
+
+  it('al llegar hoy a 3 días envía ya el reconocimiento con su medalla', async () => {
+    const { svc, program, e, engine, enrollmentModel } = setup([0, 1, 2]);
+
+    const { state, outcome } = await svc.streakMilestoneNow(program, e, NOW);
+
+    expect(state).toMatchObject({ current: 3, activeToday: true, start: addDays(TODAY, -2) });
+    expect(outcome).toMatchObject({ step: '3.4 hito', result: 'sent' });
+    const params = engine.deliverTemplate.mock.calls[0][3];
+    expect(params.templateKey).toBe('streak_milestone');
+    expect(params.values).toMatchObject({ racha: 3, medalla: 'bronce' });
+    expect(params.dryRun).toBe(false);
+    // Misma marca que la revisión diaria de mañana: allí no se repite
+    const fired = enrollmentModel.updateOne.mock.calls.find((c: any[]) => c[1].$addToSet)[1];
+    expect(fired.$addToSet.fired.$each).toEqual([`milestone:${addDays(TODAY, -2)}:3`]);
+  });
+
+  it('sin hito hoy solo actualiza la racha', async () => {
+    const { svc, program, e, engine, enrollmentModel } = setup([0, 1]);
+
+    const { state, outcome } = await svc.streakMilestoneNow(program, e, NOW);
+
+    expect(state.current).toBe(2);
+    expect(outcome).toBeNull();
+    expect(engine.deliverTemplate).not.toHaveBeenCalled();
+    expect(enrollmentModel.updateOne.mock.calls[0][1].$set.streak).toMatchObject({ current: 2 });
+  });
+
+  it('no repite un hito ya reconocido', async () => {
+    const start = addDays(TODAY, -2);
+    const { svc, program, e, engine } = setup([0, 1, 2], { fired: [`milestone:${start}:3`] });
+
+    const { outcome } = await svc.streakMilestoneNow(program, e, NOW);
+
+    expect(outcome).toBeNull();
+    expect(engine.deliverTemplate).not.toHaveBeenCalled();
+  });
+
+  it('en simulación lo registra sin enviarlo', async () => {
+    const { svc, program, e, engine } = setup([0, 1, 2]);
+    program.mode = 'dry_run';
+
+    await svc.streakMilestoneNow(program, e, NOW);
+
+    expect(engine.deliverTemplate.mock.calls[0][3].dryRun).toBe(true);
+  });
+});

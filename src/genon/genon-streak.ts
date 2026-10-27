@@ -40,6 +40,8 @@ function chainEndingAt(
 export interface StreakState {
   /** Racha viva: incluye hoy si ya hubo actividad hoy */
   current: number;
+  /** Día en que empezó la racha viva */
+  start: string | null;
   /** Racha que termina ayer (para hitos y aviso de riesgo) */
   throughYesterday: number;
   /** Día en que empezó la racha que termina ayer */
@@ -65,9 +67,7 @@ export function streakState(
   const untilYesterday = linked(yesterday)
     ? chainEndingAt(yesterday, valid, bridged)
     : { count: 0, start: null };
-  const current = activeToday
-    ? chainEndingAt(today, valid, bridged).count
-    : untilYesterday.count;
+  const live = activeToday ? chainEndingAt(today, valid, bridged) : untilYesterday;
 
   let broken: StreakState['broken'] = null;
   if (!activeToday && !linked(yesterday) && linked(dayBefore)) {
@@ -79,7 +79,8 @@ export function streakState(
     [...valid].filter((d) => d <= today).sort().pop() || null;
 
   return {
-    current,
+    current: live.count,
+    start: live.start,
     throughYesterday: untilYesterday.count,
     startThroughYesterday: untilYesterday.start,
     activeToday,
@@ -109,4 +110,49 @@ export function daysToBridge(
     cursor = addDays(cursor, -1);
   }
   return [];
+}
+
+// ───────────────────────── Medallas ─────────────────────────
+
+export type StreakMedalTier = 'bronze' | 'silver' | 'gold' | 'diamond';
+
+/** Una medalla por hito, en orden; los hitos de más reciben la última. */
+const MEDALS: { tier: StreakMedalTier; name: string }[] = [
+  { tier: 'bronze', name: 'bronce' },
+  { tier: 'silver', name: 'plata' },
+  { tier: 'gold', name: 'oro' },
+  { tier: 'diamond', name: 'diamante' },
+];
+
+export interface StreakMedal {
+  tier: StreakMedalTier;
+  /** Nombre para los textos: "bronce", "plata"… */
+  name: string;
+  /** Días del hito que la otorga */
+  days: number;
+}
+
+function medalAt(sorted: number[], i: number): StreakMedal {
+  const m = MEDALS[Math.min(i, MEDALS.length - 1)];
+  return { ...m, days: sorted[i] };
+}
+
+const sortedMilestones = (milestones: number[]) =>
+  [...new Set(milestones.filter((m) => m > 0))].sort((a, b) => a - b);
+
+/** Medalla de una racha de `days` días: la del hito más alto alcanzado. */
+export function medalFor(days: number, milestones: number[]): StreakMedal | null {
+  const sorted = sortedMilestones(milestones);
+  const i = sorted.filter((m) => m <= days).length - 1;
+  return i < 0 ? null : medalAt(sorted, i);
+}
+
+/** Próxima medalla y cuántos días le faltan. */
+export function nextMedal(
+  days: number,
+  milestones: number[],
+): (StreakMedal & { missing: number }) | null {
+  const sorted = sortedMilestones(milestones);
+  const i = sorted.findIndex((m) => m > days);
+  return i < 0 ? null : { ...medalAt(sorted, i), missing: sorted[i] - days };
 }

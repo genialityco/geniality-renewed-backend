@@ -24,7 +24,7 @@ import { withTriggerDefaults } from './genon-defaults';
 import { GenOnTemplatesService } from './genon-templates.service';
 import { extractVariables, renderText } from './genon-variables';
 import { localDate, stepSendTime, zonedTime } from './genon-schedule';
-import { daysToBridge, streakState } from './genon-streak';
+import { daysToBridge, medalFor, StreakState, streakState } from './genon-streak';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Al activar los disparadores no se mira más atrás de esto
@@ -58,6 +58,9 @@ const ACTIVE_ONLY: GenOnTriggerKey[] = [
 
 // No aplican a quien ya terminó el curso (si egresa, se descartan)
 const NOT_GRADUATED: GenOnTriggerKey[] = ['exam_reminder'];
+
+/** Un hito de racha se reconoce una sola vez por racha (día de inicio y días). */
+export const milestoneDedupe = (start: string, days: number) => `milestone:${start}:${days}`;
 
 function idVariants(id: unknown): any[] {
   const raw = String(id);
@@ -123,13 +126,7 @@ export class GenOnTriggersService {
     const budget = opts.budget ?? 40;
     const { segmentation, outcomes } = await this.engine.runProgram(program, now, opts);
     const cfg = withTriggerDefaults(program.triggers);
-    const caches = new Map<string, CourseCache | null>();
-    const cache = async (eventId: string) => {
-      if (!caches.has(eventId)) {
-        caches.set(eventId, await this.engine.loadCourseCache(program, eventId, now));
-      }
-      return caches.get(eventId) || null;
-    };
+    const cache = this.courseCache(program, now);
     const detected: Record<string, number> = {};
     try {
       // Tras segmentar (una vez al día): racha, semanal, examen, certificado
@@ -170,13 +167,7 @@ export class GenOnTriggersService {
     const dryRun = program.mode !== 'live';
     const outcomes = await this.engine.dispatchAhead(program, now, dryRun, budget);
     const cfg = withTriggerDefaults(program.triggers);
-    const caches = new Map<string, CourseCache | null>();
-    const cache = async (eventId: string) => {
-      if (!caches.has(eventId)) {
-        caches.set(eventId, await this.engine.loadCourseCache(program, eventId, now));
-      }
-      return caches.get(eventId) || null;
-    };
+    const cache = this.courseCache(program, now);
     // Antes, los disparadores diarios (racha, examen, certificado): si la
     // situación cambió desde la revisión del día (p. ej. la racha en Pruebas),
     // salen ya. Lo que ya se envió o encoló no se repite.
@@ -186,6 +177,17 @@ export class GenOnTriggersService {
       ? await this.dispatchQueue(program, cfg, now, dryRun, left, cache, undefined, true)
       : [];
     return [...outcomes, ...triggered];
+  }
+
+  /** Curso y estadísticas por curso, cargados una vez por pasada. */
+  private courseCache(program: GenOnProgram, now: Date) {
+    const caches = new Map<string, CourseCache | null>();
+    return async (eventId: string) => {
+      if (!caches.has(eventId)) {
+        caches.set(eventId, await this.engine.loadCourseCache(program, eventId, now));
+      }
+      return caches.get(eventId) || null;
+    };
   }
 
   // ───────────────────────── Detección por actividad ─────────────────────────
@@ -531,9 +533,12 @@ export class GenOnTriggersService {
       ) {
         candidates.push({
           key: 'streak_milestone',
-          dedupe: `milestone:${s.startThroughYesterday}:${s.throughYesterday}`,
+          dedupe: milestoneDedupe(s.startThroughYesterday, s.throughYesterday),
           template_key: cfg.streak.milestone_template_key,
-          data: { racha: s.throughYesterday },
+          data: {
+            racha: s.throughYesterday,
+            medalla: medalFor(s.throughYesterday, cfg.streak.milestones)?.name,
+          },
           expires_at: new Date(now.getTime() + DAY_MS),
         });
       }
@@ -640,10 +645,7 @@ export class GenOnTriggersService {
     return true;
   }
 
-  private async saveStreak(
-    e: GenOnEnrollment,
-    s: ReturnType<typeof streakState> | null,
-  ) {
+  private async saveStreak(e: GenOnEnrollment, s: StreakState | null) {
     if (!s) return;
     const best = Math.max(e.streak?.best || 0, s.current);
     await this.enrollmentModel
@@ -733,56 +735,71 @@ export class GenOnTriggersService {
       })
       .limit(budget)
       .exec();
+
+    const outcomes: DispatchOutcome[] = [];
+    for (const e of due) {
+      const outcome = await this.dispatchOne(program, cfg, e, now, until, dryRun, cache, ahead);
+      if (outcome) outcomes.push(outcome);
+    }
+    return outcomes;
+  }
+
+  /** Envía el disparo listo de mayor prioridad de una persona (si hay). */
+  private async dispatchOne(
+    program: GenOnProgram,
+    cfg: GenOnTriggersConfig,
+    e: GenOnEnrollment,
+    now: Date,
+    until: Date,
+    dryRun: boolean,
+    cache: (eventId: string) => Promise<CourseCache | null>,
+    ahead: boolean,
+  ): Promise<DispatchOutcome | null> {
     const priority = (key: GenOnTriggerKey) => {
       const i = cfg.priority.indexOf(key);
       return i < 0 ? 99 : i;
     };
-
-    const outcomes: DispatchOutcome[] = [];
-    for (const e of due) {
-      const live = (e.queue || []).filter(
-        (q) =>
-          new Date(q.expires_at).getTime() > now.getTime() &&
-          (!ACTIVE_ONLY.includes(q.key) || e.segment === 'active') &&
-          (!NOT_GRADUATED.includes(q.key) || e.segment !== 'graduated'),
-      );
-      const ready = live
-        .filter((q) => new Date(q.due_at).getTime() <= until.getTime())
-        .sort((a, b) => priority(a.key) - priority(b.key));
-      const item = ready[0];
-      if (!item) {
-        await this.setQueue(e, live);
-        continue;
-      }
-      try {
-        // Lo planeado por adelantado queda registrado a la hora en que saldría
-        // (al adelantarlo a mano, sale ahora)
-        const at = ahead
-          ? now
-          : new Date(Math.max(now.getTime(), new Date(item.due_at).getTime()));
-        const outcome = await this.sendQueued(program, e, item, at, dryRun, cache);
-        outcomes.push(outcome);
-        let rest = live.filter((q) => q !== item);
-        if (outcome.result === 'capped') {
-          // Se reintenta en la franja del día siguiente mientras no venza
-          rest = [...rest, { ...item, due_at: this.nextSlot(program, e, now) }];
-        }
-        await this.setQueue(e, rest);
-        if (item.key === 'streak_risk' && outcome.result !== 'capped') {
-          await this.enrollmentModel
-            .updateOne(
-              { _id: e._id },
-              { $set: { streak_risk_week: localWeekKey(now, program.timezone) } },
-            )
-            .exec();
-        }
-      } catch (error) {
-        const reason = (error as Error).message;
-        await this.setQueue(e, live.filter((q) => q !== item));
-        outcomes.push(this.outcome(e, item, 'error', reason));
-      }
+    const live = (e.queue || []).filter(
+      (q) =>
+        new Date(q.expires_at).getTime() > now.getTime() &&
+        (!ACTIVE_ONLY.includes(q.key) || e.segment === 'active') &&
+        (!NOT_GRADUATED.includes(q.key) || e.segment !== 'graduated'),
+    );
+    const ready = live
+      .filter((q) => new Date(q.due_at).getTime() <= until.getTime())
+      .sort((a, b) => priority(a.key) - priority(b.key));
+    const item = ready[0];
+    if (!item) {
+      await this.setQueue(e, live);
+      return null;
     }
-    return outcomes;
+    try {
+      // Lo planeado por adelantado queda registrado a la hora en que saldría
+      // (al adelantarlo a mano, sale ahora)
+      const at = ahead
+        ? now
+        : new Date(Math.max(now.getTime(), new Date(item.due_at).getTime()));
+      const outcome = await this.sendQueued(program, e, item, at, dryRun, cache);
+      let rest = live.filter((q) => q !== item);
+      if (outcome.result === 'capped') {
+        // Se reintenta en la franja del día siguiente mientras no venza
+        rest = [...rest, { ...item, due_at: this.nextSlot(program, e, now) }];
+      }
+      await this.setQueue(e, rest);
+      if (item.key === 'streak_risk' && outcome.result !== 'capped') {
+        await this.enrollmentModel
+          .updateOne(
+            { _id: e._id },
+            { $set: { streak_risk_week: localWeekKey(now, program.timezone) } },
+          )
+          .exec();
+      }
+      return outcome;
+    } catch (error) {
+      const reason = (error as Error).message;
+      await this.setQueue(e, live.filter((q) => q !== item));
+      return this.outcome(e, item, 'error', reason);
+    }
   }
 
   private async sendQueued(
@@ -893,24 +910,8 @@ export class GenOnTriggersService {
     now: Date,
   ): Promise<number> {
     const cfg = withTriggerDefaults(program.triggers);
-    const tz = program.timezone;
-    const today = localDate(now, tz);
-    const recent = await this.progressEventModel.collection
-      .find(
-        {
-          type: 'activity_progress',
-          to: { $gte: 100 },
-          event_id: e.event_id,
-          user_id: e.user_id,
-          at: { $gte: new Date(now.getTime() - STREAK_LOOKBACK_DAYS * DAY_MS) },
-        },
-        { projection: { at: 1 } },
-      )
-      .toArray();
-    const valid = new Set(recent.map((r: any) => localDate(new Date(r.at), tz)));
-    for (const c of e.challenges || []) {
-      if (c.passed) valid.add(localDate(new Date(c.at), tz));
-    }
+    const today = localDate(now, program.timezone);
+    const valid = new Set((await this.studyDays(program, e, now)).keys());
     // El reto de hoy ya cuenta
     valid.add(today);
 
@@ -940,6 +941,94 @@ export class GenOnTriggersService {
       )
       .exec();
     return s.current;
+  }
+
+  /**
+   * Días de estudio recientes de una persona (zona del programa): cuántas
+   * actividades terminó y cuántos retos superó cada día.
+   */
+  async studyDays(
+    program: GenOnProgram,
+    e: Pick<GenOnEnrollment, 'event_id' | 'user_id' | 'challenges'>,
+    now: Date,
+  ): Promise<Map<string, { activities: number; challenges: number }>> {
+    const tz = program.timezone;
+    const recent = await this.progressEventModel.collection
+      .find(
+        {
+          type: 'activity_progress',
+          to: { $gte: 100 },
+          event_id: e.event_id,
+          user_id: e.user_id,
+          at: { $gte: new Date(now.getTime() - STREAK_LOOKBACK_DAYS * DAY_MS) },
+        },
+        { projection: { at: 1 } },
+      )
+      .toArray();
+    const days = new Map<string, { activities: number; challenges: number }>();
+    const day = (at: Date) => {
+      const key = localDate(new Date(at), tz);
+      const entry = days.get(key) || { activities: 0, challenges: 0 };
+      days.set(key, entry);
+      return entry;
+    };
+    for (const r of recent as any[]) day(r.at).activities++;
+    for (const c of e.challenges || []) if (c.passed) day(c.at).challenges++;
+    return days;
+  }
+
+  /**
+   * Al estudiar (actividad terminada o reto superado): actualiza la racha y,
+   * si hoy alcanzó un hito, envía ya el reconocimiento en vez de esperar a la
+   * revisión diaria de mañana (que no lo repite).
+   */
+  async streakMilestoneNow(
+    program: GenOnProgram,
+    e: GenOnEnrollment,
+    now: Date,
+  ): Promise<{ state: StreakState; outcome: DispatchOutcome | null }> {
+    const cfg = withTriggerDefaults(program.triggers);
+    const days = await this.studyDays(program, e, now);
+    const s = streakState(days.keys(), e.streak_bridged || [], localDate(now, program.timezone));
+    await this.saveStreak(e, s);
+    if (
+      !cfg.streak.enabled ||
+      e.exited ||
+      e.segment !== 'active' ||
+      !s.activeToday ||
+      !s.start ||
+      !cfg.streak.milestones.includes(s.current)
+    ) {
+      return { state: s, outcome: null };
+    }
+    const added = await this.enqueue(
+      program,
+      e,
+      [
+        {
+          key: 'streak_milestone',
+          dedupe: milestoneDedupe(s.start, s.current),
+          template_key: cfg.streak.milestone_template_key,
+          data: { racha: s.current, medalla: medalFor(s.current, cfg.streak.milestones)?.name },
+          due_at: now,
+          expires_at: new Date(now.getTime() + DAY_MS),
+        },
+      ],
+      now,
+    );
+    const fresh = added.length ? await this.enrollmentModel.findById(e._id).exec() : null;
+    if (!fresh) return { state: s, outcome: null };
+    const outcome = await this.dispatchOne(
+      program,
+      cfg,
+      fresh,
+      now,
+      now,
+      program.mode !== 'live',
+      this.courseCache(program, now),
+      false,
+    );
+    return { state: s, outcome };
   }
 
   // ───────────────────────── Pruebas ─────────────────────────
@@ -1040,6 +1129,7 @@ export class GenOnTriggersService {
         hito: 'el 50 % del curso',
         faltan_hito: 1,
         racha: sim.streak?.current || 3,
+        medalla: medalFor(sim.streak?.current || 3, cfg.streak.milestones)?.name || 'bronce',
         ultima_actividad: review?.name || course.activities[0]?.name || 'tu última actividad',
         ...(key === 'video_challenge' && video
           ? {

@@ -13,6 +13,12 @@ function idVariants(id: string | Types.ObjectId): any[] {
   return out;
 }
 
+export type ActivityCompletedListener = (done: {
+  userId: string;
+  eventId: string;
+  activityId: string;
+}) => Promise<unknown> | unknown;
+
 /**
  * Registra los cambios de avance y fija `CourseAttendee.completed_at` en el
  * momento en que un estudiante termina un curso. Nunca lanza: un fallo aquí
@@ -21,6 +27,7 @@ function idVariants(id: string | Types.ObjectId): any[] {
 @Injectable()
 export class ProgressEventsService {
   private readonly logger = new Logger(ProgressEventsService.name);
+  private readonly completedListeners: ActivityCompletedListener[] = [];
 
   constructor(
     @InjectModel(ProgressEvent.name)
@@ -52,6 +59,34 @@ export class ProgressEventsService {
       this.logger.warn(
         `No se pudo registrar avance de actividad: ${(error as Error).message}`,
       );
+      return;
+    }
+    if (params.from < 100 && params.to >= 100) this.notifyCompleted(params);
+  }
+
+  /**
+   * Avisa a quien lo pida (p. ej. la racha de Gen.ON) que una actividad se
+   * terminó. Se registran al iniciar, sin que este módulo dependa de ellos.
+   * No se espera ni falla el guardado del avance.
+   */
+  onActivityCompleted(listener: ActivityCompletedListener) {
+    this.completedListeners.push(listener);
+  }
+
+  private notifyCompleted(params: { userId: string; eventId: string; activityId: string }) {
+    const done = {
+      userId: String(params.userId),
+      eventId: String(params.eventId),
+      activityId: String(params.activityId),
+    };
+    for (const listener of this.completedListeners) {
+      Promise.resolve()
+        .then(() => listener(done))
+        .catch((error) =>
+          this.logger.warn(
+            `Aviso de actividad terminada falló: ${(error as Error).message}`,
+          ),
+        );
     }
   }
 

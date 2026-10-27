@@ -117,6 +117,8 @@ export class GenOnEnrollment extends Document {
   @Prop({ type: [String], default: [] }) streak_bridged: string[];
   // Semana (lunes YYYY-MM-DD) del último aviso de racha en riesgo
   @Prop({ type: String, default: null }) streak_risk_week: string | null;
+  // Logros de racha que la plataforma ya le mostró (hito o día de hoy)
+  @Prop({ type: [String], default: [] }) streak_seen: string[];
 
   @Prop({ default: false }) test: boolean;
   // Envíos de prueba: teléfono al que va la conversación

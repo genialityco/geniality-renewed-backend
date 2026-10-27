@@ -39,6 +39,8 @@ import { GenOnDemoService } from './genon-demo.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SUPPORT_WINDOW_DAYS = 7;
+// El reconocimiento de racha tras un repaso espera a que salga la respuesta del reto
+const AFTER_REPLY_MS = 5000;
 const HELP_WORD = 'ayuda';
 // Títulos de botones interactivos: máximo 20 caracteres
 const BUTTON_TITLE_MAX = 20;
@@ -508,6 +510,19 @@ export class GenOnConversationService implements OnModuleInit, InboundHandler {
     if (passed && !g.test) {
       const fresh = await this.enrollmentModel.findById(e._id).exec();
       racha = await this.triggers.applyChallengeToStreak(program, fresh || e, new Date());
+      // El repaso no termina actividades (no pasa por el aviso de actividad
+      // terminada): si llegó a un hito, el reconocimiento sale tras esta respuesta
+      if (kind === 'review') {
+        setTimeout(() => {
+          this.enrollmentModel
+            .findById(e._id)
+            .exec()
+            .then((latest) => latest && this.triggers.streakMilestoneNow(program, latest, new Date()))
+            .catch((error) =>
+              this.logger.warn(`Gen.ON: reconocimiento de racha falló: ${(error as Error).message}`),
+            );
+        }, AFTER_REPLY_MS).unref();
+      }
     }
 
     const minutes = course

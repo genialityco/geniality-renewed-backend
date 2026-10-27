@@ -37,6 +37,7 @@ export const GENON_VARIABLES: {
   { key: 'video', label: 'Video del reto (saltable)', example: 'Clase 3: insulinas' },
   { key: 'min_video', label: 'Minutos del video del reto', example: '12' },
   { key: 'racha', label: 'Días de racha académica', example: '7' },
+  { key: 'medalla', label: 'Medalla de la racha (bronce, plata, oro, diamante)', example: 'plata' },
   { key: 'ultima_actividad', label: 'Última actividad que estudió', example: 'Fisiopatología' },
   // Solo en la conversación (cierre del reto)
   { key: 'aciertos', label: 'Respuestas correctas del reto', example: '3' },

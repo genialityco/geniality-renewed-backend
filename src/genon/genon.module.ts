@@ -51,6 +51,7 @@ import { AiEvaluationsModule } from '../ai-evaluations/ai-evaluations.module';
 import { CourseSnapshotsModule } from '../course-snapshots/course-snapshots.module';
 import { EngagementModule } from '../engagement/engagement.module';
 import { ActivityAttendeeModule } from '../activity-attendee/activity-attendee.module';
+import { ProgressEventsModule } from '../progress-events/progress-events.module';
 import { GenOnProgramsService } from './genon-programs.service';
 import { GenOnTemplatesService } from './genon-templates.service';
 import { GenOnContextService } from './genon-context.service';
@@ -60,8 +61,10 @@ import { GenOnTriggersService } from './genon-triggers.service';
 import { GenOnHistoryService } from './genon-history.service';
 import { GenOnDemoService } from './genon-demo.service';
 import { GenOnStreakLabService } from './genon-streak-lab.service';
+import { GenOnMyStreakService } from './genon-my-streak.service';
 import { GenOnController } from './genon.controller';
 import { GenOnDemoController } from './genon-demo.controller';
+import { GenOnMeController } from './genon-me.controller';
 import { GenOnCron } from './genon.cron';
 import { AuthLinksModule } from 'src/auth-links/auth-links.module';
 
@@ -100,10 +103,12 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
     CourseSnapshotsModule,
     EngagementModule,
     ActivityAttendeeModule,
+    // Racha al instante: aviso de actividad terminada
+    ProgressEventsModule,
     // Acceso directo en los enlaces de los mensajes
     AuthLinksModule,
   ],
-  controllers: [GenOnController, GenOnDemoController],
+  controllers: [GenOnController, GenOnDemoController, GenOnMeController],
   providers: [
     GenOnProgramsService,
     GenOnTemplatesService,
@@ -114,6 +119,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
     GenOnHistoryService,
     GenOnDemoService,
     GenOnStreakLabService,
+    GenOnMyStreakService,
     GenOnCron,
   ],
   // GenOnContextService: el asistente usa los cursos en orden y sus módulos

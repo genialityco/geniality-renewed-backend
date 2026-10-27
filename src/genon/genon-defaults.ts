@@ -138,7 +138,7 @@ export const DEFAULT_TEMPLATES: {
   {
     key: 'streak_milestone',
     label: '3.4 Racha: reconocimiento',
-    body: 'Hola, {{nombre}}. Reporte de actividad: has completado {{racha}} días consecutivos de conexión en {{curso}}. Se requiere completar una actividad adicional hoy para mantener este registro activo.',
+    body: 'Hola, {{nombre}}. Reporte de actividad: completaste {{racha}} días consecutivos de estudio en {{curso}} y obtuviste la medalla de racha {{medalla}}. Cada día contó porque terminaste al menos una actividad o superaste un reto. Para continuar la racha, completa una actividad o un reto cada día.',
     buttons: [OPT_OUT_BUTTON, urlButton('Ir al curso')],
   },
   {
