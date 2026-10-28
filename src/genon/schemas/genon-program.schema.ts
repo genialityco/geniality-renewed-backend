@@ -161,6 +161,8 @@ export interface GenOnTriggersConfig {
     shield_min_activities: number;
     /** Protectores que se pueden tener guardados */
     shield_max: number;
+    /** Botón "Evaluar mis conocimientos" en la ventana de actividad completada (con racha) */
+    practice_button: boolean;
   };
   /** Reto de repaso (racha): sobre lo último que estudió, no cambia el avance */
   review_challenge: { pass_text: string; fail_text: string };

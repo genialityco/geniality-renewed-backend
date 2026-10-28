@@ -218,6 +218,7 @@ export function defaultTriggers(): GenOnTriggersConfig {
       shield_enabled: true,
       shield_min_activities: 2,
       shield_max: 1,
+      practice_button: false,
     },
     review_challenge: {
       pass_text:

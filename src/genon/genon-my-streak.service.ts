@@ -64,6 +64,8 @@ export interface MyStreak {
     count: number;
     earned_today: boolean;
   };
+  /** Mostrar el botón de examen en la ventana de actividad completada */
+  practice_button: boolean;
   /**
    * Por qué la tiene: qué hizo cada día de la racha (el más reciente
    * primero). `covered`: día sin estudio que no cortó la racha (reto de
@@ -284,6 +286,7 @@ export class GenOnMyStreakService implements OnModuleInit {
         count: person.shields,
         earned_today: person.shieldEarnedToday,
       },
+      practice_button: !!cfg.practice_button,
       days,
       recovery,
       whatsapp: program.mode === 'live' && !holder.exited && !holder.holdout,
