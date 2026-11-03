@@ -23,6 +23,16 @@ function idVariants(id: unknown): any[] {
     : [raw];
 }
 
+/**
+ * Un día atrás la fecha de una clave de racha (logro visto o mensaje
+ * enviado: "day:2026-11-03:1", "milestone:2026-11-01:3", "recovery:…").
+ * Las demás claves quedan igual.
+ */
+export function shiftStreakKey(key: string): string {
+  const m = /^(day|milestone|recovery):(\d{4}-\d{2}-\d{2})(.*)$/.exec(key);
+  return m ? `${m[1]}:${addDays(m[2], -1)}${m[3]}` : key;
+}
+
 /** Resta un día a un campo de fecha (si no es null) en un pipeline de actualización. */
 const minusDay = (field: string) => ({
   $cond: [{ $eq: [{ $type: field }, 'date'] }, { $subtract: [field, DAY_MS] }, field],
@@ -276,15 +286,16 @@ export class GenOnStreakLabService {
             last_activity_at: minusDay('$last_activity_at'),
             enrolled_at: minusDay('$enrolled_at'),
             streak_bridged: { $literal: (e.streak_bridged || []).map((d) => addDays(d, -1)) },
+            // Los logros vistos y enviados llevan la fecha de inicio de su
+            // racha: se corren con ella. Si no, una racha nueva que empieza
+            // hoy tendría la clave de la anterior y su aviso no saldría
+            streak_seen: { $literal: (e.streak_seen || []).map(shiftStreakKey) },
             // El aviso de riesgo sale una vez por día y por semana: se olvida
             // para poder probarlo de nuevo. Los de racha en cola eran del
             // estado anterior; la próxima revisión encola los que tocan ahora
             streak_risk_week: null,
             fired: {
-              $filter: {
-                input: { $ifNull: ['$fired', []] },
-                cond: { $not: { $regexMatch: { input: '$$this', regex: '^risk:' } } },
-              },
+              $literal: (e.fired || []).filter((f) => !f.startsWith('risk:')).map(shiftStreakKey),
             },
             queue: {
               $filter: {

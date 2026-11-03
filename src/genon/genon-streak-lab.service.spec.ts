@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { GenOnStreakLabService } from './genon-streak-lab.service';
+import { GenOnStreakLabService, shiftStreakKey } from './genon-streak-lab.service';
 
 const ORG = '6ada6d2ab4d306c546cb8e38';
 const EV = '6ada6d2ab4d306c546cb8e39';
@@ -18,7 +18,12 @@ function setup(opts: { testOrg?: boolean; completedAt?: Map<string, Date> } = {}
       updateOne: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({}),
     });
-  const enrollment = { _id: new Types.ObjectId(), streak_bridged: ['2026-10-20'] };
+  const enrollment = {
+    _id: new Types.ObjectId(),
+    streak_bridged: ['2026-10-20'],
+    streak_seen: ['day:2026-11-03:1', 'milestone:2026-11-01:3'],
+    fired: ['risk:2026-11-02', 'milestone:2026-11-01:3', 'recovery:2026-10-30', '1.2:x'],
+  };
   const enrollmentModel = {
     findOne: jest.fn(() => exec(enrollment)),
     find: jest.fn(() => exec([{ ...enrollment, user_id: 'u1', event_id: EV }])),
@@ -92,7 +97,11 @@ describe('GenOnStreakLabService', () => {
     expect(pipeline[0].$set.streak_bridged).toEqual({ $literal: ['2026-10-19'] });
     // El aviso de riesgo se puede volver a probar y la cola de racha se limpia
     expect(pipeline[0].$set.streak_risk_week).toBeNull();
-    expect(pipeline[0].$set.fired.$filter).toBeDefined();
+    expect(pipeline[0].$set.fired).toEqual({
+      $literal: ['milestone:2026-10-31:3', 'recovery:2026-10-29', '1.2:x'],
+    });
+    // Los logros vistos se corren con su racha: una racha nueva que empieza hoy vuelve a avisar
+    expect(pipeline[0].$set.streak_seen).toEqual({ $literal: ['day:2026-11-02:1', 'milestone:2026-10-31:3'] });
     expect(pipeline[0].$set.queue.$filter.cond.$not.$in[1]).toEqual(['streak_milestone', 'streak_risk', 'streak_recovery']);
   });
 });
@@ -134,5 +143,14 @@ describe('GenOnStreakLabService: todos los inscritos', () => {
     expect(collections.progress_events?.insertOne).toBeUndefined();
     expect(res.results[0]).toMatchObject({ ok: false, reason: 'no ha terminado ninguna actividad' });
     expect(engine.segment).not.toHaveBeenCalled();
+  });
+});
+
+describe('shiftStreakKey', () => {
+  it('corre un día atrás la fecha de las claves de racha y deja las demás', () => {
+    expect(shiftStreakKey('day:2026-11-01:1')).toBe('day:2026-10-31:1');
+    expect(shiftStreakKey('day:2026-10-27')).toBe('day:2026-10-26');
+    expect(shiftStreakKey('milestone:2026-01-01:7')).toBe('milestone:2025-12-31:7');
+    expect(shiftStreakKey('1.2:social')).toBe('1.2:social');
   });
 });
