@@ -16,6 +16,15 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Trato en los mensajes: sin dato de género, "Dr(a)." para todos. */
+export const FORMAL_TITLE = 'Dr(a).';
+
+/** {{nombre}}: el título y el primer nombre ("Dr(a). Ana"); sin nombre, solo el título. */
+export function formalName(fullName: string | null | undefined): string {
+  const first = String(fullName || '').trim().split(/\s+/)[0];
+  return first && first.toLowerCase() !== 'estudiante' ? `${FORMAL_TITLE} ${first}` : FORMAL_TITLE;
+}
+
 function idVariants(id: unknown): any[] {
   const raw = String(id);
   return Types.ObjectId.isValid(raw) && String(new Types.ObjectId(raw)) === raw
@@ -444,7 +453,7 @@ export class GenOnContextService {
       challengeActivity: challenge,
       urlSuffix,
       values: {
-        nombre: (person.fullName || 'estudiante').trim().split(/\s+/)[0],
+        nombre: formalName(person.fullName),
         correo: person.email || null,
         curso: course.eventName,
         avance: metrics.avance,
