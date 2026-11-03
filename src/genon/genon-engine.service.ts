@@ -337,12 +337,41 @@ export class GenOnEngineService {
   }
 
   /**
-   * Miembros de la organización del curso de entrada que aún no abren ningún
-   * curso del programa: entran a ese curso con avance 0, en espera los
-   * primeros días desde que se unieron a la organización y luego en abandono.
-   * Al abrir un curso del programa siguen con su inscripción normal (esta se
-   * borra o, si abrió el de entrada, pasa a ser la normal). Sin curso de
-   * entrada nadie entra así y se borran las que hubiera.
+   * Cursos de entrada de quienes aún no abren ninguno: el elegido en el
+   * programa o, si no hay, uno por organización (el primero de los cursos
+   * elegidos o, si el programa toma todos, el más antiguo).
+   */
+  entryEvents<T extends { _id: any; organizer_id: any }>(program: GenOnProgram, events: T[]): T[] {
+    if (program.entry_event_id) {
+      const entry = events.find((e) => String(e._id) === program.entry_event_id);
+      return entry ? [entry] : [];
+    }
+    const order = (program.event_ids || []).map(String);
+    const rank = (e: T) => {
+      const i = order.indexOf(String(e._id));
+      return i === -1 ? order.length : i;
+    };
+    const byOrg = new Map<string, T>();
+    for (const e of events) {
+      const orgId = String(e.organizer_id);
+      const prev = byOrg.get(orgId);
+      if (
+        !prev ||
+        rank(e) < rank(prev) ||
+        (rank(e) === rank(prev) && String(e._id) < String(prev._id))
+      ) {
+        byOrg.set(orgId, e);
+      }
+    }
+    return [...byOrg.values()];
+  }
+
+  /**
+   * Miembros de la organización que aún no abren ningún curso del programa:
+   * entran a su curso de entrada (ver entryEvents) con avance 0, en espera
+   * los primeros días desde que se unieron a la organización y luego en
+   * abandono. Al abrir un curso del programa siguen con su inscripción normal
+   * (esta se borra o, si abrió el de entrada, pasa a ser la normal).
    */
   private async segmentWithoutCourse(
     program: GenOnProgram,
@@ -354,13 +383,31 @@ export class GenOnEngineService {
       this.enrollmentModel
         .deleteMany({ program_id: programId, test: false, without_course: true, ...filter })
         .exec();
-    const entry = program.entry_event_id
-      ? events.find((e) => String(e._id) === program.entry_event_id)
-      : null;
-    if (!entry) {
+    const entries = this.entryEvents(program, events);
+    if (!entries.length) {
       await removeStale({});
       return {};
     }
+    const counts: Record<string, number> = {};
+    const kept: { event_id: string; user_id: { $in: string[] } }[] = [];
+    for (const entry of entries) {
+      const { counts: n, userIds } = await this.segmentEntry(program, entry, events, now);
+      for (const [k, v] of Object.entries(n)) counts[k] = (counts[k] || 0) + v;
+      kept.push({ event_id: String(entry._id), user_id: { $in: userIds } });
+    }
+    // Abrió un curso del programa, dejó la organización o cambió el curso de entrada
+    await removeStale({ $nor: kept });
+    return counts;
+  }
+
+  /** Inscribe en este curso de entrada a los miembros de su organización sin curso. */
+  private async segmentEntry(
+    program: GenOnProgram,
+    entry: { _id: any; organizer_id: any },
+    events: { _id: any; organizer_id: any }[],
+    now: Date,
+  ): Promise<{ counts: Record<string, number>; userIds: string[] }> {
+    const programId = String(program._id);
     const eventId = String(entry._id);
     const orgId = String(entry.organizer_id);
     const [memberships, opened] = await Promise.all([
@@ -415,11 +462,7 @@ export class GenOnEngineService {
       return op;
     });
     await this.bulkWrite(ops);
-    // Abrió un curso del programa, dejó la organización o cambió el curso de entrada
-    await removeStale({
-      $or: [{ event_id: { $ne: eventId } }, { user_id: { $nin: userIds } }],
-    });
-    return counts;
+    return { counts, userIds };
   }
 
   /** Segmento de una persona en un curso y la escritura de su inscripción. */
@@ -979,17 +1022,22 @@ export class GenOnEngineService {
       return this.outcome(e, step.key, 'skipped', reason);
     }
 
-    const ctx = this.context.forPerson(
-      program,
-      course,
-      stats,
-      {
-        userId: e.user_id,
-        fullName: person.name,
-        email: person.email,
-        progress: e.progress,
-      },
-      segment,
+    const ctx = await this.withTestSocialData(
+      course.organizationId,
+      step,
+      this.context.forPerson(
+        program,
+        course,
+        stats,
+        {
+          userId: e.user_id,
+          fullName: person.name,
+          email: person.email,
+          progress: e.progress,
+        },
+        segment,
+      ),
+      `${String(program._id)}:${e.user_id}:${step.key}`,
     );
     const variant = await this.assignVariant(program, e, step, ctx, counts);
     if (!variant) {
@@ -1148,6 +1196,40 @@ export class GenOnEngineService {
         ? AuthLinksService.withToken(params.urlSuffix, token)
         : params.urlSuffix,
     };
+  }
+
+  private testOrgCache = new Map<string, { value: boolean; at: number }>();
+
+  /** Organización de prueba (marcada con seed_tag), con caché de 5 minutos. */
+  async isTestOrganization(organizationId: string): Promise<boolean> {
+    const hit = this.testOrgCache.get(organizationId);
+    if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.value;
+    const org: any = Types.ObjectId.isValid(organizationId)
+      ? await this.organizationModel.collection.findOne(
+          { _id: new Types.ObjectId(organizationId) },
+          { projection: { seed_tag: 1 } },
+        )
+      : null;
+    const value = Boolean(org?.seed_tag);
+    this.testOrgCache.set(organizationId, { value, at: Date.now() });
+    return value;
+  }
+
+  /**
+   * En organizaciones de prueba el toque social no se omite por dato bajo:
+   * si ninguna variante cumple, se inventan los datos sociales (apenas por
+   * encima del mínimo) para poder ver y probar el mensaje. En organizaciones
+   * reales no cambia nada.
+   */
+  async withTestSocialData(
+    organizationId: string,
+    step: GenOnStep,
+    ctx: PersonContext,
+    seed: string,
+  ): Promise<PersonContext> {
+    if (!step.variants?.length || this.eligibleVariants(step, ctx).length) return ctx;
+    if (!(await this.isTestOrganization(organizationId))) return ctx;
+    return inventSocialData(step, ctx, seed);
   }
 
   /** Variantes cuyas condiciones se cumplen todas (ninguna = se omite). */
@@ -1642,12 +1724,17 @@ export class GenOnEngineService {
     const now = new Date();
     const { course, stats, row } = await this.loadForUser(program, userId, eventId, now);
     const person = await this.resolvePerson(course.organizationId, userId);
-    const ctx = this.context.forPerson(
-      program,
-      course,
-      stats,
-      { userId, fullName: person.name, email: person.email, progress: row.course_progress },
-      segment,
+    const ctx = await this.withTestSocialData(
+      course.organizationId,
+      step,
+      this.context.forPerson(
+        program,
+        course,
+        stats,
+        { userId, fullName: person.name, email: person.email, progress: row.course_progress },
+        segment,
+      ),
+      `${String(program._id)}:${userId}:${step.key}`,
     );
     const picks = await this.storedPicks(program, eventId, userId);
     const chosen = this.chooseVariant(program, step, ctx, userId, picks);
@@ -1710,12 +1797,17 @@ export class GenOnEngineService {
     const now = new Date();
     const { course, stats, row } = await this.loadForUser(program, userId, eventId, now);
     const person = await this.resolvePerson(course.organizationId, userId);
-    const ctx = this.context.forPerson(
-      program,
-      course,
-      stats,
-      { userId, fullName: person.name, email: person.email, progress: row.course_progress },
-      segment,
+    const ctx = await this.withTestSocialData(
+      course.organizationId,
+      step,
+      this.context.forPerson(
+        program,
+        course,
+        stats,
+        { userId, fullName: person.name, email: person.email, progress: row.course_progress },
+        segment,
+      ),
+      `${String(program._id)}:${userId}:${step.key}`,
     );
     if (step.mechanic === 'challenge_invite' && !ctx.challengeActivity) {
       throw new BadRequestException(NO_CHALLENGE_REASON);
@@ -1748,12 +1840,17 @@ export class GenOnEngineService {
     const now = new Date();
     const { course, stats, row } = await this.loadForUser(program, userId, eventId, now);
     const person = await this.resolvePerson(course.organizationId, userId);
-    const ctx = this.context.forPerson(
-      program,
-      course,
-      stats,
-      { userId, fullName: person.name, email: person.email, progress: row.course_progress },
-      segment,
+    const ctx = await this.withTestSocialData(
+      course.organizationId,
+      step,
+      this.context.forPerson(
+        program,
+        course,
+        stats,
+        { userId, fullName: person.name, email: person.email, progress: row.course_progress },
+        segment,
+      ),
+      `${String(program._id)}:${userId}:${step.key}`,
     );
     if (step.mechanic === 'challenge_invite' && !ctx.challengeActivity) {
       throw new BadRequestException(NO_CHALLENGE_REASON);
@@ -1979,4 +2076,41 @@ export class GenOnEngineService {
     );
     return { course, stats, row };
   }
+}
+
+/** Número estable 0..n-1 a partir de un texto (FNV-1a). */
+function stableInt(seed: string, n: number): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0) % Math.max(1, n);
+}
+
+/**
+ * Datos sociales inventados para que todas las variantes del toque cumplan
+ * sus condiciones (solo organizaciones de prueba): cada métrica queda un poco
+ * por encima del mínimo, estable por persona y toque. El avance de la
+ * persona no se inventa.
+ */
+export function inventSocialData(step: GenOnStep, ctx: PersonContext, seed: string): PersonContext {
+  const metrics = { ...ctx.metrics };
+  const values = { ...ctx.values };
+  for (const v of step.variants || []) {
+    for (const c of v.conditions || []) {
+      if (c.metric === 'avance') continue;
+      const min = Math.max(0, Number(c.min) || 0);
+      const invented =
+        c.metric === 'pct_terminaron_desde_aqui'
+          ? Math.min(100, Math.max(min, 1) + stableInt(`${seed}:${c.metric}`, 21))
+          : Math.max(min, 1) + stableInt(`${seed}:${c.metric}`, Math.max(3, Math.round(min / 2)));
+      // El dato real se respeta si ya llega al mínimo
+      if ((metrics[c.metric] ?? 0) < Math.max(min, 1)) metrics[c.metric] = invented;
+    }
+  }
+  for (const key of ['n_egresados', 'n_activos_semana', 'n_avanzaron', 'pct_terminaron_desde_aqui'] as const) {
+    if (key in values) values[key] = metrics[key];
+  }
+  return { ...ctx, metrics, values };
 }

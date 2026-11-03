@@ -1,4 +1,4 @@
-import { GenOnEngineService } from './genon-engine.service';
+import { GenOnEngineService, inventSocialData } from './genon-engine.service';
 import { defaultProgram, DEFAULT_TEMPLATES } from './genon-defaults';
 import { extractVariables } from './genon-variables';
 import { localDate } from './genon-schedule';
@@ -724,12 +724,38 @@ describe('GenOnEngineService: miembros que aún no abren un curso', () => {
       program_id: 'p1',
       test: false,
       without_course: true,
-      $or: [{ event_id: { $ne: 'ev1' } }, { user_id: { $nin: ['u2', 'u3'] } }],
+      $nor: [{ event_id: 'ev1', user_id: { $in: ['u2', 'u3'] } }],
     });
   });
 
-  it('sin curso de entrada nadie entra así y se borran las que hubiera', async () => {
+  it('sin curso de entrada elegido entran igual al primer curso de su organización', async () => {
     const { service, program, enrollmentModel } = setupMembers({ entry: null });
+    const events = [
+      { _id: 'ev2', organizer_id: 'org1' },
+      { _id: 'ev1', organizer_id: 'org1' },
+    ];
+
+    expect(await (service as any).segmentWithoutCourse(program, events, NOW)).toEqual({ waiting: 1, abandon: 1 });
+    const ops = enrollmentModel.bulkWrite.mock.calls[0][0].map((o: any) => o.updateOne);
+    expect(ops.map((o: any) => o.filter.event_id)).toEqual(['ev1', 'ev1']);
+  });
+
+  it('curso de entrada por defecto: el primero elegido o el más antiguo, uno por organización', () => {
+    const { service } = setupMembers();
+    const events = [
+      { _id: 'ev3', organizer_id: 'org1' },
+      { _id: 'ev2', organizer_id: 'org1' },
+      { _id: 'ev9', organizer_id: 'org2' },
+    ];
+    const ids = (program: any) => service.entryEvents(program, events).map((e) => e._id);
+
+    expect(ids({ entry_event_id: null, event_ids: [] })).toEqual(['ev2', 'ev9']);
+    expect(ids({ entry_event_id: null, event_ids: ['ev3', 'ev2', 'ev9'] })).toEqual(['ev3', 'ev9']);
+    expect(ids({ entry_event_id: 'ev9', event_ids: [] })).toEqual(['ev9']);
+  });
+
+  it('si el curso de entrada ya no está en el programa nadie entra así y se borran las que hubiera', async () => {
+    const { service, program, enrollmentModel } = setupMembers({ entry: 'gone' });
 
     expect(await (service as any).segmentWithoutCourse(program, [{ _id: 'ev1', organizer_id: 'org1' }], NOW)).toEqual({});
     expect(enrollmentModel.bulkWrite).not.toHaveBeenCalled();
@@ -801,5 +827,65 @@ describe('GenOnEngineService: actualizar grupos', () => {
     expect(res.changed).toEqual([
       { user_id: '507f191e810c19729de860a1', event_id: 'ev1', name: 'Sergio', from: 'abandon', to: 'active' },
     ]);
+  });
+});
+
+describe('GenOnEngineService: dato social bajo en organizaciones de prueba', () => {
+  const step: any = {
+    key: '1.2',
+    variants: [
+      { template_key: 'social_graduates', conditions: [{ metric: 'n_egresados', min: 20 }] },
+      {
+        template_key: 'social_from_here',
+        conditions: [
+          { metric: 'base_desde_aqui', min: 20 },
+          { metric: 'pct_terminaron_desde_aqui', min: 50 },
+        ],
+      },
+    ],
+  };
+  const ctx = (): any => ({
+    metrics: { n_egresados: 1, n_activos_semana: 0, n_avanzaron: 0, pct_terminaron_desde_aqui: 0, base_desde_aqui: 0, avance: 5 },
+    values: { n_egresados: 1, n_activos_semana: 0, n_avanzaron: 0, pct_terminaron_desde_aqui: 0, avance: 5 },
+  });
+  const service = (seedTag: string | null) => {
+    const findOne = jest.fn().mockResolvedValue({ seed_tag: seedTag });
+    const s = new GenOnEngineService(
+      {} as any, {} as any, {} as any, { collection: { findOne } } as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    );
+    return { s, findOne };
+  };
+  const ORG = '507f191e810c19729de860aa';
+
+  it('inventa datos que cumplen todas las variantes, estables y sin tocar el avance', () => {
+    const out = inventSocialData(step, ctx(), 'p1:u1:1.2');
+    expect(out.metrics.n_egresados).toBeGreaterThanOrEqual(20);
+    expect(out.metrics.base_desde_aqui).toBeGreaterThanOrEqual(20);
+    expect(out.metrics.pct_terminaron_desde_aqui).toBeGreaterThanOrEqual(50);
+    expect(out.metrics.pct_terminaron_desde_aqui).toBeLessThanOrEqual(100);
+    expect(out.metrics.avance).toBe(5);
+    expect(out.values.n_egresados).toBe(out.metrics.n_egresados);
+    expect(inventSocialData(step, ctx(), 'p1:u1:1.2')).toEqual(out);
+  });
+
+  it('en una organización de prueba el toque ya no se omite', async () => {
+    const { s } = service('genon-prueba');
+    const out = await s.withTestSocialData(ORG, step, ctx(), 'p1:u1:1.2');
+    expect(s.eligibleVariants(step, out)).toHaveLength(2);
+  });
+
+  it('en una organización real se respeta el umbral', async () => {
+    const { s } = service(null);
+    const original = ctx();
+    expect(await s.withTestSocialData(ORG, step, original, 'p1:u1:1.2')).toBe(original);
+  });
+
+  it('si el dato real ya cumple no consulta la organización ni inventa', async () => {
+    const { s, findOne } = service('genon-prueba');
+    const real = ctx();
+    real.metrics.n_egresados = 30;
+    expect(await s.withTestSocialData(ORG, step, real, 'p1:u1:1.2')).toBe(real);
+    expect(findOne).not.toHaveBeenCalled();
   });
 });

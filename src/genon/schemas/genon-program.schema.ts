@@ -203,7 +203,7 @@ export class GenOnProgram extends Document {
   // Vacío = todos los cursos (con inscritos) de esas organizaciones
   @Prop({ type: [String], default: [] }) event_ids: string[];
   // Curso al que entran los miembros que aún no abren ningún curso del
-  // programa (null = solo quien ya abrió uno)
+  // programa (null = el primero de cada organización, ver entryEvents)
   @Prop({ type: String, default: null }) entry_event_id: string | null;
 
   @Prop({ default: 'America/Bogota' }) timezone: string;
