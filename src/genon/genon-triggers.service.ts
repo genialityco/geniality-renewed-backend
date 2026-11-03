@@ -967,8 +967,13 @@ export class GenOnTriggersService {
   }
 
   /** Racha de una persona en el programa (todos sus cursos). */
-  async personStreak(program: GenOnProgram, userId: string, now: Date): Promise<PersonStreak> {
-    return (await this.personStreaks(program, [userId], now)).get(String(userId))!;
+  async personStreak(
+    program: GenOnProgram,
+    userId: string,
+    now: Date,
+    lookbackDays = STREAK_LOOKBACK_DAYS,
+  ): Promise<PersonStreak> {
+    return (await this.personStreaks(program, [userId], now, lookbackDays)).get(String(userId))!;
   }
 
   /**
@@ -980,6 +985,8 @@ export class GenOnTriggersService {
     program: GenOnProgram,
     userIds: string[],
     now: Date,
+    /** Días hacia atrás que se leen (el historial de rachas pide más) */
+    lookbackDays = STREAK_LOOKBACK_DAYS,
   ): Promise<Map<string, PersonStreak>> {
     const out = new Map<string, PersonStreak>();
     const ids = [...new Set(userIds.map(String))];
@@ -1000,7 +1007,7 @@ export class GenOnTriggersService {
           to: { $gte: 100 },
           event_id: { $in: events.map((ev: any) => String(ev._id)) },
           user_id: { $in: ids },
-          at: { $gte: new Date(now.getTime() - STREAK_LOOKBACK_DAYS * DAY_MS) },
+          at: { $gte: new Date(now.getTime() - lookbackDays * DAY_MS) },
         },
         { projection: { user_id: 1, at: 1 } },
       )

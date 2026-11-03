@@ -89,6 +89,74 @@ export function streakState(
   };
 }
 
+export interface StreakRun {
+  /** Primer día con estudio */
+  start: string;
+  /** Último día con estudio */
+  end: string;
+  /** Días con estudio (los cubiertos no cuentan) */
+  days: number;
+  /** Días sin estudio que no la cortaron: por un reto de recuperación o un protector */
+  covered: { day: string; by: 'challenge' | 'shield' }[];
+  /** live: sigue (estudió hoy o ayer, o un día cubierto la mantiene) · lost: se cortó */
+  status: 'live' | 'lost';
+  /** Primer día sin estudio ni cobertura (el que la cortó) */
+  lost_on: string | null;
+  medal: StreakMedal | null;
+}
+
+/**
+ * Todas las rachas de la persona, de la más reciente a la más antigua, con
+ * la misma regla que streakState: días con estudio seguidos, enlazados por
+ * días cubiertos. Una racha sigue viva si su último día enlazado es hoy o
+ * ayer (hoy aún puede estudiar).
+ */
+export function streakRuns(
+  validDays: Iterable<string>,
+  covered: Map<string, 'challenge' | 'shield'>,
+  today: string,
+  milestones: number[],
+): StreakRun[] {
+  const valid = [...new Set(validDays)].filter((d) => d <= today).sort();
+  if (!valid.length) return [];
+  const validSet = new Set(valid);
+  const yesterday = addDays(today, -1);
+  const runs: StreakRun[] = [];
+  let run: { start: string; end: string; days: number; covered: StreakRun['covered']; lastLinked: string } | null =
+    null;
+  const close = () => {
+    if (!run) return;
+    // Los días cubiertos después del último día de estudio solo la mantienen viva
+    const live = run.lastLinked >= yesterday;
+    runs.push({
+      start: run.start,
+      end: run.end,
+      days: run.days,
+      covered: run.covered.filter((c) => c.day < run!.end),
+      status: live ? 'live' : 'lost',
+      lost_on: live ? null : addDays(run.lastLinked, 1),
+      medal: medalFor(run.days, milestones),
+    });
+    run = null;
+  };
+  for (let d = valid[0]; d <= today; d = addDays(d, 1)) {
+    if (validSet.has(d)) {
+      if (!run) run = { start: d, end: d, days: 0, covered: [], lastLinked: d };
+      run.days++;
+      run.end = d;
+      run.lastLinked = d;
+    } else if (run && covered.has(d)) {
+      run.covered.push({ day: d, by: covered.get(d)! });
+      run.lastLinked = d;
+    } else if (d < today) {
+      // Hoy sin estudio aún no corta nada
+      close();
+    }
+  }
+  close();
+  return runs.reverse();
+}
+
 /**
  * Días a puentear cuando un reto superado hoy recupera una racha cortada:
  * los días sin actividad entre el último día válido y hoy, si no son más que

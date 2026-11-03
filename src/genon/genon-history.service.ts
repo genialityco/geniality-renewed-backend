@@ -10,6 +10,9 @@ import { GenOnFeedback } from './schemas/genon-feedback.schema';
 import { GenOnContextService } from './genon-context.service';
 import { GenOnEngineService } from './genon-engine.service';
 import { localDate } from './genon-schedule';
+import { GenOnTriggersService } from './genon-triggers.service';
+import { withTriggerDefaults } from './genon-defaults';
+import { StreakRun, streakRuns } from './genon-streak';
 import { AuthLinksService, appBaseUrl } from 'src/auth-links/auth-links.service';
 
 export type HistoryItem =
@@ -53,6 +56,20 @@ export type HistoryItem =
     }
   | { type: 'feedback'; at: Date; feedback_type: string; text: string };
 
+/** Días hacia atrás del historial de rachas */
+const STREAK_HISTORY_DAYS = 365;
+
+export interface StreakHistory {
+  current: number;
+  best: number;
+  /** Protectores guardados hoy */
+  shields: number;
+  /** Desde cuándo se leen los días de estudio */
+  since: string;
+  /** De la más reciente a la más antigua */
+  runs: StreakRun[];
+}
+
 /**
  * Historial de una persona en un curso del programa: los mensajes que le
  * llegaron (con su avance al enviarlos, entrega, lectura, clic y primera
@@ -72,7 +89,30 @@ export class GenOnHistoryService {
     private readonly context: GenOnContextService,
     private readonly engine: GenOnEngineService,
     private readonly authLinks?: AuthLinksService,
+    private readonly triggers?: GenOnTriggersService,
   ) {}
+
+  /**
+   * Rachas de la persona en el programa (todos sus cursos), con la misma
+   * regla que la racha actual. null si el programa no lleva racha.
+   */
+  async streakHistory(program: GenOnProgram, userId: string, now: Date): Promise<StreakHistory | null> {
+    const cfg = withTriggerDefaults(program.triggers).streak;
+    if (!this.triggers || !cfg.enabled) return null;
+    const person = await this.triggers.personStreak(program, userId, now, STREAK_HISTORY_DAYS);
+    const covered = new Map<string, 'challenge' | 'shield'>();
+    for (const d of person.bridged) covered.set(d, 'challenge');
+    for (const d of person.shielded) if (!covered.has(d)) covered.set(d, 'shield');
+    const today = localDate(now, program.timezone);
+    const runs = streakRuns(person.days.keys(), covered, today, cfg.milestones);
+    return {
+      current: person.state.current,
+      best: Math.max(person.best, ...runs.map((r) => r.days)),
+      shields: person.shields,
+      since: localDate(new Date(now.getTime() - STREAK_HISTORY_DAYS * 24 * 60 * 60 * 1000), program.timezone),
+      runs,
+    };
+  }
 
   /**
    * Enlace de acceso directo de la persona (para que un admin entre como ella
@@ -122,7 +162,7 @@ export class GenOnHistoryService {
       throw new NotFoundException('Inscripción no encontrada en el programa');
     }
 
-    const [course, person, messages, events, feedback] = await Promise.all([
+    const [course, person, messages, events, feedback, streakHistory] = await Promise.all([
       this.context.loadCourse(e.event_id),
       this.engine.resolvePerson(e.organization_id, e.user_id),
       this.engagementLog.historyFor(e.user_id, e.organization_id),
@@ -138,6 +178,7 @@ export class GenOnHistoryService {
         .sort({ created_at: 1 })
         .lean()
         .exec(),
+      e.test ? Promise.resolve(null) : this.streakHistory(program, e.user_id, new Date()),
     ]);
     const activityName = new Map(
       (course?.activities || []).map((a) => [a.id, a.name]),
@@ -210,6 +251,7 @@ export class GenOnHistoryService {
       exit_reason: e.exit_reason,
       abandon_reason: e.abandon_reason,
       streak: e.streak,
+      streak_history: streakHistory,
       next_step_key: e.next_step_key,
       next_step_at: e.next_step_at,
       progress_since: (events as any[])[0]?.at ?? null,

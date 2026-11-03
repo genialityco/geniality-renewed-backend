@@ -1,4 +1,4 @@
-import { addDays, applyShields, daysToBridge, medalFor, nextMedal, streakState } from './genon-streak';
+import { addDays, applyShields, daysToBridge, medalFor, nextMedal, streakRuns, streakState } from './genon-streak';
 
 const TODAY = '2026-10-21';
 const d = (n: number) => addDays(TODAY, -n); // d(1) = ayer
@@ -120,5 +120,39 @@ describe('protector de racha', () => {
   it('apagado no cubre nada', () => {
     const a = acts([[2, 3]]);
     expect(applyShields(a, a.keys(), [], T, { ...rules, enabled: false }).shields).toBe(0);
+  });
+});
+
+describe('streakRuns', () => {
+  const M = [3, 7];
+
+  it('separa las rachas cortadas y marca viva la de hoy, la más reciente primero', () => {
+    const runs = streakRuns([d(10), d(9), d(8), d(5), d(1), d(0)], new Map(), TODAY, M);
+    expect(runs.map((r) => [r.start, r.end, r.days, r.status, r.lost_on])).toEqual([
+      [d(1), d(0), 2, 'live', null],
+      [d(5), d(5), 1, 'lost', d(4)],
+      [d(10), d(8), 3, 'lost', d(7)],
+    ]);
+    expect(runs[2].medal?.name).toBe('bronce');
+    expect(runs[0].medal).toBeNull();
+  });
+
+  it('sigue viva si estudió ayer aunque hoy aún no', () => {
+    expect(streakRuns([d(2), d(1)], new Map(), TODAY, M)[0]).toMatchObject({ status: 'live', days: 2 });
+  });
+
+  it('los días cubiertos enlazan sin contar y se listan', () => {
+    const covered = new Map<string, 'challenge' | 'shield'>([
+      [d(4), 'shield'],
+      [d(1), 'challenge'],
+    ]);
+    const [run] = streakRuns([d(5), d(3), d(2)], covered, TODAY, M);
+    expect(run).toMatchObject({ start: d(5), end: d(2), days: 3, status: 'live' });
+    // El cubierto de ayer la mantiene viva, pero no está entre inicio y fin
+    expect(run.covered).toEqual([{ day: d(4), by: 'shield' }]);
+  });
+
+  it('sin días de estudio no hay rachas', () => {
+    expect(streakRuns([], new Map(), TODAY, M)).toEqual([]);
   });
 });
