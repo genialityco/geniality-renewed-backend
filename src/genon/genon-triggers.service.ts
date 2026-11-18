@@ -19,7 +19,7 @@ import {
 } from './schemas/genon-program.schema';
 import { GenOnEnrollment, GenOnQueued } from './schemas/genon-enrollment.schema';
 import { GenOnContextService, CourseData, CourseStats } from './genon-context.service';
-import { DispatchOutcome, GenOnEngineService } from './genon-engine.service';
+import { DispatchOutcome, GenOnEngineService, maxSendsPerRun } from './genon-engine.service';
 import { withTriggerDefaults } from './genon-defaults';
 import { GenOnTemplatesService } from './genon-templates.service';
 import { extractVariables, renderText } from './genon-variables';
@@ -157,7 +157,7 @@ export class GenOnTriggersService {
     } = {},
   ) {
     const dryRun = opts.dryRun || program.mode === 'dry_run';
-    const budget = opts.budget ?? 40;
+    const budget = opts.budget ?? maxSendsPerRun();
     const { segmentation, outcomes } = await this.engine.runProgram(program, now, opts);
     const cfg = withTriggerDefaults(program.triggers);
     const cache = this.courseCache(program, now);

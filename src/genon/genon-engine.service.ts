@@ -72,8 +72,13 @@ type VariantCounts = Map<string, Record<string, number>>;
 /** Clave del toque en `variant_picks` ("1.2" → "1_2": el punto anida en Mongo). */
 const pickKey = (stepKey: string) => stepKey.replace(/\./g, '_');
 
-// Envíos máximos por programa en cada ejecución del cron (cada 15 min)
-export const MAX_SENDS_PER_RUN = 40;
+// Envíos máximos por programa en cada ejecución del cron (cada 15 min).
+// Se configura con GENON_MAX_SENDS_PER_RUN; 40 si falta o no es válido.
+export const DEFAULT_MAX_SENDS_PER_RUN = 40;
+export function maxSendsPerRun(): number {
+  const value = Number(process.env.GENON_MAX_SENDS_PER_RUN);
+  return Number.isInteger(value) && value > 0 ? value : DEFAULT_MAX_SENDS_PER_RUN;
+}
 // Al reprogramar (segmentar, reasignar), una franja de hoy que pasó hace
 // menos de esto aún sale hoy (atrasada) en vez de correrse al día siguiente:
 // la segmentación corre antes del despacho y el cron va cada 15 min
@@ -201,7 +206,7 @@ export class GenOnEngineService {
       program,
       now,
       dryRun,
-      opts.budget ?? MAX_SENDS_PER_RUN,
+      opts.budget ?? maxSendsPerRun(),
       dryRun ? opts.planUntil : undefined,
     );
     return { segmentation, outcomes };
