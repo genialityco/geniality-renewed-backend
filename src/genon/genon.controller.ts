@@ -25,6 +25,12 @@ import { GenOnTriggerKey } from './schemas/genon-program.schema';
 import { GenOnFeedback } from './schemas/genon-feedback.schema';
 import { GENON_VARIABLES, validateTemplate } from './genon-variables';
 import { localDate, zonedTime } from './genon-schedule';
+import { GenOnAchievementsService } from './genon-achievements.service';
+import {
+  ACHIEVEMENT_TYPE_LABELS,
+  ACHIEVEMENT_TYPES,
+  DEFAULT_ACHIEVEMENT_TEXTS,
+} from './genon-achievements';
 
 // Envíos máximos por clic de "Enviar ya lo programado" (cada uno espera al gateway)
 const SEND_NOW_BUDGET = 200;
@@ -44,6 +50,7 @@ export class GenOnController {
     private readonly triggers: GenOnTriggersService,
     private readonly historyService: GenOnHistoryService,
     private readonly streakLab: GenOnStreakLabService,
+    private readonly achievements: GenOnAchievementsService,
     @InjectModel(GenOnFeedback.name)
     private readonly feedbackModel: Model<GenOnFeedback>,
   ) {}
@@ -78,6 +85,11 @@ export class GenOnController {
         { key: 'challenge_invite', label: 'Invitación al reto' },
         { key: 'closing', label: 'Cierre (pausa la secuencia)' },
       ],
+      achievement_types: ACHIEVEMENT_TYPES.map((key) => ({
+        key,
+        label: ACHIEVEMENT_TYPE_LABELS[key],
+        default_text: DEFAULT_ACHIEVEMENT_TEXTS[key],
+      })),
     };
   }
 
@@ -130,6 +142,13 @@ export class GenOnController {
   ) {
     const program = await this.programs.get(req.auth.uid, id);
     return this.engine.courseDetail(program, eventId);
+  }
+
+  /** Logros del programa: cuántos consiguió cada uno y los más recientes. */
+  @Get('programs/:id/achievements/report')
+  async achievementsReport(@Req() req: any, @Param('id') id: string) {
+    const program = await this.programs.get(req.auth.uid, id);
+    return this.achievements.report(program);
   }
 
   // ───────────────────────── Seguimiento ─────────────────────────

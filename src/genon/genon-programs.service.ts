@@ -12,6 +12,7 @@ import { OrganizationUser } from 'src/organization-users/schemas/organization-us
 import { GenOnProgram } from './schemas/genon-program.schema';
 import { GenOnEnrollment } from './schemas/genon-enrollment.schema';
 import { defaultProgram, withTriggerDefaults } from './genon-defaults';
+import { normalizeAchievements, withAchievementDefaults } from './genon-achievements';
 
 export const ADMIN_ROLES = [/^admin$/i, /^owner$/i, /^super_admin$/i];
 const MANAGED_CACHE_MS = 60 * 1000;
@@ -37,6 +38,7 @@ const EDITABLE = [
   'challenge',
   'courses',
   'triggers',
+  'achievements',
 ] as const;
 
 /**
@@ -93,7 +95,11 @@ export class GenOnProgramsService {
       .exec();
     return programs
       .filter((p) => this.canManage(p, admin))
-      .map((p) => ({ ...p, triggers: withTriggerDefaults(p.triggers) }));
+      .map((p) => ({
+        ...p,
+        triggers: withTriggerDefaults(p.triggers),
+        achievements: withAchievementDefaults(p.achievements),
+      }));
   }
 
   async get(uid: string, id: string): Promise<GenOnProgram> {
@@ -106,6 +112,7 @@ export class GenOnProgramsService {
     }
     // Programas anteriores a la fase 2: disparadores con valores por defecto
     program.triggers = withTriggerDefaults(program.triggers);
+    program.achievements = withAchievementDefaults(program.achievements);
     return program;
   }
 
@@ -248,6 +255,7 @@ export class GenOnProgramsService {
       out.organization_ids = out.organization_ids.map(String);
     }
     if (out.event_ids) out.event_ids = out.event_ids.map(String);
+    if (out.achievements) out.achievements = normalizeAchievements(out.achievements);
     if ('entry_event_id' in out) out.entry_event_id = out.entry_event_id ? String(out.entry_event_id) : null;
     return out;
   }

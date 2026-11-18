@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Schema as MongooseSchema } from 'mongoose';
+import type { GenOnAchievementsConfig } from '../genon-achievements';
 
 export type GenOnMode = 'off' | 'dry_run' | 'live';
 /** Segmentos con secuencia de mensajes (el 3, "active", llega en la fase 2). */
@@ -234,6 +235,9 @@ export class GenOnProgram extends Document {
   // Segmento 3, examen y certificado (ver GenOnTriggersConfig)
   @Prop({ type: MongooseSchema.Types.Mixed, default: null })
   triggers: GenOnTriggersConfig | null;
+  // Logros del estudiante en la plataforma (null: los de por defecto, apagados)
+  @Prop({ type: MongooseSchema.Types.Mixed, default: null })
+  achievements: GenOnAchievementsConfig | null;
   // Hasta dónde se revisaron las actividades completadas (disparadores)
   @Prop({ type: Date, default: null }) last_event_check: Date | null;
 

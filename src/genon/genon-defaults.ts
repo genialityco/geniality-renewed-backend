@@ -138,26 +138,27 @@ export const DEFAULT_TEMPLATES: {
   {
     key: 'streak_milestone',
     label: '3.4 Racha: reconocimiento',
-    body: 'Hola, {{nombre}}. Reporte de actividad: completaste {{racha}} días consecutivos de estudio en {{curso}} y obtuviste la medalla de racha {{medalla}}. Cada día contó porque terminaste al menos una actividad o superaste un reto. Para continuar la racha, completa una actividad o un reto cada día.',
-    buttons: [OPT_OUT_BUTTON, urlButton('Ir al curso')],
+    // Las plantillas de racha van como UTILITY: tono de aviso de estado de la
+    // cuenta, sin "racha"/"reto"/medallas ni botón de baja (Meta las
+    // reclasificaba como MARKETING)
+    body: 'Hola, {{nombre}}. Te informamos que tu cuenta registra actividad durante {{racha}} días consecutivos en el programa {{curso}} en el que estás inscrito. Puedes consultar el detalle de tu avance en la plataforma.',
+    buttons: [urlButton('Ir al curso')],
   },
   {
     key: 'streak_risk',
     label: '3.4 Racha en riesgo',
-    body: 'Hola, {{nombre}}. Alerta sobre tu registro de actividad en {{curso}}: tu racha actual de {{racha}} días caducará pronto. Tienes pendiente completar una actividad o evaluación para mantenerla.',
+    body: 'Hola, {{nombre}}. Te informamos que tu cuenta registra actividad durante {{racha}} días consecutivos en el programa {{curso}} en el que estás inscrito. Hoy no se ha registrado actividad: si no completas una actividad o evaluación antes de terminar el día, este registro se reiniciará.',
     buttons: [
-      { type: 'QUICK_REPLY', text: 'Hacer un reto', action: 'challenge_any' },
-      OPT_OUT_BUTTON,
+      { type: 'QUICK_REPLY', text: 'Presentar evaluación', action: 'challenge_any' },
       urlButton('Ir al curso'),
     ],
   },
   {
     key: 'streak_recovery',
     label: '3.4 Racha: recuperación',
-    body: 'Hola, {{nombre}}. Notificación de cuenta: tienes la opción de restaurar tu racha de días consecutivos en {{curso}}. Para hacerlo, debes aprobar la evaluación pendiente sobre {{ultima_actividad}}.',
+    body: 'Hola, {{nombre}}. Te informamos que se reinició tu registro de días consecutivos con actividad en el programa {{curso}} en el que estás inscrito. Tu cuenta tiene habilitada una evaluación sobre {{ultima_actividad}} que permite restablecer el registro anterior.',
     buttons: [
-      { type: 'QUICK_REPLY', text: 'Recuperar mi racha', action: 'challenge_review' },
-      OPT_OUT_BUTTON,
+      { type: 'QUICK_REPLY', text: 'Presentar evaluación', action: 'challenge_review' },
     ],
   },
   {

@@ -9,6 +9,14 @@ import {
 } from './schemas/genon-enrollment.schema';
 import { GenOnFeedback, GenOnFeedbackSchema } from './schemas/genon-feedback.schema';
 import { GenOnDemo, GenOnDemoSchema } from './schemas/genon-demo.schema';
+import {
+  GenOnAchievementAward,
+  GenOnAchievementAwardSchema,
+} from './schemas/genon-achievement-award.schema';
+import {
+  CourseAttendee,
+  CourseAttendeeSchema,
+} from '../course-attendee/schemas/course-attendee.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import { Activity, ActivitySchema } from '../activities/schemas/activity.schema';
 import { ModuleSchema } from '../modules/schemas/module.schema';
@@ -62,6 +70,7 @@ import { GenOnHistoryService } from './genon-history.service';
 import { GenOnDemoService } from './genon-demo.service';
 import { GenOnStreakLabService } from './genon-streak-lab.service';
 import { GenOnMyStreakService } from './genon-my-streak.service';
+import { GenOnAchievementsService } from './genon-achievements.service';
 import { GenOnController } from './genon.controller';
 import { GenOnDemoController } from './genon-demo.controller';
 import { GenOnMeController } from './genon-me.controller';
@@ -83,6 +92,9 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
       { name: GenOnEnrollment.name, schema: GenOnEnrollmentSchema },
       { name: GenOnFeedback.name, schema: GenOnFeedbackSchema },
       { name: GenOnDemo.name, schema: GenOnDemoSchema },
+      { name: GenOnAchievementAward.name, schema: GenOnAchievementAwardSchema },
+      // Logros: cursos terminados y su avance
+      { name: CourseAttendee.name, schema: CourseAttendeeSchema },
       { name: Event.name, schema: EventSchema },
       { name: Activity.name, schema: ActivitySchema },
       { name: 'Module', schema: ModuleSchema },
@@ -120,6 +132,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
     GenOnDemoService,
     GenOnStreakLabService,
     GenOnMyStreakService,
+    GenOnAchievementsService,
     GenOnCron,
   ],
   // GenOnContextService: el asistente usa los cursos en orden y sus módulos

@@ -164,7 +164,7 @@ export const DEMO_STAGES: DemoStage[] = [
         'streak_risk',
         'Racha en riesgo',
         'A las 19:00, si alguien con racha de 3 días o más aún no ha estudiado hoy. Ofrece un reto corto para no perderla; sale máximo una vez por semana y se cancela si estudia antes.',
-        'Tocar "Hacer un reto": superarlo cuenta como el estudio del día.',
+        'Tocar "Presentar evaluación": superarla cuenta como el estudio del día.',
       ),
       step(
         'active',
@@ -198,7 +198,7 @@ export const DEMO_STAGES: DemoStage[] = [
         'streak_recovery',
         'Recuperación de racha',
         'Si aprueba el reto de repaso, los días sin estudio quedan "puenteados" y la racha continúa.',
-        'Tocar "Recuperar mi racha" y aprobar el reto.',
+        'Tocar "Presentar evaluación" y aprobarla.',
       ),
     ],
   },
