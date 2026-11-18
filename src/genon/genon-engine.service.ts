@@ -1488,10 +1488,13 @@ export class GenOnEngineService {
 
   // ───────────────────────── Seguimiento ─────────────────────────
 
-  /** Inscritos del programa con su estado en el flujo y su nombre. */
+  /**
+   * Inscritos del programa con su estado en el flujo y su nombre, por
+   * páginas (`page` desde 1; `limit` = tamaño de página, hasta 2000).
+   */
   async listEnrollments(
     program: GenOnProgram,
-    filter: { segment?: string; eventId?: string; limit?: number },
+    filter: { segment?: string; eventId?: string; limit?: number; page?: number },
   ) {
     const query: Record<string, any> = {
       program_id: String(program._id),
@@ -1499,13 +1502,18 @@ export class GenOnEngineService {
     };
     if (filter.segment) query.segment = filter.segment;
     if (filter.eventId) query.event_id = filter.eventId;
-    const [rows, bySegment] = await Promise.all([
+    const pageSize = Math.min(Math.max(Math.floor(filter.limit || 300), 1), 2000);
+    const page = Math.max(Math.floor(filter.page || 1), 1);
+    const [rows, total, bySegment] = await Promise.all([
       this.enrollmentModel
         .find(query)
-        .sort({ next_step_at: 1, updated_at: -1 })
-        .limit(Math.min(Math.max(filter.limit || 300, 1), 2000))
+        // _id desempata: el orden es estable entre páginas
+        .sort({ next_step_at: 1, updated_at: -1, _id: 1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
         .lean()
         .exec(),
+      this.enrollmentModel.countDocuments(query).exec(),
       this.enrollmentModel.aggregate([
         {
           $match: {
@@ -1560,6 +1568,9 @@ export class GenOnEngineService {
     const eventName = new Map(events.map((e: any) => [String(e._id), e.name]));
 
     return {
+      total,
+      page,
+      page_size: pageSize,
       by_segment: bySegment.map((s) => ({
         segment: s._id,
         total: s.total,

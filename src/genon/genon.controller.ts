@@ -160,12 +160,14 @@ export class GenOnController {
     @Query('segment') segment?: string,
     @Query('eventId') eventId?: string,
     @Query('limit') limit?: string,
+    @Query('page') page?: string,
   ) {
     const program = await this.programs.get(req.auth.uid, id);
     return this.engine.listEnrollments(program, {
       segment: segment || undefined,
       eventId: eventId || undefined,
       limit: limit ? Number(limit) || undefined : undefined,
+      page: page ? Number(page) || undefined : undefined,
     });
   }
 
