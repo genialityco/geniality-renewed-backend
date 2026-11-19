@@ -7,6 +7,7 @@ import { ActivityAttendee } from 'src/activity-attendee/schemas/activity-attende
 import { ActivityQuestion } from 'src/ai-evaluations/schemas/activity-question.schema';
 import { TranscriptSegment } from 'src/transcript-segments/schemas/transcript-segment.schema';
 import { ProgressEvent } from 'src/progress-events/schemas/progress-event.schema';
+import { Organization } from 'src/organizations/schemas/organization.schema';
 import { activityLink } from 'src/ai-evaluations/practice-format';
 import {
   GenOnMetric,
@@ -52,6 +53,8 @@ export interface CourseData {
   eventId: string;
   eventName: string;
   organizationId: string;
+  /** Nombre de la organización dueña del curso (null si no se encuentra) */
+  organizationName?: string | null;
   /** En el orden del curso: módulo, luego creación */
   activities: CourseActivity[];
   /** Por actividad: preguntas válidas para reto y su tema más frecuente */
@@ -123,6 +126,8 @@ export class GenOnContextService {
     private readonly segmentModel: Model<TranscriptSegment>,
     @InjectModel(ProgressEvent.name)
     private readonly progressEventModel: Model<ProgressEvent>,
+    @InjectModel(Organization.name)
+    private readonly organizationModel?: Model<Organization>,
   ) {}
 
   async loadCourse(eventId: string): Promise<CourseData | null> {
@@ -134,7 +139,8 @@ export class GenOnContextService {
     if (!event) return null;
 
     const eventVals = idVariants(eventId);
-    const [activities, modules] = await Promise.all([
+    const organizerId = String(event.organizer_id || '');
+    const [activities, modules, organization] = await Promise.all([
       this.activityModel.collection
         .find(
           { event_id: { $in: eventVals } },
@@ -147,6 +153,12 @@ export class GenOnContextService {
           { projection: { module_name: 1, order: 1 } },
         )
         .toArray(),
+      this.organizationModel && Types.ObjectId.isValid(organizerId)
+        ? this.organizationModel.collection.findOne(
+            { _id: new Types.ObjectId(organizerId) },
+            { projection: { name: 1 } },
+          )
+        : Promise.resolve(null),
     ]);
     const moduleById = new Map(modules.map((m: any) => [String(m._id), m]));
     const activityIds = activities.map((a: any) => a._id);
@@ -220,6 +232,7 @@ export class GenOnContextService {
       eventId,
       eventName: event.name || 'tu curso',
       organizationId: String(event.organizer_id),
+      organizationName: String(organization?.name || '').trim() || null,
       activities: ordered,
       questions: questionInfo,
     };
@@ -456,6 +469,7 @@ export class GenOnContextService {
         nombre: formalName(person.fullName),
         correo: person.email || null,
         curso: course.eventName,
+        organizacion: course.organizationName ?? null,
         avance: metrics.avance,
         actividad_1: course.activities[0]?.name ?? null,
         actividad_2: course.activities[1]?.name ?? null,

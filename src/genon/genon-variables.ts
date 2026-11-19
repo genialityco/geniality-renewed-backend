@@ -12,6 +12,7 @@ export const GENON_VARIABLES: {
   { key: 'nombre', label: 'Primer nombre del inscrito', example: 'María' },
   { key: 'correo', label: 'Correo del inscrito', example: 'maria@correo.com' },
   { key: 'curso', label: 'Nombre del curso', example: 'Endocrinología básica' },
+  { key: 'organizacion', label: 'Nombre de la organización', example: 'Academia Geniality' },
   { key: 'avance', label: 'Avance del curso (%)', example: '35' },
   { key: 'actividad_1', label: 'Primera actividad del curso', example: 'Introducción a la diabetes' },
   { key: 'actividad_2', label: 'Segunda actividad del curso', example: 'Fisiopatología' },
