@@ -20,6 +20,7 @@ import { GenOnTemplatesService } from './genon-templates.service';
 import { GenOnEngineService } from './genon-engine.service';
 import { GenOnTriggersService, TRIGGER_STEP } from './genon-triggers.service';
 import { GenOnHistoryService } from './genon-history.service';
+import { GenOnSlotResultsService } from './genon-slot-results.service';
 import { GenOnStreakLabService, StreakLabAction } from './genon-streak-lab.service';
 import { GenOnTriggerKey } from './schemas/genon-program.schema';
 import { GenOnFeedback } from './schemas/genon-feedback.schema';
@@ -49,6 +50,7 @@ export class GenOnController {
     private readonly engine: GenOnEngineService,
     private readonly triggers: GenOnTriggersService,
     private readonly historyService: GenOnHistoryService,
+    private readonly slotResultsService: GenOnSlotResultsService,
     private readonly streakLab: GenOnStreakLabService,
     private readonly achievements: GenOnAchievementsService,
     @InjectModel(GenOnFeedback.name)
@@ -169,6 +171,22 @@ export class GenOnController {
       limit: limit ? Number(limit) || undefined : undefined,
       page: page ? Number(page) || undefined : undefined,
     });
+  }
+
+  /**
+   * Resultados por franja de un día (YYYY-MM-DD, hoy si se omite): quiénes
+   * recibieron el mensaje en cada franja y cuántos entraron, avanzaron o
+   * pasaron a activo, frente al grupo de control.
+   */
+  @Get('programs/:id/slot-results')
+  async slotResults(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Query('date') date?: string,
+    @Query('eventId') eventId?: string,
+  ) {
+    const program = await this.programs.get(req.auth.uid, id);
+    return this.slotResultsService.forDay(program, date || undefined, eventId || undefined);
   }
 
   /** Historial de una persona: mensajes, avance, retos y lo que escribió. */

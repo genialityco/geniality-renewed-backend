@@ -43,6 +43,8 @@ export const DEFAULT_TEMPLATES: {
       { type: 'QUICK_REPLY', text: 'Problemas para ingresar', action: 'reply:access' },
       { type: 'QUICK_REPLY', text: 'No era lo que esperaba', action: 'reply:not_expected' },
       OPT_OUT_BUTTON,
+      // Enlaces después de las respuestas rápidas (Meta exige agruparlos)
+      urlButton('Ir al curso'),
     ],
   },
   {

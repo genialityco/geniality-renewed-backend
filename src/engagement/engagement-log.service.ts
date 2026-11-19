@@ -377,6 +377,27 @@ export class EngagementLogService {
     return deletedCount;
   }
 
+  /** Mensajes de un programa de Gen.ON entre dos instantes (resultados por franja). */
+  async genonMessagesBetween(
+    programId: string,
+    organizationIds: string[],
+    from: Date,
+    to: Date,
+  ) {
+    return this.messageModel
+      .find({
+        // organization_id + kind + at usan el índice; program_id filtra
+        organization_id: { $in: organizationIds },
+        kind: 'genon',
+        at: { $gte: from, $lt: to },
+        program_id: programId,
+      })
+      .select('user_id organization_id event_id segment step status at read_at clicked_at')
+      .sort({ at: 1 })
+      .lean()
+      .exec();
+  }
+
   /** Envíos a una persona en una organización, del más antiguo al más nuevo. */
   async historyFor(userId: string, organizationId: string, limit = 500) {
     return this.messageModel

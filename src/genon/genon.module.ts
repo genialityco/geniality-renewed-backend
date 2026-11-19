@@ -67,6 +67,7 @@ import { GenOnEngineService } from './genon-engine.service';
 import { GenOnConversationService } from './genon-conversation.service';
 import { GenOnTriggersService } from './genon-triggers.service';
 import { GenOnHistoryService } from './genon-history.service';
+import { GenOnSlotResultsService } from './genon-slot-results.service';
 import { GenOnDemoService } from './genon-demo.service';
 import { GenOnStreakLabService } from './genon-streak-lab.service';
 import { GenOnMyStreakService } from './genon-my-streak.service';
@@ -129,6 +130,7 @@ import { AuthLinksModule } from 'src/auth-links/auth-links.module';
     GenOnTriggersService,
     GenOnConversationService,
     GenOnHistoryService,
+    GenOnSlotResultsService,
     GenOnDemoService,
     GenOnStreakLabService,
     GenOnMyStreakService,
