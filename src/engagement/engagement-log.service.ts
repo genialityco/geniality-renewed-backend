@@ -377,6 +377,18 @@ export class EngagementLogService {
     return deletedCount;
   }
 
+  /**
+   * Si el programa de Gen.ON ya registró envíos reales (no simulados): sus
+   * inscripciones reflejan mensajes que sí salieron.
+   */
+  async hasRealGenOnSends(programId: string): Promise<boolean> {
+    return Boolean(
+      await this.messageModel
+        .exists({ kind: 'genon', program_id: programId, status: { $ne: 'planned' } })
+        .exec(),
+    );
+  }
+
   /** Mensajes de un programa de Gen.ON entre dos instantes (resultados por franja). */
   async genonMessagesBetween(
     programId: string,

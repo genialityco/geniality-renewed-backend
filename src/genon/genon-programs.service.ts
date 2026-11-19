@@ -11,6 +11,7 @@ import { Organization } from 'src/organizations/schemas/organization.schema';
 import { OrganizationUser } from 'src/organization-users/schemas/organization-user.schema';
 import { GenOnProgram } from './schemas/genon-program.schema';
 import { GenOnEnrollment } from './schemas/genon-enrollment.schema';
+import { EngagementLogService } from 'src/engagement/engagement-log.service';
 import { defaultProgram, withTriggerDefaults } from './genon-defaults';
 import { normalizeAchievements, withAchievementDefaults } from './genon-achievements';
 
@@ -59,6 +60,7 @@ export class GenOnProgramsService {
     @InjectModel(OrganizationUser.name)
     private readonly organizationUserModel: Model<OrganizationUser>,
     private readonly usersService: UsersService,
+    private readonly engagementLog?: EngagementLogService,
   ) {}
 
   /** Organizaciones que administra el usuario (autor o rol admin). */
@@ -157,12 +159,17 @@ export class GenOnProgramsService {
       (k) => k in changes,
     );
     const goingLive = changes.mode === 'live' && program.mode !== 'live';
+    // Lo que avanzó la simulación no se envió de verdad: al activar, las
+    // secuencias empiezan de cero. Pero si el programa ya envió mensajes
+    // reales (se apagó y se vuelve a activar), el estado se conserva: si no,
+    // se repetirían los toques y se perderían bajas y respuestas.
+    const resetSimulation =
+      goingLive &&
+      !(await this.engagementLog?.hasRealGenOnSends(String(program._id)));
     Object.assign(program, changes);
     if (resegment || goingLive) program.last_segmented_on = null;
     await program.save();
-    if (goingLive) {
-      // Lo que avanzó la simulación no se envió de verdad: las secuencias
-      // empiezan de cero al activar el programa
+    if (resetSimulation) {
       await this.enrollmentModel
         .deleteMany({ program_id: String(program._id), test: false })
         .exec();
