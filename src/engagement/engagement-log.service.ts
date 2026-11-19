@@ -389,6 +389,50 @@ export class EngagementLogService {
     );
   }
 
+  /**
+   * Personas que entraron a la secuencia de cada segmento de un programa de
+   * Gen.ON: por persona, curso y segmento, su primer toque y si lo recibió
+   * (o estaba en el grupo de control). Para medir quiénes se recuperaron.
+   */
+  async genonFlowRecipients(
+    programId: string,
+    organizationIds: string[],
+    steps: string[],
+    eventId?: string,
+  ): Promise<
+    { user_id: string; event_id: string | null; segment: string; first_at: Date; received: boolean }[]
+  > {
+    if (!steps.length) return [];
+    const rows = await this.messageModel
+      .aggregate([
+        {
+          $match: {
+            organization_id: { $in: organizationIds },
+            kind: 'genon',
+            program_id: programId,
+            step: { $in: steps },
+            status: { $in: ['sent', 'fallback_email', 'holdout'] },
+            ...(eventId ? { event_id: eventId } : {}),
+          },
+        },
+        {
+          $group: {
+            _id: { user_id: '$user_id', event_id: '$event_id', segment: '$segment' },
+            first_at: { $min: '$at' },
+            received: { $max: { $cond: [{ $eq: ['$status', 'holdout'] }, 0, 1] } },
+          },
+        },
+      ])
+      .exec();
+    return rows.map((r: any) => ({
+      user_id: r._id.user_id,
+      event_id: r._id.event_id ?? null,
+      segment: r._id.segment,
+      first_at: r.first_at,
+      received: r.received === 1,
+    }));
+  }
+
   /** Mensajes de un programa de Gen.ON entre dos instantes (resultados por franja). */
   async genonMessagesBetween(
     programId: string,

@@ -56,6 +56,7 @@ import {
   validSlots,
   zonedTime,
 } from './genon-schedule';
+import { segmentRecovery } from './genon-slot-results';
 import {
   buildSendComponents,
   extractVariables,
@@ -1509,7 +1510,7 @@ export class GenOnEngineService {
     if (filter.eventId) query.event_id = filter.eventId;
     const pageSize = Math.min(Math.max(Math.floor(filter.limit || 300), 1), 2000);
     const page = Math.max(Math.floor(filter.page || 1), 1);
-    const [rows, total, bySegment] = await Promise.all([
+    const [rows, total, bySegment, recovery] = await Promise.all([
       this.enrollmentModel
         .find(query)
         // _id desempata: el orden es estable entre páginas
@@ -1537,7 +1538,14 @@ export class GenOnEngineService {
           },
         },
       ]),
+      this.recoveryBySegment(program, filter.eventId),
     ]);
+    // Un segmento sin inscritos hoy (p. ej. todos se recuperaron) también se muestra
+    for (const segment of Object.keys(recovery)) {
+      if (!bySegment.some((s) => s._id === segment)) {
+        bySegment.push({ _id: segment, total: 0, holdout: 0, paused: 0, exited: 0 });
+      }
+    }
 
     const userIds = [...new Set(rows.map((r) => r.user_id))];
     const objectIds = userIds
@@ -1582,6 +1590,8 @@ export class GenOnEngineService {
         holdout: s.holdout,
         paused: s.paused,
         exited: s.exited,
+        // Solo en abandono e inactivos: quiénes de su secuencia se recuperaron
+        recovery: recovery[s._id] || null,
       })),
       rows: rows.map((r) => {
         const orgUser = orgUserByKey.get(`${r.user_id}:${r.organization_id}`) || null;
@@ -1619,6 +1629,32 @@ export class GenOnEngineService {
         };
       }),
     };
+  }
+
+  /**
+   * Por segmento con secuencia (abandono, inactivos): de quienes entraron a
+   * ella, con mensaje o en el grupo de control, cuántos están hoy en activos
+   * o egresados.
+   */
+  private async recoveryBySegment(program: GenOnProgram, eventId?: string) {
+    const steps = Object.values(program.flows || {}).flatMap((s) => (s || []).map((x) => x.key));
+    const recipients = await this.engagementLog.genonFlowRecipients(
+      String(program._id),
+      program.organization_ids,
+      steps,
+      eventId,
+    );
+    if (!recipients.length) return {};
+    const enrollments = await this.enrollmentModel
+      .find({
+        program_id: String(program._id),
+        test: false,
+        user_id: { $in: [...new Set(recipients.map((r) => r.user_id))] },
+      })
+      .select('user_id event_id segment segment_since')
+      .lean()
+      .exec();
+    return segmentRecovery(recipients, enrollments);
   }
 
   /** Actividades de un curso del programa, con lo necesario para configurar retos. */

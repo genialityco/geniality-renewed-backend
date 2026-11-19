@@ -1,4 +1,10 @@
-import { OUTSIDE_SLOT, localTime, slotOfTime, slotResults } from './genon-slot-results';
+import {
+  OUTSIDE_SLOT,
+  localTime,
+  segmentRecovery,
+  slotOfTime,
+  slotResults,
+} from './genon-slot-results';
 
 const TZ = 'America/Bogota';
 // 18-nov-2026 en Bogotá (UTC-5)
@@ -107,5 +113,49 @@ describe('slotResults', () => {
     expect(b).toMatchObject({ entered: true, advanced: false, became_active: true });
     expect(b.steps).toEqual(['2.1', 'examen']);
     expect(result.people.map((p) => p.user_id).sort()).toEqual(['a', 'b', 'd']);
+  });
+});
+
+describe('segmentRecovery', () => {
+  const r = (user: string, segment: string, received: boolean, hhmm = '12:30') => ({
+    user_id: user,
+    event_id: 'ev',
+    segment,
+    first_at: at(hhmm),
+    received,
+  });
+  const e = (user: string, segment: string, since: string) => ({
+    user_id: user,
+    event_id: 'ev',
+    segment,
+    segment_since: at(since),
+  });
+
+  it('cuenta a quien pasó a activo o egresó después de su primer toque', () => {
+    const out = segmentRecovery(
+      [
+        r('a', 'abandon', true), // pasó a activo después: recuperado
+        r('b', 'abandon', true), // sigue en abandono
+        r('c', 'abandon', true), // ya era activo antes del toque: no cuenta
+        r('d', 'abandon', false), // control que egresó
+        r('f', 'inactive', true), // egresó
+        r('g', 'inactive', true), // sin inscripción
+      ],
+      [
+        e('a', 'active', '15:00'),
+        e('b', 'abandon', '08:00'),
+        e('c', 'active', '08:00'),
+        e('d', 'graduated', '16:00'),
+        e('f', 'graduated', '13:00'),
+      ],
+    );
+    expect(out.abandon).toEqual({
+      received: { people: 3, recovered: 1 },
+      control: { people: 1, recovered: 1 },
+    });
+    expect(out.inactive).toEqual({
+      received: { people: 2, recovered: 1 },
+      control: { people: 0, recovered: 0 },
+    });
   });
 });

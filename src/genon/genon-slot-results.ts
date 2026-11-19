@@ -87,6 +87,52 @@ export interface SlotPerson {
   clicked: boolean;
 }
 
+/** Segmentos a los que se llega al recuperarse de abandono o inactividad */
+export const RECOVERED_SEGMENTS = new Set(['active', 'graduated']);
+
+export interface RecoveryStats {
+  /** Recibieron al menos un toque de la secuencia del segmento */
+  received: { people: number; recovered: number };
+  /** Grupo de control del segmento (no recibieron los toques) */
+  control: { people: number; recovered: number };
+}
+
+/**
+ * Recuperados por segmento: de quienes entraron a la secuencia de abandono o
+ * de inactivos (con mensaje o en el grupo de control), cuántos están hoy en
+ * activos o egresados y llegaron ahí después de su primer toque.
+ */
+export function segmentRecovery(
+  recipients: {
+    user_id: string;
+    event_id: string | null;
+    segment: string;
+    first_at: Date;
+    received: boolean;
+  }[],
+  enrollments: { user_id: string; event_id: string; segment: string; segment_since: Date }[],
+): Record<string, RecoveryStats> {
+  const current = new Map(enrollments.map((e) => [`${e.user_id}:${e.event_id}`, e]));
+  const out: Record<string, RecoveryStats> = {};
+  for (const r of recipients) {
+    const stats = (out[r.segment] ||= {
+      received: { people: 0, recovered: 0 },
+      control: { people: 0, recovered: 0 },
+    });
+    const group = r.received ? stats.received : stats.control;
+    group.people++;
+    const e = current.get(`${r.user_id}:${r.event_id}`);
+    if (
+      e &&
+      RECOVERED_SEGMENTS.has(e.segment) &&
+      new Date(e.segment_since).getTime() >= new Date(r.first_at).getTime()
+    ) {
+      group.recovered++;
+    }
+  }
+  return out;
+}
+
 const toMinutes = (hhmm: string) => {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;
